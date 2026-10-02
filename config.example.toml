@@ -1,0 +1,77 @@
+# ocpp-2w-proxy configuration (copy to config.toml and edit).
+# Secrets are never written here: every *_env key names an environment variable.
+
+[proxy]
+listen = "0.0.0.0"
+port = 8321
+# Transaction id mapping and the offline queue for the secondary backend live here.
+# Must be persistent (a Docker volume / TrueNAS dataset).
+state_dir = "/data"
+# Optional: let the proxy terminate TLS itself. Leave empty when a reverse proxy
+# (e.g. Nginx Proxy Manager) terminates TLS in front of it.
+tls_cert = ""
+tls_key = ""
+ping_interval = 30
+ping_timeout = 60
+
+[logging]
+level = "INFO"          # DEBUG, INFO, WARNING, ERROR
+# At DEBUG, also log (redacted) payloads. RFID tags are masked; credentials never logged.
+log_payloads = false
+
+# Allowlist: only these chargers may connect. The charger connects to <proxy-url>/<id>
+# and sends <id> as Basic-auth username.
+[[chargers]]
+id = "CHANGE-ME"
+# Optional: require this password from the charger (set the same in the charger's OCPP settings).
+# password_env = "CHARGER_PASSWORD"
+# Optional: the id each backend knows this charger by (defaults to id).
+# primary_id = "CHANGE-ME"
+# secondary_id = "CHANGE-ME"
+
+# Primary = control backend (SolarEdge). Its replies are what the charger sees.
+# If it is unreachable, the proxy refuses the charger so the charger buffers offline itself.
+[primary]
+url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
+# none    : no credentials
+# forward : pass the charger's own Authorization header (only if SolarEdge needs the charger's password)
+# basic   : primary_id + password from password_env
+auth = "none"
+# password_env = "PRIMARY_PASSWORD"
+call_timeout = 30
+
+# [primary.policy]                 # everything is forwarded by default
+# actions = { Reset = "answer" }   # forward | answer | error
+
+# Secondary = billing backend (Tap Electric). Optional: remove this section for a 1-way proxy.
+[secondary]
+url = "wss://CHANGE-ME"   # <url>/<secondary_id>
+auth = "basic"            # none | basic   ('forward' is refused: it would leak charger credentials)
+password_env = "SECONDARY_PASSWORD"
+call_timeout = 30
+# Calls from the charger that are also sent to the secondary.
+forward_actions = [
+    "BootNotification",
+    "Heartbeat",
+    "StatusNotification",
+    "Authorize",
+    "StartTransaction",
+    "StopTransaction",
+    "MeterValues",
+]
+# Max queued transaction messages while the secondary is unreachable.
+max_queue = 10000
+
+[secondary.policy]
+# Commands from the secondary to the charger. Defaults:
+#   forward: RemoteStartTransaction, RemoteStopTransaction, TriggerMessage, GetConfiguration,
+#            UnlockConnector, GetCompositeSchedule
+#   answer : GetLocalListVersion, SendLocalList, ChangeConfiguration, SetChargingProfile,
+#            ClearChargingProfile, ChangeAvailability, Reset, ClearCache, ReserveNow,
+#            CancelReservation, DataTransfer, UpdateFirmware, GetDiagnostics
+#   anything else: error (NotSupported)
+# actions = { Reset = "forward" }
+# ChangeConfiguration keys the secondary may still set (empty: none).
+change_configuration_allow_keys = []
+# Remove chargingProfile from RemoteStartTransaction so it can't override solar charging.
+strip_charging_profile = true

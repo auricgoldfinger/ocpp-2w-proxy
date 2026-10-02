@@ -1,0 +1,268 @@
+"""End-to-end: fake charger <-> proxy <-> fake primary (SolarEdge) + fake secondary (Tap)."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+
+import pytest
+from conftest import CHARGER_ID
+from fakes import FakeCharger, FakeCsms
+from websockets.exceptions import ConnectionClosed, InvalidStatus
+
+BOOT = {"chargePointVendor": "SolarEdge", "chargePointModel": "ONE"}
+START = {"connectorId": 1, "idTag": "04A2B3C4", "meterStart": 0, "timestamp": "2026-01-01T10:00:00Z"}
+
+
+def responder_with_transaction(transaction_id: int):
+    def respond(action, payload):
+        if action == "StartTransaction":
+            return {"transactionId": transaction_id, "idTagInfo": {"status": "Accepted"}}
+        return FakeCsms().responder(action, payload)
+
+    return respond
+
+
+async def eventually(predicate, timeout: float = 5) -> None:
+    async def poll():
+        while not predicate():
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(poll(), timeout)
+
+
+async def test_charger_calls_reach_both_and_only_primary_reply_returns(primary, secondary, start_proxy):
+    secondary.responder = lambda action, payload: {"status": "Rejected", "currentTime": "x", "interval": 5}
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID, password="from-charger")
+
+    reply = await charger.call("BootNotification", BOOT)
+
+    assert reply[2]["status"] == "Accepted"  # primary's answer, not the secondary's Rejected
+    await secondary.wait_for_call("BootNotification")
+    assert primary.paths == [f"/ocpp/{CHARGER_ID}"]
+    assert secondary.paths == [f"/ocpp/{CHARGER_ID}"]
+    # Primary gets the charger's own credentials (auth=forward); secondary only its own.
+    assert base64.b64decode(primary.auth_headers[0].split()[1]) == b"CH1:from-charger"
+    assert base64.b64decode(secondary.auth_headers[0].split()[1]) == b"CH1:tap-secret"
+    await charger.close()
+
+
+async def test_vendor_data_transfer_not_sent_to_secondary(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+    await charger.call("DataTransfer", {"vendorId": "SolarEdge"})
+    await charger.call("Heartbeat", {})
+    await secondary.wait_for_call("Heartbeat")
+    assert "DataTransfer" in primary.actions()
+    assert "DataTransfer" not in secondary.actions()
+    await charger.close()
+
+
+async def test_transaction_ids_are_translated_for_the_secondary(primary, secondary, start_proxy):
+    primary.responder = responder_with_transaction(100)
+    secondary.responder = responder_with_transaction(9)
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+
+    start = await charger.call("StartTransaction", START)
+    assert start[2]["transactionId"] == 100
+    await secondary.wait_for_call("StartTransaction")
+
+    await charger.call("MeterValues", {"connectorId": 1, "transactionId": 100, "meterValue": []})
+    await charger.call("StopTransaction", {"transactionId": 100, "meterStop": 7, "timestamp": "t"})
+
+    assert (await secondary.wait_for_call("MeterValues"))[0]["transactionId"] == 9
+    assert (await secondary.wait_for_call("StopTransaction"))[0]["transactionId"] == 9
+    assert [p["transactionId"] for a, p in primary.calls if a == "StopTransaction"] == [100]
+    await charger.close()
+
+
+async def test_remote_stop_from_secondary_is_translated(primary, secondary, start_proxy):
+    primary.responder = responder_with_transaction(100)
+    secondary.responder = responder_with_transaction(9)
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+    await charger.call("StartTransaction", START)
+    await secondary.wait_for_call("StartTransaction")
+    await asyncio.sleep(0.05)  # let the secondary's StartTransaction.conf be processed
+
+    reply = await secondary.call("RemoteStopTransaction", {"transactionId": 9}, message_id="tap-1")
+    assert reply == [3, "tap-1", {"status": "Accepted"}]
+    assert charger.received_calls[-1][2:] == ["RemoteStopTransaction", {"transactionId": 100}]
+
+    unknown = await secondary.call("RemoteStopTransaction", {"transactionId": 12345})
+    assert unknown[2] == {"status": "Rejected"}
+    assert len(charger.received_calls) == 1
+    await charger.close()
+
+
+async def test_conflicting_secondary_commands_never_reach_charger(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+
+    for action, expected in [
+        ("SetChargingProfile", {"status": "Rejected"}),
+        ("ClearChargingProfile", {"status": "Unknown"}),
+        ("ChangeConfiguration", {"status": "Rejected"}),
+        ("Reset", {"status": "Rejected"}),
+        ("GetLocalListVersion", {"listVersion": -1}),
+    ]:
+        assert (await secondary.call(action, {"key": "HeartbeatInterval", "value": "1"}))[2] == expected
+    assert (await secondary.call("CustomVendorThing", {}))[0] == 4
+    assert charger.received_calls == []
+
+    # The primary is allowed to do all of this.
+    await primary.call("SetChargingProfile", {"connectorId": 1})
+    assert charger.received_calls[0][2] == "SetChargingProfile"
+    await charger.close()
+
+
+async def test_colliding_message_ids_are_routed_to_the_right_backend(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(
+        url, CHARGER_ID, responder=lambda action, payload: {"configurationKey": [{"key": payload["key"][0]}]}
+    )
+    await secondary.connected.wait()
+
+    from_primary, from_secondary = await asyncio.gather(
+        primary.call("GetConfiguration", {"key": ["primary"]}, message_id="1"),
+        secondary.call("GetConfiguration", {"key": ["secondary"]}, message_id="1"),
+    )
+    assert from_primary == [3, "1", {"configurationKey": [{"key": "primary"}]}]
+    assert from_secondary == [3, "1", {"configurationKey": [{"key": "secondary"}]}]
+    assert len({frame[1] for frame in charger.received_calls}) == 2
+    await charger.close()
+
+
+async def test_remote_start_from_secondary_loses_charging_profile(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+    await secondary.call("RemoteStartTransaction", {"idTag": "ABC", "chargingProfile": {"chargingProfileId": 1}})
+    assert charger.received_calls[0][3] == {"idTag": "ABC"}
+    await charger.close()
+
+
+async def test_secondary_outage_queues_and_replays_in_order(primary, start_proxy):
+    primary.responder = responder_with_transaction(100)
+    secondary = await FakeCsms(responder_with_transaction(9)).start()
+    port = secondary.port
+    await secondary.stop()  # Tap is down when the charger starts charging
+
+    url = await start_proxy(primary.url, f"ws://127.0.0.1:{port}/ocpp")
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    assert (await charger.call("BootNotification", BOOT))[2]["status"] == "Accepted"
+    await charger.call("StatusNotification", {"connectorId": 1, "status": "Charging", "errorCode": "NoError"})
+    await charger.call("Heartbeat", {})
+    assert (await charger.call("StartTransaction", START))[2]["transactionId"] == 100
+    await charger.call("MeterValues", {"connectorId": 1, "transactionId": 100, "meterValue": []})
+    await charger.call("StopTransaction", {"transactionId": 100, "meterStop": 7, "timestamp": "t"})
+
+    secondary = await FakeCsms(responder_with_transaction(9)).start(port)
+    try:
+        await secondary.wait_for_call("StopTransaction")
+        assert secondary.actions() == [
+            "BootNotification",
+            "StatusNotification",
+            "StartTransaction",
+            "MeterValues",
+            "StopTransaction",
+        ]
+        assert secondary.calls[3][1]["transactionId"] == 9
+        assert secondary.calls[4][1]["transactionId"] == 9
+    finally:
+        await charger.close()
+        await secondary.stop()
+
+
+async def test_queue_survives_proxy_restart(primary, start_proxy):
+    secondary = await FakeCsms(responder_with_transaction(9)).start()
+    port = secondary.port
+    await secondary.stop()
+    secondary_url = f"ws://127.0.0.1:{port}/ocpp"
+
+    url = await start_proxy(primary.url, secondary_url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("BootNotification", BOOT)
+    await charger.call("StartTransaction", START)
+    await charger.close()
+
+    secondary = await FakeCsms(responder_with_transaction(9)).start(port)
+    try:
+        url = await start_proxy(primary.url, secondary_url)  # same state_dir: a restarted proxy
+        charger = await FakeCharger.connect(url, CHARGER_ID)
+        assert (await secondary.wait_for_call("StartTransaction"))[0]["idTag"] == START["idTag"]
+        assert secondary.actions()[0] == "BootNotification"  # cached boot replayed first
+        await charger.close()
+    finally:
+        await secondary.stop()
+
+
+async def test_secondary_disconnect_does_not_affect_charger(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+    await secondary.drop_connection()
+    assert (await charger.call("Heartbeat", {}))[2] == {"currentTime": "2026-01-01T00:00:00Z"}
+    await secondary.connected.wait()  # proxy reconnects on its own
+    await charger.close()
+
+
+async def test_primary_unreachable_closes_charger(secondary, start_proxy):
+    dead = await FakeCsms().start()
+    dead_url = dead.url
+    await dead.stop()
+    url = await start_proxy(dead_url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await asyncio.wait_for(charger.ws.wait_closed(), 5)
+    assert charger.ws.close_code == 1011
+
+
+async def test_primary_disconnect_closes_charger(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await primary.connected.wait()
+    await primary.drop_connection()
+    await asyncio.wait_for(charger.ws.wait_closed(), 5)
+    assert charger.ws.close_code == 1011
+
+
+async def test_malformed_charger_frame_is_ignored(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.send_raw("this is not ocpp")
+    await charger.send_raw(json.dumps([2, "x", "Heartbeat"]))
+    assert (await charger.call("Heartbeat", {}))[0] == 3
+    await charger.close()
+
+
+@pytest.mark.parametrize(
+    ("charger_id", "password", "status"),
+    [("UNKNOWN", None, 404), (CHARGER_ID, "wrong", 401), (CHARGER_ID, None, 401)],
+)
+async def test_handshake_rejections(primary, secondary, start_proxy, charger_id, password, status):
+    url = await start_proxy(
+        primary.url, secondary.url, environ={"CHARGER_PW": "right"}, charger={"password_env": "CHARGER_PW"}
+    )
+    with pytest.raises(InvalidStatus) as exc:
+        await FakeCharger.connect(url, charger_id, password=password)
+    assert exc.value.response.status_code == status
+    assert primary.paths == []
+
+
+async def test_reconnecting_charger_replaces_old_session(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    old = await FakeCharger.connect(url, CHARGER_ID)
+    await old.call("Heartbeat", {})
+    new = await FakeCharger.connect(url, CHARGER_ID)
+    await asyncio.wait_for(old.ws.wait_closed(), 5)
+    assert (await new.call("Heartbeat", {}))[0] == 3
+    with pytest.raises(ConnectionClosed):
+        await old.call("Heartbeat", {})
+    await new.close()
