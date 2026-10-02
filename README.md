@@ -19,14 +19,51 @@ The rules are as follows:
 The proxy will also keep a watch dog of stale connections. If a connection is not seen for more than `watchdog_stale` seconds, the connection will be closed and removed from the list.
 
 
+## Setup
+
+This project uses [uv](https://docs.astral.sh/uv/) to manage Python and dependencies.
+
+1. Install uv (see the [installation docs](https://docs.astral.sh/uv/getting-started/installation/) for other options):
+
+   ```sh
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. Clone the repository and install the dependencies:
+
+   ```sh
+   git clone https://github.com/ocpp-balanz/ocpp-2w-proxy.git
+   cd ocpp-2w-proxy
+   uv sync
+   ```
+
+   `uv sync` creates a virtual environment in `.venv` and installs the locked dependencies from `uv.lock`.
+   The project uses Python 3.14 (pinned in `.python-version`). If it is not installed, uv downloads it automatically.
+
+To add or update dependencies, use `uv add <package>` / `uv lock --upgrade`. These update `pyproject.toml` and `uv.lock`.
+
 ## Usage
 
 Review and update configuration in `ocpp-2w-proxy.ini`. Start the proxy with:
 
-`python ocpp_2w_proxy.py`
+```sh
+uv run ocpp-2w-proxy.py
+```
+
+A different configuration file can be given with `--config`:
+
+```sh
+uv run ocpp-2w-proxy.py --config /path/to/my-config.ini
+```
 
 ## Docker
 
-`Dockerfile` and `compose.yaml` files are included for completeness.
+`Dockerfile` and `compose.yaml` files are included for completeness. The image is based on `python:3.14-slim` and installs
+the locked dependencies with uv. Build the image and start it with:
+
+```sh
+docker build -t ocpp-2w-proxy .
+docker compose up -d
+```
 
  

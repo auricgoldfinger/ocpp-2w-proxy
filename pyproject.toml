@@ -1,0 +1,8 @@
+[project]
+name = "ocpp-2w-proxy"
+version = "0.1.0"
+description = "A 2 way OCPP proxy"
+requires-python = ">=3.14"
+dependencies = [
+    "websockets>=13",
+]
