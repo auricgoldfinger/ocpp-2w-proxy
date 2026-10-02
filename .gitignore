@@ -1,3 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+# Local config / state / secrets
+config.toml
+state/
+.env
+*.tar.gz

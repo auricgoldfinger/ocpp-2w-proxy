@@ -1,4 +1,6 @@
-.venv/
-.git/
-__pycache__/
-*.pyc
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!ocpp_2w_proxy/
+**/__pycache__
