@@ -1,0 +1,123 @@
+"""Per-backend policy deciding what happens to a command (Call) a backend sends to the charger.
+
+Each action maps to a rule:
+  forward - send it to the charger (possibly transformed)
+  answer  - the proxy replies itself with a harmless canned CallResult
+  error   - the proxy replies with a NotSupported CallError
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Any
+
+from .ocpp import Call, CallError, CallResult, Reply
+
+
+class Rule(StrEnum):
+    FORWARD = "forward"
+    ANSWER = "answer"
+    ERROR = "error"
+
+
+# Canned confirmations, valid per the OCPP 1.6 schemas, that tell a backend "not done"
+# without making it retry forever.
+CANNED_ANSWERS: Mapping[str, dict[str, Any]] = {
+    "CancelReservation": {"status": "Rejected"},
+    "ChangeAvailability": {"status": "Rejected"},
+    "ChangeConfiguration": {"status": "Rejected"},
+    "ClearCache": {"status": "Rejected"},
+    "ClearChargingProfile": {"status": "Unknown"},
+    "DataTransfer": {"status": "Rejected"},
+    "GetCompositeSchedule": {"status": "Rejected"},
+    "GetConfiguration": {"configurationKey": [], "unknownKey": []},
+    "GetDiagnostics": {},
+    # -1: local authorization list not enabled, so the backend won't try to push one.
+    "GetLocalListVersion": {"listVersion": -1},
+    "RemoteStartTransaction": {"status": "Rejected"},
+    "RemoteStopTransaction": {"status": "Rejected"},
+    "ReserveNow": {"status": "Rejected"},
+    "Reset": {"status": "Rejected"},
+    "SendLocalList": {"status": "NotSupported"},
+    "SetChargingProfile": {"status": "Rejected"},
+    "TriggerMessage": {"status": "Rejected"},
+    "UnlockConnector": {"status": "NotSupported"},
+    "UpdateFirmware": {},
+}
+
+# Billing backend (Tap): may start/stop sessions and read state, but must not touch anything
+# the control backend (SolarEdge) relies on: charging profiles, configuration, availability,
+# firmware, the local authorization list.
+SECONDARY_DEFAULT_RULES: Mapping[str, Rule] = {
+    "RemoteStartTransaction": Rule.FORWARD,
+    "RemoteStopTransaction": Rule.FORWARD,
+    "TriggerMessage": Rule.FORWARD,
+    "GetConfiguration": Rule.FORWARD,
+    "UnlockConnector": Rule.FORWARD,
+    "GetCompositeSchedule": Rule.FORWARD,
+    "GetLocalListVersion": Rule.ANSWER,
+    "SendLocalList": Rule.ANSWER,
+    "ChangeConfiguration": Rule.ANSWER,
+    "SetChargingProfile": Rule.ANSWER,
+    "ClearChargingProfile": Rule.ANSWER,
+    "ChangeAvailability": Rule.ANSWER,
+    "Reset": Rule.ANSWER,
+    "ClearCache": Rule.ANSWER,
+    "ReserveNow": Rule.ANSWER,
+    "CancelReservation": Rule.ANSWER,
+    "DataTransfer": Rule.ANSWER,
+    "UpdateFirmware": Rule.ANSWER,
+    "GetDiagnostics": Rule.ANSWER,
+}
+SECONDARY_DEFAULT_RULE = Rule.ERROR
+
+PRIMARY_DEFAULT_RULES: Mapping[str, Rule] = {}
+PRIMARY_DEFAULT_RULE = Rule.FORWARD
+
+
+@dataclass(frozen=True)
+class CommandPolicy:
+    rules: Mapping[str, Rule]
+    default_rule: Rule
+    change_configuration_allow_keys: frozenset[str] = frozenset()
+    strip_charging_profile: bool = False
+
+    def __post_init__(self) -> None:
+        for action, rule in self.rules.items():
+            if rule is Rule.ANSWER and action not in CANNED_ANSWERS:
+                raise ValueError(f"no canned answer exists for action {action!r}; use 'forward' or 'error'")
+        if self.default_rule is Rule.ANSWER:
+            raise ValueError("default rule cannot be 'answer'")
+
+    def rule_for(self, action: str) -> Rule:
+        return self.rules.get(action, self.default_rule)
+
+    def decide(self, call: Call) -> Call | Reply:
+        """Return the (possibly transformed) Call to forward, or the Reply the proxy sends back."""
+        rule = self.rule_for(call.action)
+        if call.action == "ChangeConfiguration" and call.payload.get("key") in self.change_configuration_allow_keys:
+            rule = Rule.FORWARD
+
+        match rule:
+            case Rule.FORWARD:
+                transform = _FORWARD_TRANSFORMS.get(call.action)
+                return transform(self, call) if transform else call
+            case Rule.ANSWER:
+                return CallResult(call.id, dict(CANNED_ANSWERS[call.action]))
+            case Rule.ERROR:
+                return CallError(call.id, "NotSupported", f"{call.action} is not allowed through this proxy")
+
+
+def _strip_charging_profile(policy: CommandPolicy, call: Call) -> Call:
+    """A charging profile embedded in a remote start would override the control backend's schedule."""
+    if not policy.strip_charging_profile or "chargingProfile" not in call.payload:
+        return call
+    payload = {k: v for k, v in call.payload.items() if k != "chargingProfile"}
+    return call.with_payload(payload)
+
+
+_FORWARD_TRANSFORMS: Mapping[str, Callable[[CommandPolicy, Call], Call]] = {
+    "RemoteStartTransaction": _strip_charging_profile,
+}
