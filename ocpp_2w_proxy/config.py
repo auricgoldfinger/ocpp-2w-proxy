@@ -1,0 +1,224 @@
+"""Load and validate the TOML configuration. Secrets are read from environment variables."""
+
+from __future__ import annotations
+
+import os
+import re
+import tomllib
+from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+from .policy import (
+    PRIMARY_DEFAULT_RULE,
+    PRIMARY_DEFAULT_RULES,
+    SECONDARY_DEFAULT_RULE,
+    SECONDARY_DEFAULT_RULES,
+    CommandPolicy,
+    Rule,
+)
+
+CHARGER_ID_PATTERN = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
+
+DEFAULT_SECONDARY_FORWARD_ACTIONS = (
+    "BootNotification",
+    "Heartbeat",
+    "StatusNotification",
+    "Authorize",
+    "StartTransaction",
+    "StopTransaction",
+    "MeterValues",
+)
+
+
+class ConfigError(ValueError):
+    pass
+
+
+class AuthMode(StrEnum):
+    NONE = "none"  # no Authorization header upstream
+    FORWARD = "forward"  # pass the charger's own Authorization header through unchanged
+    BASIC = "basic"  # Basic auth: backend charger id as username, configured password
+
+
+@dataclass(frozen=True)
+class ProxyConfig:
+    listen: str
+    port: int
+    state_dir: Path
+    tls_cert: Path | None
+    tls_key: Path | None
+    ping_interval: float
+    ping_timeout: float
+    log_level: str
+    log_payloads: bool
+
+
+@dataclass(frozen=True)
+class ChargerConfig:
+    id: str
+    password: str | None
+    primary_id: str
+    secondary_id: str
+
+
+@dataclass(frozen=True)
+class BackendConfig:
+    name: str
+    url: str
+    auth: AuthMode
+    password: str | None
+    policy: CommandPolicy
+    call_timeout: float
+
+
+@dataclass(frozen=True)
+class SecondaryConfig(BackendConfig):
+    forward_actions: frozenset[str]
+    max_queue: int
+
+
+@dataclass(frozen=True)
+class Config:
+    proxy: ProxyConfig
+    chargers: Mapping[str, ChargerConfig]
+    primary: BackendConfig
+    secondary: SecondaryConfig | None
+
+
+def load(path: Path, environ: Mapping[str, str] = os.environ) -> Config:
+    try:
+        with path.open("rb") as fh:
+            raw = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"cannot read {path}: {exc}") from exc
+    return parse(raw, environ)
+
+
+def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Config:
+    secrets = _Secrets(environ)
+    chargers = _parse_chargers(raw.get("chargers", []), secrets)
+    if "primary" not in raw:
+        raise ConfigError("[primary] backend is required")
+    primary = _parse_backend(
+        "primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, strip_profile_default=False
+    )
+    secondary = _parse_secondary(raw["secondary"], secrets) if "secondary" in raw else None
+    return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondary)
+
+
+class _Secrets:
+    def __init__(self, environ: Mapping[str, str]):
+        self._environ = environ
+
+    def get(self, section: Mapping[str, Any], where: str) -> str | None:
+        name = section.get("password_env")
+        if not name:
+            return None
+        value = self._environ.get(name)
+        if not value:
+            raise ConfigError(f"{where}: environment variable {name!r} is not set or empty")
+        return value
+
+
+def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any]) -> ProxyConfig:
+    tls_cert, tls_key = section.get("tls_cert") or None, section.get("tls_key") or None
+    if bool(tls_cert) != bool(tls_key):
+        raise ConfigError("[proxy] tls_cert and tls_key must be set together")
+    return ProxyConfig(
+        listen=str(section.get("listen", "0.0.0.0")),
+        port=int(section.get("port", 8321)),
+        state_dir=Path(section.get("state_dir", "./state")),
+        tls_cert=Path(tls_cert) if tls_cert else None,
+        tls_key=Path(tls_key) if tls_key else None,
+        ping_interval=float(section.get("ping_interval", 30)),
+        ping_timeout=float(section.get("ping_timeout", 60)),
+        log_level=str(logging_section.get("level", "INFO")).upper(),
+        log_payloads=bool(logging_section.get("log_payloads", False)),
+    )
+
+
+def _parse_chargers(entries: list[Mapping[str, Any]], secrets: _Secrets) -> dict[str, ChargerConfig]:
+    if not entries:
+        raise ConfigError("at least one [[chargers]] entry is required (allowlist)")
+    chargers: dict[str, ChargerConfig] = {}
+    for entry in entries:
+        charger_id = _charger_id(entry.get("id"), "[[chargers]] id")
+        if charger_id in chargers:
+            raise ConfigError(f"duplicate charger id {charger_id!r}")
+        chargers[charger_id] = ChargerConfig(
+            id=charger_id,
+            password=secrets.get(entry, f"charger {charger_id}"),
+            primary_id=_charger_id(entry.get("primary_id", charger_id), "primary_id"),
+            secondary_id=_charger_id(entry.get("secondary_id", charger_id), "secondary_id"),
+        )
+    return chargers
+
+
+def _charger_id(value: Any, where: str) -> str:
+    if not isinstance(value, str) or not CHARGER_ID_PATTERN.match(value):
+        raise ConfigError(f"{where}: {value!r} must match {CHARGER_ID_PATTERN.pattern}")
+    return value
+
+
+def _parse_backend(
+    name: str,
+    section: Mapping[str, Any],
+    secrets: _Secrets,
+    default_rules: Mapping[str, Rule],
+    default_rule: Rule,
+    strip_profile_default: bool,
+) -> BackendConfig:
+    url = section.get("url")
+    if not isinstance(url, str) or not url.startswith(("ws://", "wss://")):
+        raise ConfigError(f"[{name}] url must start with ws:// or wss://")
+    try:
+        auth = AuthMode(section.get("auth", AuthMode.NONE))
+    except ValueError as exc:
+        raise ConfigError(f"[{name}] auth must be one of {[m.value for m in AuthMode]}") from exc
+    password = secrets.get(section, f"[{name}]")
+    if auth is AuthMode.BASIC and not password:
+        raise ConfigError(f"[{name}] auth = 'basic' requires password_env")
+    return BackendConfig(
+        name=name,
+        url=url.rstrip("/"),
+        auth=auth,
+        password=password,
+        policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule, strip_profile_default),
+        call_timeout=float(section.get("call_timeout", 30)),
+    )
+
+
+def _parse_policy(
+    name: str,
+    section: Mapping[str, Any],
+    default_rules: Mapping[str, Rule],
+    default_rule: Rule,
+    strip_profile_default: bool,
+) -> CommandPolicy:
+    try:
+        overrides = {action: Rule(rule) for action, rule in section.get("actions", {}).items()}
+        rules = {**default_rules, **overrides}
+        return CommandPolicy(
+            rules=rules,
+            default_rule=Rule(section.get("default", default_rule)),
+            change_configuration_allow_keys=frozenset(section.get("change_configuration_allow_keys", [])),
+            strip_charging_profile=bool(section.get("strip_charging_profile", strip_profile_default)),
+        )
+    except ValueError as exc:
+        raise ConfigError(f"[{name}.policy] {exc}") from exc
+
+
+def _parse_secondary(section: Mapping[str, Any], secrets: _Secrets) -> SecondaryConfig:
+    base = _parse_backend(
+        "secondary", section, secrets, SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE, strip_profile_default=True
+    )
+    if base.auth is AuthMode.FORWARD:
+        raise ConfigError("[secondary] auth = 'forward' would leak the charger's credentials; use 'basic' or 'none'")
+    return SecondaryConfig(
+        **vars(base),
+        forward_actions=frozenset(section.get("forward_actions", DEFAULT_SECONDARY_FORWARD_ACTIONS)),
+        max_queue=int(section.get("max_queue", 10_000)),
+    )
