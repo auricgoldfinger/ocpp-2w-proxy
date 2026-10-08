@@ -252,6 +252,8 @@ async def test_primary_disconnect_queues_selected_calls_and_recovers(primary, se
     await primary.stop()
 
     assert (await charger.call("StatusNotification", {"connectorId": 1, "status": "Charging"}))[2] == {}
+    assert (await charger.call("MeterValues", {"connectorId": 1, "transactionId": 100, "meterValue": []}))[2] == {}
+    # A reading that belongs to no transaction is stale by the time the primary is back.
     assert (await charger.call("MeterValues", {"connectorId": 1, "meterValue": []}))[2] == {}
     heartbeat = await charger.call("Heartbeat", {})
     assert heartbeat[0] == 3 and heartbeat[2]["currentTime"]  # answered locally, not an error
@@ -263,8 +265,9 @@ async def test_primary_disconnect_queues_selected_calls_and_recovers(primary, se
 
     recovered = await FakeCsms().start(port)
     try:
-        await recovered.wait_for_call("MeterValues")
-        assert recovered.actions() == ["StatusNotification", "MeterValues"]
+        await recovered.wait_for_call("StatusNotification")
+        # Billing data first, then the newest state report.
+        assert recovered.actions() == ["MeterValues", "StatusNotification"]
         assert (await charger.call("Heartbeat", {}))[2] == {"currentTime": "2026-01-01T00:00:00Z"}
     finally:
         await charger.close()

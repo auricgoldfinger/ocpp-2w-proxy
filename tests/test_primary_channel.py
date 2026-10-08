@@ -8,7 +8,7 @@ from fakes import FakeCsms
 from ocpp_2w_proxy import backoff
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
-from ocpp_2w_proxy.ocpp import Call, CallResult
+from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
 from ocpp_2w_proxy.primary_channel import PrimaryChannel
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
@@ -20,14 +20,14 @@ async def test_primary_queue_overflow_drops_meter_values_first(tmp_path):
     store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
     channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
     try:
-        channel._unavailable(Call("s", "StatusNotification", {"connectorId": 1}))
-        channel._unavailable(Call("m1", "MeterValues", {"connectorId": 1}))
-        channel._unavailable(Call("m2", "MeterValues", {"connectorId": 1}))
-        channel._unavailable(Call("st", "StopTransaction", {"transactionId": 1}))
+        channel._unavailable(Call("m0", "MeterValues", {"connectorId": 1, "transactionId": 1}))
+        channel._unavailable(Call("st1", "StopTransaction", {"transactionId": 1}))
+        channel._unavailable(Call("m1", "MeterValues", {"connectorId": 1, "transactionId": 2}))
+        channel._unavailable(Call("st2", "StopTransaction", {"transactionId": 2}))
 
-        # m1 and m2 are sacrificed so the status and the billing-critical stop survive.
-        assert [call.id for call in channel._queue] == ["s", "st"]
-        assert [call["id"] for call in store.state.primary_outbox] == ["s", "st"]
+        # The meter readings are sacrificed so the billing-critical stops survive.
+        assert [call.id for call in channel._queue] == ["st1", "st2"]
+        assert [call["id"] for call in store.state.primary_outbox] == ["st1", "st2"]
     finally:
         await channel.close()
 
@@ -39,18 +39,51 @@ async def test_primary_queue_overflow_drops_oldest_when_no_meter_values(tmp_path
     channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
     try:
         for message_id in ("one", "two", "three"):
-            channel._unavailable(Call(message_id, "StatusNotification", {"connectorId": 1}))
+            channel._unavailable(Call(message_id, "StopTransaction", {"transactionId": 1}))
 
         assert [call.id for call in channel._queue] == ["two", "three"]
     finally:
         await channel.close()
 
 
+async def test_outage_keeps_only_the_newest_status_and_drops_stale_readings(tmp_path):
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
+    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    try:
+        for message_id, status in (("a", "Preparing"), ("b", "Charging")):
+            channel._unavailable(Call(message_id, "StatusNotification", {"connectorId": 1, "status": status}))
+        channel._unavailable(Call("c", "StatusNotification", {"connectorId": 2, "status": "Available"}))
+        reply = channel._unavailable(Call("m", "MeterValues", {"connectorId": 1}))
+
+        assert reply == CallResult("m", {})
+        assert not channel._queue
+        assert sorted(call.id for call in channel._latest.values()) == ["b", "c"]
+        assert sorted(item["id"] for item in store.state.primary_latest.values()) == ["b", "c"]
+    finally:
+        await channel.close()
+
+
+async def test_live_calls_fail_while_the_primary_is_down(tmp_path):
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
+    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    try:
+        for action in ("Authorize", "StartTransaction", "DataTransfer"):
+            assert isinstance(channel._unavailable(Call("x", action, {})), CallError)
+        assert not channel._queue
+        assert not channel._latest
+    finally:
+        await channel.close()
+
+
 async def test_live_queued_actions_wait_behind_the_outbox(primary, tmp_path):
-    """A StatusNotification sent live while an older queued MeterValues is still
-    unconfirmed would overtake it on the primary: queue it behind instead."""
+    """A StatusNotification sent live while an older queued stop is still unconfirmed
+    would overtake it on the primary: keep it behind the stop instead."""
     primary.responder = lambda action, payload: (
-        None if action == "MeterValues" else FakeCsms().responder(action, payload)
+        None if action == "StopTransaction" else FakeCsms().responder(action, payload)
     )
     config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
     charger = config.chargers[CHARGER_ID]
@@ -66,18 +99,18 @@ async def test_live_queued_actions_wait_behind_the_outbox(primary, tmp_path):
             pass
 
         await channel.attach(ChargerIdentity(charger, None, None), on_call)
-        channel._queue.append(Call("old", "MeterValues", {"connectorId": 1}))  # left over from an outage
+        channel._queue.append(Call("old", "StopTransaction", {"transactionId": 1}))  # left over from an outage
 
         status = await channel.call(
             Call("new", "StatusNotification", {"connectorId": 1, "status": "Available"}), timeout=3
         )
         assert status == CallResult("new", {})  # acknowledged locally, not sent out of order
-        assert [call.id for call in channel._queue] == ["old", "new"]
+        assert [call.id for call in channel._latest.values()] == ["new"]
 
         # Actions that are never queued still go out live.
         heartbeat = await channel.call(Call("hb", "Heartbeat", {}), timeout=3)
         assert heartbeat.payload["currentTime"] == "2026-01-01T00:00:00Z"
-        await primary.wait_for_call("MeterValues")
+        await primary.wait_for_call("StopTransaction")
         await primary.wait_for_call("Heartbeat")
         assert "StatusNotification" not in primary.actions()
     finally:
@@ -93,7 +126,7 @@ async def test_overflow_never_removes_the_call_being_sent(tmp_path):
     store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
     channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
     try:
-        calls = [Call(i, "MeterValues", {"connectorId": 1}) for i in ("a", "b", "c")]
+        calls = [Call(i, "MeterValues", {"connectorId": 1, "transactionId": 1}) for i in ("a", "b", "c")]
         channel._queue.extend(calls)
         channel._in_flight = calls[0]  # the drain is waiting for its reply right now
 

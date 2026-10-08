@@ -15,13 +15,13 @@ from .backend_link import BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
+from .message_classes import MessageClass, classify, latest_key
 from .ocpp import Call, CallError, CallResult, Reply, new_message_id, now_iso, to_dict
 from .state import StateStore, restore_outbox
 from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
 
-QUEUED_ACTIONS = frozenset({"StatusNotification", "MeterValues", "StopTransaction"})
 # Dropped first when the queue overflows: meter data is expendable, stops are not.
 EXPENDABLE_ACTION = "MeterValues"
 
@@ -57,7 +57,12 @@ class PrimaryChannel:
         self._link: BackendLink | None = None
         self._reader: asyncio.Task | None = None
         self._boot_resend: asyncio.Task | None = None
+        # Billing data (stops, transaction meter readings), oldest first.
         self._queue: deque[Call] = deque(call for call, _ in restore_outbox(store.state.primary_outbox))
+        # The newest unconfirmed state report per subject; sent once the queue is empty.
+        self._latest: dict[str, Call] = {
+            latest_key(call): call for call, _ in restore_outbox(list(store.state.primary_latest.values()))
+        }
         self._in_flight: Call | None = None  # the queued head whose reply the drain awaits
         self._queue_changed = asyncio.Event()
         self._wake = asyncio.Event()
@@ -104,14 +109,19 @@ class PrimaryChannel:
 
     def start_background(self) -> None:
         """Drain restored messages at server startup when credentials are available."""
-        if self._queue:
+        if self._backlog:
             self._ensure_worker()
 
+    @property
+    def _backlog(self) -> bool:
+        return bool(self._queue or self._latest)
+
     async def call(self, call: Call, timeout: float) -> Reply:
-        # While the outbox drains, StatusNotification/MeterValues/StopTransaction
-        # wait their turn: sent live they would overtake older queued messages and
-        # the primary would see a new status before the previous transaction's stop.
-        if self._link is None or (call.action in QUEUED_ACTIONS and self._queue):
+        # While the backlog drains, billing data and state reports wait their turn: sent
+        # live they would overtake older queued messages and the primary would see a new
+        # status before the previous transaction's stop.
+        kind = classify(call)
+        if self._link is None or (kind in (MessageClass.DURABLE, MessageClass.LATEST) and self._backlog):
             return self._unavailable(call)
         if call.action == "BootNotification":
             self._remember_boot(call)
@@ -144,21 +154,35 @@ class PrimaryChannel:
         self._store.flush()
 
     def _unavailable(self, call: Call) -> Reply:
-        if call.action == "Heartbeat":
-            # The charger only asks to sync its clock; answer it locally instead of an
-            # error, so an outage does not make the charger treat it as a protocol fault.
-            logger.warning("%s answered Heartbeat locally while the primary backend is unavailable", self._charger.id)
-            return CallResult(call.id, {"currentTime": now_iso()})
-        if call.action in QUEUED_ACTIONS:
-            self._queue.append(call)
-            self._enforce_queue_limit()
-            self._persist_queue()
-            self._queue_changed.set()
-            self._ensure_worker()
-            logger.warning("%s queued %s while the primary backend is unavailable", self._charger.id, call.action)
-            return CallResult(call.id, {})
-        logger.warning("%s primary unavailable; refusing %s", self._charger.id, call.action)
-        return CallError(call.id, "GenericError", "primary backend unavailable")
+        """The primary cannot take this call now: keep what matters, answer the charger."""
+        match classify(call):
+            case MessageClass.DURABLE:
+                self._queue.append(call)
+                self._enforce_queue_limit()
+                self._persist()
+                logger.warning("%s queued %s while the primary backend is unavailable", self._charger.id, call.action)
+                return self._queued_reply(call)
+            case MessageClass.LATEST:
+                self._latest[latest_key(call)] = call
+                self._persist()
+                logger.warning("%s kept %s for later: primary unavailable", self._charger.id, call.action)
+                return self._queued_reply(call)
+            case MessageClass.DROPPABLE:
+                if call.action == "Heartbeat":
+                    # The charger only asks to sync its clock; answer it locally instead of an
+                    # error, so an outage does not make the charger treat it as a protocol fault.
+                    logger.warning("%s answered Heartbeat locally: primary unavailable", self._charger.id)
+                    return CallResult(call.id, {"currentTime": now_iso()})
+                logger.info("%s dropped %s: primary unavailable", self._charger.id, call.action)
+                return CallResult(call.id, {})
+            case MessageClass.LIVE:
+                logger.warning("%s primary unavailable; refusing %s", self._charger.id, call.action)
+                return CallError(call.id, "GenericError", "primary backend unavailable")
+
+    def _queued_reply(self, call: Call) -> Reply:
+        self._queue_changed.set()
+        self._ensure_worker()
+        return CallResult(call.id, {})
 
     def _enforce_queue_limit(self) -> None:
         while len(self._queue) > self._max_queue:
@@ -177,8 +201,9 @@ class PrimaryChannel:
             return None
         return next((c for c in candidates if c.action == EXPENDABLE_ACTION), candidates[0])
 
-    def _persist_queue(self) -> None:
+    def _persist(self) -> None:
         self._store.state.primary_outbox = [to_dict(call) for call in self._queue]
+        self._store.state.primary_latest = {key: to_dict(call) for key, call in self._latest.items()}
         self._store.save_soon()
 
     def _ensure_worker(self) -> None:
@@ -244,7 +269,7 @@ class PrimaryChannel:
         backoff = Backoff()
         while not self._closed:
             if self._link is None:
-                if self._on_call is None and not self._queue:
+                if self._on_call is None and not self._backlog:
                     self._queue_changed.clear()
                     await self._queue_changed.wait()
                     continue
@@ -276,9 +301,9 @@ class PrimaryChannel:
                 logger.exception("%s primary connection failed unexpectedly", self._charger.id)
             # Never discard a healthy link a session just attached to: without its reader,
             # every call of that session would time out against the primary (UC-002 A4).
-            if dead or (self._on_call is None and not self._queue):
+            if dead or (self._on_call is None and not self._backlog):
                 await self._discard(link)
-                if dead and (self._on_call is not None or self._queue):
+                if dead and (self._on_call is not None or self._backlog):
                     await self._backoff_sleep(backoff.next_delay())
             # A parked link stays registered and is pumped again on the next loop turn.
 
@@ -320,29 +345,44 @@ class PrimaryChannel:
 
     async def _drain(self, link: BackendLink) -> None:
         while True:
-            if not self._queue:
-                if self._on_call is None:
-                    return  # no session: park the healthy link, nothing to deliver
+            if self._queue:
+                await self._send_queue_head(link)
+            elif self._latest:
+                await self._send_latest(link)
+            elif self._on_call is None:
+                return  # no session: park the healthy link, nothing to deliver
+            else:
                 self._queue_changed.clear()
                 await self._queue_changed.wait()
-                continue
-            call = self._queue[0]
-            outgoing = call.with_id(new_message_id())
-            self._in_flight = call
-            try:
-                reply = await link.call(outgoing, self._backend.call_timeout)
-            except (BackendUnavailable, TimeoutError) as exc:
-                logger.warning("%s primary did not confirm queued %s; will retry", self._charger.id, call.action)
-                raise BackendUnavailable(f"primary did not confirm queued {call.action}") from exc
-            finally:
-                self._in_flight = None
-            if isinstance(reply, CallError):
-                logger.warning(
-                    "%s primary rejected queued %s: %s %s",
-                    self._charger.id,
-                    call.action,
-                    reply.code,
-                    reply.description,
-                )
-            self._queue.popleft()
-            self._persist_queue()
+
+    async def _send_queue_head(self, link: BackendLink) -> None:
+        call = self._queue[0]
+        self._in_flight = call
+        try:
+            reply = await self._deliver(link, call)
+        finally:
+            self._in_flight = None
+        self._log_rejection(call, reply)
+        self._queue.popleft()
+        self._persist()
+
+    async def _send_latest(self, link: BackendLink) -> None:
+        key, call = next(iter(self._latest.items()))
+        reply = await self._deliver(link, call)
+        self._log_rejection(call, reply)
+        if self._latest.get(key) is call:  # a newer report may have replaced it meanwhile
+            del self._latest[key]
+        self._persist()
+
+    async def _deliver(self, link: BackendLink, call: Call) -> Reply:
+        try:
+            return await link.call(call.with_id(new_message_id()), self._backend.call_timeout)
+        except (BackendUnavailable, TimeoutError) as exc:
+            logger.warning("%s primary did not confirm queued %s; will retry", self._charger.id, call.action)
+            raise BackendUnavailable(f"primary did not confirm queued {call.action}") from exc
+
+    def _log_rejection(self, call: Call, reply: Reply) -> None:
+        if isinstance(reply, CallError):
+            logger.warning(
+                "%s primary rejected queued %s: %s %s", self._charger.id, call.action, reply.code, reply.description
+            )
