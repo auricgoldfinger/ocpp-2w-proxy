@@ -4,10 +4,11 @@ The charger must never notice the secondary backend: it can be slow, down or rej
 and charging (driven by the primary) carries on. Transaction-related calls are queued on
 disk and replayed in order once the secondary is reachable again.
 
-The channel belongs to the server, not to a charger session: it connects at startup,
-replays the cached boot/status on every (re)connection, and drains its queue even while
-the charger is offline. Commands arrive only while a session is attached; without one,
-the backend is told the charger is disconnected.
+The channel belongs to the server, not to a charger session: it connects while a session
+is attached or billing data waits, replays the cached boot/status on every (re)connection,
+and drains its queue even after the charger has gone. Once the queue is empty and no
+session is attached it disconnects, so the backend does not see an offline charger as
+online.
 """
 
 from __future__ import annotations
@@ -107,6 +108,7 @@ class SecondaryChannel:
         self._user_agent = identity.user_agent
         self._on_call = on_call
         self._generation += 1
+        self._queue_changed.set()  # wakes an idle worker: it connects now
         return self._generation
 
     def detach(self, token: int) -> None:
@@ -114,10 +116,15 @@ class SecondaryChannel:
         if token != self._generation:
             return  # a newer session owns the channel now
         self._on_call = None
+        self._queue_changed.set()  # wakes the sender: with nothing left to deliver it disconnects
 
     def start_background(self) -> None:
-        """Connect and drain from server startup, with or without a charger session."""
+        """Start the worker at server startup; it connects once there is something to do."""
         self._ensure_worker()
+
+    def _wanted(self) -> bool:
+        """A connection is needed: a session is attached or billing data is waiting."""
+        return self._on_call is not None or any(item.durable for item in self._queue)
 
     async def close(self) -> None:
         self._closed = True
@@ -209,6 +216,10 @@ class SecondaryChannel:
         """Connect, serve, reconnect: for as long as the server runs."""
         backoff = Backoff()
         while not self._closed:
+            if not self._wanted():
+                self._queue_changed.clear()
+                await self._queue_changed.wait()
+                continue
             try:
                 link = await BackendLink.open(self.name, self._url, self._headers, self._user_agent, self._traffic)
             except (OSError, TimeoutError, InvalidHandshake, InvalidURI) as exc:
@@ -220,7 +231,8 @@ class SecondaryChannel:
                 except Exception:
                     # Never let a bug end the secondary for the rest of the server run.
                     logger.exception("%s connection failed unexpectedly", self.name)
-            await self._sleep(backoff.next_delay())
+            if self._wanted():
+                await self._sleep(backoff.next_delay())
 
     async def _serve(self, link: BackendLink) -> bool:
         """Run one connection until it drops. Returns True if the boot was accepted."""
@@ -259,12 +271,15 @@ class SecondaryChannel:
         self._queue = deque(item for item in self._queue if item.durable)
 
     async def _sync_and_drain(self, link: BackendLink, booted: asyncio.Event) -> None:
-        await self._boot(link)
+        if not await self._boot(link):
+            return  # nobody needs this connection any more
         booted.set()
         self._start_heartbeats(link)
         await self._send_statuses(link)
         while True:
             while not self._queue:
+                if not self._wanted():
+                    return  # drained and no session: disconnect
                 self._queue_changed.clear()
                 await self._queue_changed.wait()
             await self._send_head(link)
@@ -295,15 +310,16 @@ class SecondaryChannel:
             self._heartbeat_interval = interval
             self._start_heartbeats(self._link)  # the charger's boot may teach us the interval mid-connection
 
-    async def _boot(self, link: BackendLink) -> None:
+    async def _boot(self, link: BackendLink) -> bool:
+        """Get the backend to accept the boot. False: it never did and nobody needs it now."""
         if not self.forwards("BootNotification"):
-            return  # this backend is not configured to receive boots
+            return True  # this backend is not configured to receive boots
         if self._queue and self._queue[0].call.action == "BootNotification":
-            return  # the charger just booted; its own BootNotification is first in line
+            return True  # the charger just booted; its own BootNotification is first in line
         if self._state.boot is None:
             logger.warning("no BootNotification cached yet; %s gets none until the charger reboots", self.name)
-            return
-        while True:
+            return True
+        while self._wanted():
             try:
                 reply = await link.call(Call(new_message_id(), "BootNotification", self._state.boot), self._timeout)
             except TimeoutError:
@@ -311,12 +327,13 @@ class SecondaryChannel:
                 continue
             if isinstance(reply, CallResult) and reply.payload.get("status") == "Accepted":
                 self._note_heartbeat_interval(reply)
-                return
+                return True
             interval = DEFAULT_BOOT_RETRY_INTERVAL
             if isinstance(reply, CallResult):
                 interval = max(10, int(reply.payload.get("interval") or DEFAULT_BOOT_RETRY_INTERVAL))
             logger.warning("%s did not accept BootNotification (%s); retry in %ss", self.name, reply, interval)
             await self._sleep(interval)
+        return False
 
     async def _send_statuses(self, link: BackendLink) -> None:
         if not self.forwards("StatusNotification"):

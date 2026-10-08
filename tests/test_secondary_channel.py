@@ -189,6 +189,11 @@ async def test_synthetic_heartbeats_at_the_requested_interval(tmp_path):
         channel = SecondaryChannel(
             config.secondaries[0], config.chargers["CH1"], store, TransactionMap(store), TrafficLog("CH1", False)
         )
+
+        async def on_call(call):  # pragma: no cover
+            pass
+
+        channel.attach(ChargerIdentity(config.chargers["CH1"], None, None), on_call)
         channel.start_background()
         try:
             await csms.wait_for_call("BootNotification")  # the cached boot is replayed
@@ -223,3 +228,48 @@ async def test_a_timed_out_message_stays_queued_and_forces_a_reconnect(tmp_path)
 
     assert channel._queue[0] is stop
     assert channel._transactions.to_secondary(100, "tap") == 9  # the link to its transaction is kept
+
+
+def _unattached_channel(config, store):
+    return SecondaryChannel(
+        config.secondaries[0], config.chargers["CH1"], store, TransactionMap(store), TrafficLog("CH1", False)
+    )
+
+
+async def test_idle_secondary_without_session_or_queue_stays_disconnected(tmp_path):
+    csms = await FakeCsms().start()
+    try:
+        config = make_config({"name": "tap", "url": csms.url})
+        channel = _unattached_channel(config, StateStore(tmp_path / "CH1.json"))
+        channel.start_background()
+        try:
+            await asyncio.sleep(0.3)
+            assert not csms.connected.is_set()
+        finally:
+            await channel.close()
+    finally:
+        await csms.stop()
+
+
+async def test_restored_queue_is_delivered_without_a_session_and_then_disconnects(tmp_path):
+    csms = await FakeCsms().start()
+    try:
+        config = make_config({"name": "tap", "url": csms.url})
+        store = StateStore(tmp_path / "CH1.json")
+        store.state.outboxes["tap"] = [
+            {"call": {"id": "m", "action": "MeterValues", "payload": {"connectorId": 1}}, "start_ref": None}
+        ]
+        store.save()
+        channel = _unattached_channel(config, StateStore(tmp_path / "CH1.json"))
+        channel.start_background()
+        try:
+            await csms.wait_for_call("MeterValues")
+            for _ in range(100):  # drained and nobody attached: the link is closed again
+                if not csms.connected.is_set():
+                    break
+                await asyncio.sleep(0.05)
+            assert not csms.connected.is_set()
+        finally:
+            await channel.close()
+    finally:
+        await csms.stop()

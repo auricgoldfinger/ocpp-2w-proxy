@@ -577,18 +577,25 @@ async def test_proxy_shutdown_closes_the_charger_connection_politely(primary, se
     assert charger.ws.close_code == 1001
 
 
-async def test_backend_commands_get_an_error_while_the_charger_is_offline(primary, secondary, start_proxy, caplog):
+async def test_secondary_disconnects_while_the_charger_is_offline_and_returns_with_it(
+    primary, secondary, start_proxy, caplog
+):
+    """A secondary that stayed connected would show an offline charger as online and
+    could only answer its commands with errors."""
     url = await start_proxy(primary.url, secondary.url)
     charger = await FakeCharger.connect(url, CHARGER_ID)
     await charger.call("Heartbeat", {})
+    await secondary.connected.wait()
     await charger.close()
     with caplog.at_level(logging.INFO):
         await eventually(lambda: any(r.getMessage() == f"{CHARGER_ID} session closed" for r in caplog.records))
+    await eventually(lambda: not secondary.connected.is_set())
 
-    reply = await secondary.call("GetConfiguration", {"key": ["HeartbeatInterval"]})
-    assert reply[0] == 4
-    assert reply[2] == "GenericError"
-    assert "charger is disconnected" in reply[3]
+    again = await FakeCharger.connect(url, CHARGER_ID)
+    try:
+        await asyncio.wait_for(secondary.connected.wait(), 5)
+    finally:
+        await again.close()
 
 
 async def test_refused_start_opens_no_secondary_session(primary, secondary, start_proxy):
