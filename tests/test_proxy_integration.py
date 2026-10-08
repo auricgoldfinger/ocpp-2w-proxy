@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from ocpp_2w_proxy import server as server_module
 from ocpp_2w_proxy.config import parse
+from ocpp_2w_proxy.primary_channel import PrimaryChannel
 from ocpp_2w_proxy.server import ProxyServer
 from ocpp_2w_proxy.session import ChargerSession
 
@@ -349,6 +350,21 @@ async def test_a_charger_reusing_message_ids_does_not_collide_start_records(prim
         assert "1" not in state["pending_primary_starts"]
     finally:
         await charger.close()
+
+
+async def test_a_failing_relay_is_logged(primary, secondary, start_proxy, monkeypatch, caplog):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})
+
+    async def broken(self, call, timeout):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(PrimaryChannel, "call", broken)
+    with caplog.at_level(logging.ERROR):
+        await charger.send_raw(json.dumps([2, "x", "Heartbeat", {}]))
+        await eventually(lambda: any("relaying a charger call failed" in r.getMessage() for r in caplog.records))
+    await charger.close()
 
 
 async def test_malformed_charger_reply_ends_the_backends_command_with_an_error(primary, secondary, start_proxy):

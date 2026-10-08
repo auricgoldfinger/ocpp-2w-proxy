@@ -130,7 +130,12 @@ class ChargerSession:
         # while a call waits for the primary's answer.
         task = asyncio.create_task(coroutine)
         self._relays.add(task)
-        task.add_done_callback(self._relays.discard)
+        task.add_done_callback(self._relay_finished)
+
+    def _relay_finished(self, task: asyncio.Task) -> None:
+        self._relays.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("%s relaying a charger call failed", self.charger_id, exc_info=task.exception())
 
     async def _relay_charger_call(self, call: Call) -> None:
         if call.action == "StartTransaction":
