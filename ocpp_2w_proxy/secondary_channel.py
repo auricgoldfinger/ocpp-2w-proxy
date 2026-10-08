@@ -386,9 +386,7 @@ class SecondaryChannel:
         if reply.payload.get("status") == "Accepted":
             self._note_heartbeat_interval(reply)  # its answer to the charger's own boot counts too
             return
-        logger.warning(
-            "secondary backend answered the charger's BootNotification with %r", reply.payload.get("status")
-        )
+        logger.warning("secondary backend answered the charger's BootNotification with %r", reply.payload.get("status"))
 
 
 def _warn_if_not_accepted(reply: CallResult, action: str) -> None:

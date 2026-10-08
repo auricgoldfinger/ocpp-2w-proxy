@@ -142,6 +142,35 @@ async def test_unreadable_queued_entries_are_skipped_at_startup(tmp_path):
         await channel.close()
 
 
+async def test_reconnect_replays_the_cached_boot(primary, tmp_path):
+    """Backends that expect a BootNotification on every new connection must get
+    one when the worker reconnects mid-session."""
+    config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    channel = PrimaryChannel(
+        config.primary,
+        charger,
+        StateStore.for_charger(config.proxy.state_dir, CHARGER_ID),
+        TrafficLog(CHARGER_ID, False),
+    )
+    try:
+
+        async def on_call(call: Call) -> None:
+            pass
+
+        await channel.attach(ChargerIdentity(charger, None, None), on_call)
+        boot = await channel.call(Call("b", "BootNotification", {"chargePointVendor": "Grubby"}), timeout=3)
+        assert boot.payload["status"] == "Accepted"
+        await primary.wait_for_call("BootNotification")  # the charger's own boot
+
+        await primary.drop_connection()  # the primary connection drops; the worker reconnects
+
+        boots = await primary.wait_for_call("BootNotification", count=2)
+        assert boots[-1]["chargePointVendor"] == "Grubby"  # the cached boot was replayed
+    finally:
+        await channel.close()
+
+
 async def test_stale_detach_cannot_unhook_the_newer_session(primary, tmp_path):
     """UC-002 BR-004: a replaced session that outlives the replacement grace still runs
     detach() during its cleanup; that must not unhook the newer session's routing."""
