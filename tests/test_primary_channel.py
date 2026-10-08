@@ -35,6 +35,36 @@ async def test_primary_queue_drops_oldest_when_full(tmp_path, monkeypatch):
         await channel.close()
 
 
+async def test_stale_detach_cannot_unhook_the_newer_session(primary, tmp_path):
+    """UC-002 BR-004: a replaced session that outlives the replacement grace still runs
+    detach() during its cleanup; that must not unhook the newer session's routing."""
+    config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
+    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    routed = []
+    try:
+
+        async def on_call_a(call: Call) -> None:
+            routed.append("a")
+
+        async def on_call_b(call: Call) -> None:
+            routed.append("b")
+
+        token_a = await channel.attach(ChargerIdentity(charger, None, None), on_call_a)
+        token_b = await channel.attach(ChargerIdentity(charger, None, None), on_call_b)
+
+        channel.detach(token_a)  # the stale session's cleanup, after the grace expired
+        await channel._dispatch_call(Call("stale", "Heartbeat", {}))
+        assert routed == ["b"]
+
+        channel.detach(token_b)  # the current session ends normally
+        await channel._dispatch_call(Call("after", "Heartbeat", {}))
+        assert routed == ["b"]
+    finally:
+        await channel.close()
+
+
 async def test_attach_during_backoff_sleep_is_served_and_drained(primary, tmp_path, monkeypatch):
     """A session attaching while the worker waits out a long retry is served at once.
 

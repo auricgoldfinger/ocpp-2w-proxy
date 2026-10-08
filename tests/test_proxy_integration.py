@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 
 import pytest
 from conftest import CHARGER_ID, make_raw_config
 from fakes import FakeCharger, FakeCsms
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
+from ocpp_2w_proxy import server as server_module
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.server import ProxyServer
+from ocpp_2w_proxy.session import ChargerSession
 
 BOOT = {"chargePointVendor": "SolarEdge", "chargePointModel": "ONE"}
 START = {"connectorId": 1, "idTag": "04A2B3C4", "meterStart": 0, "timestamp": "2026-01-01T10:00:00Z"}
@@ -421,3 +424,40 @@ async def test_five_secondary_backends_per_session(primary, start_proxy):
     finally:
         for backend in backends:
             await backend.stop()
+
+
+async def test_stale_session_cannot_unhook_its_replacement(primary, start_proxy, monkeypatch, caplog):
+    """UC-002 BR-004: the old session gets 15 seconds to finish. When it outlives that
+    grace, its cleanup still runs detach() — which must not unhook the replacement."""
+    monkeypatch.setattr(server_module, "REPLACE_TIMEOUT_SECONDS", 0.05)
+    real_read = ChargerSession._read_charger
+    stale_read_hung = asyncio.Event()
+    unblock_stale = asyncio.Event()
+    first_session = True
+
+    async def hang_first_read(self):
+        nonlocal first_session
+        if first_session:
+            first_session = False
+            stale_read_hung.set()
+            await unblock_stale.wait()
+        await real_read(self)
+
+    monkeypatch.setattr(ChargerSession, "_read_charger", hang_first_read)
+
+    with caplog.at_level(logging.INFO):
+        url = await start_proxy(primary.url)
+        await FakeCharger.connect(url, CHARGER_ID)
+        await stale_read_hung.wait()  # the old session is attached and now stuck in its read loop
+        new = await FakeCharger.connect(url, CHARGER_ID)  # replaces it; the grace expires at 0.05s
+        assert (await new.call("Heartbeat", {}))[0] == 3
+
+        unblock_stale.set()  # the stale session finally runs its cleanup, detach() included
+        session_closed = f"{CHARGER_ID} session closed"
+        await eventually(lambda: any(r.getMessage() == session_closed for r in caplog.records))
+
+        # The stale session's detach() must not have unhooked the replacement.
+        reply = await primary.call("Reset", {})
+        assert reply[0] == 3
+        assert new.received_calls[-1][2:] == ["Reset", {}]
+        await new.close()

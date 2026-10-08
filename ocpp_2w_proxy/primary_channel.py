@@ -47,8 +47,11 @@ class PrimaryChannel:
         self._store = store
         self._traffic = traffic
         self._identity = ChargerIdentity(charger, None, None)
-        # A session is attached exactly while _on_call is set; no separate flag to keep in sync.
+        # A session is attached exactly while _on_call is set. The generation ties that routing
+        # to the latest attach, so a replaced session that outlives the server's replacement
+        # timeout cannot unhook its successor during cleanup (UC-002 BR-004).
         self._on_call: OnCall | None = None
+        self._generation = 0
         self._link: BackendLink | None = None
         self._reader: asyncio.Task | None = None
         self._queue = deque(from_dict(item) for item in store.state.primary_outbox)
@@ -58,27 +61,39 @@ class PrimaryChannel:
         self._worker: asyncio.Task | None = None
         self._closed = False
 
-    async def attach(self, identity: ChargerIdentity, on_call: OnCall) -> None:
+    async def attach(self, identity: ChargerIdentity, on_call: OnCall) -> int:
         """Open the primary for a new session; fail this connection if the initial open fails.
 
         _connect() hands out only links with a live reader, so the new session's calls are
-        answered rather than sent into a socket nobody reads (UC-002 A4).
+        answered rather than sent into a socket nobody reads (UC-002 A4). The returned token
+        identifies this attach: hand it to detach() to end this session's routing.
         """
         self._identity = identity
         self._on_call = on_call
+        self._generation += 1
+        token = self._generation
         self._queue_changed.set()
         self._wake.set()
         self._ensure_worker()
         try:
             await self._connect()
         except OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials:
-            self._on_call = None
-            self._queue_changed.set()
-            self._wake.set()
+            self._release(token)
             raise
+        return token
 
-    def detach(self) -> None:
-        """End charger-facing command routing while allowing the durable outbox to drain."""
+    def detach(self, token: int) -> None:
+        """End charger-facing command routing while allowing the durable outbox to drain.
+
+        Only the session whose attach() returned `token` may unhook the channel: a replaced
+        session that outlives REPLACE_TIMEOUT_SECONDS still runs this cleanup, but it must
+        not take the newer session's routing down with it (UC-002 BR-004).
+        """
+        self._release(token)
+
+    def _release(self, token: int) -> None:
+        if token != self._generation:
+            return  # a newer session owns the channel now
         self._on_call = None
         self._queue_changed.set()
         self._wake.set()

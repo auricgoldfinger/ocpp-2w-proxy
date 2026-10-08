@@ -60,7 +60,7 @@ class ChargerSession:
 
     async def run(self) -> None:
         try:
-            await self._primary.attach(self._identity, self._on_primary_call)
+            token = await self._primary.attach(self._identity, self._on_primary_call)
         except (OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials) as exc:
             logger.error("%s primary backend unavailable (%s); closing charger connection", self.charger_id, exc)
             await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "primary backend unavailable")
@@ -79,7 +79,7 @@ class ChargerSession:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            self._primary.detach()
+            self._primary.detach(token)
             await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "proxy session ended")
 
     def _build_secondaries(self) -> dict[str, SecondaryChannel]:
