@@ -28,7 +28,7 @@ references below describe follow-up work, not completed support for those requir
 | `backend_auth.py` | Upstream URL + Authorization header per backend auth mode |
 | `backend_link.py` | One WebSocket to a backend; `call()` with reply correlation, `serve()` read loop |
 | `primary_channel.py` | Reconnecting Primary Backend link and durable outbox for selected charger messages |
-| `secondary_channel.py` | Reconnecting store-and-forward link to the secondary (boot replay, durable queue) |
+| `secondary_channel.py` | Reconnecting store-and-forward link to each secondary backend (boot replay, durable per-backend queue) |
 | `transactions.py` | primary ↔ secondary transactionId mapping and payload rewriting |
 | `command_router.py` | Proxy-unique ids for backend→charger commands; routes replies back |
 | `state.py` | Atomic JSON persistence per charger (`<state_dir>/<id>.json`) |
