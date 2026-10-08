@@ -47,6 +47,52 @@ CANNED_ANSWERS: Mapping[str, dict[str, Any]] = {
     "UpdateFirmware": {},
 }
 
+# UC-001 BR-007: commands that change the charger's behavior, settings or authorization.
+# Each may be forwarded by at most one backend.
+EXCLUSIVE_ACTIONS: frozenset[str] = frozenset(
+    {
+        "SetChargingProfile",
+        "ClearChargingProfile",
+        "ChangeConfiguration",
+        "ChangeAvailability",
+        "Reset",
+        "ClearCache",
+        "SendLocalList",
+        "ReserveNow",
+        "CancelReservation",
+        "UpdateFirmware",
+        "DataTransfer",
+        "RemoteStartTransaction",
+    }
+)
+
+# UC-001 BR-008: commands that can let a card charge without the primary backend's Card
+# Authorization. Only the primary backend may forward them.
+AUTHORIZATION_ACTIONS: frozenset[str] = frozenset(
+    {
+        "RemoteStartTransaction",
+        "SendLocalList",
+        "ReserveNow",
+        "CancelReservation",
+    }
+)
+
+# OCPP 1.6 configuration keys that change the charger's authorization behavior: the local
+# authorization list, offline authorization, pre-authorization, authorization of remote
+# starts and stopping on an invalid card. Only the primary backend may change them.
+AUTHORIZATION_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "LocalAuthListEnabled",
+        "LocalAuthorizeOffline",
+        "LocalPreAuthorize",
+        "AllowOfflineTxForUnknownId",
+        "AuthorizationCacheEnabled",
+        "AuthorizeRemoteTxRequests",
+        "StopTransactionOnInvalidId",
+    }
+)
+
+
 # Billing backend (Tap): may start/stop sessions and read state, but must not touch anything
 # the control backend (SolarEdge) relies on: charging profiles, configuration, availability,
 # firmware, the local authorization list.
@@ -94,11 +140,15 @@ class CommandPolicy:
     def rule_for(self, action: str) -> Rule:
         return self.rules.get(action, self.default_rule)
 
+    def effective_rule(self, call: Call) -> Rule:
+        """The rule that applies to this call: policy rule, with per-key configuration overrides."""
+        if call.action == "ChangeConfiguration" and call.payload.get("key") in self.change_configuration_allow_keys:
+            return Rule.FORWARD
+        return self.rule_for(call.action)
+
     def decide(self, call: Call) -> Call | Reply:
         """Return the (possibly transformed) Call to forward, or the Reply the proxy sends back."""
-        rule = self.rule_for(call.action)
-        if call.action == "ChangeConfiguration" and call.payload.get("key") in self.change_configuration_allow_keys:
-            rule = Rule.FORWARD
+        rule = self.effective_rule(call)
 
         match rule:
             case Rule.FORWARD:
