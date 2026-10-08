@@ -11,7 +11,7 @@ from ocpp_2w_proxy.policy import (
 )
 
 SECONDARY = CommandPolicy(
-    SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE, frozenset({"MeterValueSampleInterval"}), True
+    SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE, frozenset({"metervaluesampleinterval"}), True
 )
 PRIMARY = CommandPolicy(PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE)
 
@@ -52,6 +52,14 @@ def test_secondary_unknown_action_is_not_supported():
 def test_change_configuration_allowlisted_key_is_forwarded():
     call = Call("1", "ChangeConfiguration", {"key": "MeterValueSampleInterval", "value": "60"})
     assert SECONDARY.decide(call) == call
+
+
+def test_change_configuration_keys_match_case_insensitively():
+    """OCPP configuration keys are CiStrings: the charger may spell them in any case."""
+    shouty = Call("1", "ChangeConfiguration", {"key": "METERVALUESAMPLEINTERVAL", "value": "60"})
+    assert SECONDARY.decide(shouty) == shouty
+    denied = Call("1", "ChangeConfiguration", {"key": "LocalAuthListEnabled", "value": "true"})
+    assert SECONDARY.decide(denied) == CallResult("1", {"status": "Rejected"})
 
 
 def test_remote_start_charging_profile_is_stripped_when_forwarded():

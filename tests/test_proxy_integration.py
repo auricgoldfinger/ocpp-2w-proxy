@@ -446,6 +446,28 @@ async def test_tx_profile_from_secondary_is_translated(primary, secondary, start
     await charger.close()
 
 
+async def test_case_insensitive_configuration_key_from_secondary(primary, secondary, start_proxy):
+    """Configuration keys are CiStrings: any case spelling of an allowed key is
+    forwarded, and no case spelling of an authorization key is."""
+    url = await start_proxy(
+        primary.url,
+        secondary.url,
+        primary={"policy": {"actions": {"ChangeConfiguration": "answer"}}},
+        secondary={"policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]}},
+    )
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+
+    allowed = await secondary.call("ChangeConfiguration", {"key": "meterValueSampleInterval", "value": "30"})
+    assert allowed[2] == {"status": "Accepted"}
+    assert charger.received_calls[-1][2:] == ["ChangeConfiguration", {"key": "meterValueSampleInterval", "value": "30"}]
+
+    denied = await secondary.call("ChangeConfiguration", {"key": "LOCALAUTHLISTENABLED", "value": "true"})
+    assert denied[2] == {"status": "Rejected"}
+    assert len(charger.received_calls) == 1
+    await charger.close()
+
+
 async def test_slow_backend_still_gets_its_stop_after_the_fast_one_stopped(primary, start_proxy):
     """The fast backend confirming its StopTransaction must not delete the slow
     backend's transaction mapping: that one still owes its own Stop."""

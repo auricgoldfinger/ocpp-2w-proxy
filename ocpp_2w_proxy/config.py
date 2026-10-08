@@ -318,17 +318,26 @@ def _parse_policy(
     default_rules: Mapping[str, Rule],
     default_rule: Rule,
 ) -> CommandPolicy:
+    allow_keys = _lowercase_keys(section.get("change_configuration_allow_keys", []), name)
     try:
         overrides = {action: Rule(rule) for action, rule in section.get("actions", {}).items()}
         rules = {**default_rules, **overrides}
         return CommandPolicy(
             rules=rules,
             default_rule=Rule(section.get("default", default_rule)),
-            change_configuration_allow_keys=frozenset(section.get("change_configuration_allow_keys", [])),
+            change_configuration_allow_keys=allow_keys,
             strip_charging_profile=bool(section.get("strip_charging_profile", False)),
         )
     except ValueError as exc:
         raise ConfigError(f"[{name}.policy] {exc}") from exc
+
+
+def _lowercase_keys(keys: Any, backend_name: str) -> frozenset[str]:
+    """OCPP configuration keys are case-insensitive CiStrings: normalize to lowercase
+    so that case variations cannot slip past the authorization-key checks."""
+    if not isinstance(keys, list) or not all(isinstance(key, str) for key in keys):
+        raise ConfigError(f"[{backend_name}.policy] change_configuration_allow_keys must be a list of key names")
+    return frozenset(key.lower() for key in keys)
 
 
 def _parse_secondary(name: str, section: Mapping[str, Any], secrets: _Secrets) -> SecondaryConfig:

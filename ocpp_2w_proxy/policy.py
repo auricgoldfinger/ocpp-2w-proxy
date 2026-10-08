@@ -80,15 +80,16 @@ AUTHORIZATION_ACTIONS: frozenset[str] = frozenset(
 # OCPP 1.6 configuration keys that change the charger's authorization behavior: the local
 # authorization list, offline authorization, pre-authorization, authorization of remote
 # starts and stopping on an invalid card. Only the primary backend may change them.
+# Keys are lowercase: OCPP configuration keys are case-insensitive (CiString).
 AUTHORIZATION_CONFIG_KEYS: frozenset[str] = frozenset(
     {
-        "LocalAuthListEnabled",
-        "LocalAuthorizeOffline",
-        "LocalPreAuthorize",
-        "AllowOfflineTxForUnknownId",
-        "AuthorizationCacheEnabled",
-        "AuthorizeRemoteTxRequests",
-        "StopTransactionOnInvalidId",
+        "localauthlistenabled",
+        "localauthorizeoffline",
+        "localpreauthorize",
+        "allowofflinetxforunknownid",
+        "authorizationcacheenabled",
+        "authorizeremotextxrequests",
+        "stoptransactiononinvalidid",
     }
 )
 
@@ -127,6 +128,7 @@ PRIMARY_DEFAULT_RULE = Rule.FORWARD
 class CommandPolicy:
     rules: Mapping[str, Rule]
     default_rule: Rule
+    # Lowercase OCPP configuration keys: CiString comparison is case-insensitive.
     change_configuration_allow_keys: frozenset[str] = frozenset()
     strip_charging_profile: bool = False
 
@@ -142,8 +144,10 @@ class CommandPolicy:
 
     def effective_rule(self, call: Call) -> Rule:
         """The rule that applies to this call: policy rule, with per-key configuration overrides."""
-        if call.action == "ChangeConfiguration" and call.payload.get("key") in self.change_configuration_allow_keys:
-            return Rule.FORWARD
+        if call.action == "ChangeConfiguration":
+            key = call.payload.get("key")
+            if isinstance(key, str) and key.lower() in self.change_configuration_allow_keys:
+                return Rule.FORWARD
         return self.rule_for(call.action)
 
     def decide(self, call: Call) -> Call | Reply:

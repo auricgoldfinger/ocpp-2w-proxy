@@ -100,7 +100,18 @@ def test_secondary_authorization_settings_key_is_rejected():
             {"name": "tap", "url": "wss://x", "policy": {"change_configuration_allow_keys": ["LocalAuthListEnabled"]}}
         ],
     )
-    with pytest.raises(ConfigError, match="LocalAuthListEnabled"):
+    with pytest.raises(ConfigError, match="localauthlistenabled"):
+        parse(bad, {})
+
+
+def test_authorization_settings_key_is_rejected_in_any_case():
+    bad = raw(
+        primary={"url": "wss://p", "policy": {"actions": {"ChangeConfiguration": "answer"}}},
+        secondary=[
+            {"name": "tap", "url": "wss://x", "policy": {"change_configuration_allow_keys": ["LOCALAUTHLISTENABLED"]}}
+        ],
+    )
+    with pytest.raises(ConfigError, match="localauthlistenabled"):
         parse(bad, {})
 
 
@@ -114,7 +125,7 @@ def test_configuration_key_blocked_while_primary_forwards_all_changes():
             }
         ]
     )
-    with pytest.raises(ConfigError, match="MeterValueSampleInterval.*forwards all configuration changes"):
+    with pytest.raises(ConfigError, match="metervaluesampleinterval.*forwards all configuration changes"):
         parse(bad, {})
 
 
@@ -130,11 +141,11 @@ def test_configuration_key_permitted_for_one_backend_only():
             {
                 "name": "stats",
                 "url": "wss://y",
-                "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval", "HeartbeatInterval"]},
+                "policy": {"change_configuration_allow_keys": ["meterValueSampleInterval", "HeartbeatInterval"]},
             },
         ],
     )
-    with pytest.raises(ConfigError, match="configuration key 'MeterValueSampleInterval' is permitted for both"):
+    with pytest.raises(ConfigError, match="configuration key 'metervaluesampleinterval' is permitted for both"):
         parse(raw_config, {})
 
 
@@ -152,7 +163,7 @@ def test_configuration_key_permitted_for_one_backend():
         ),
         {},
     )
-    assert config.secondaries[0].policy.change_configuration_allow_keys == frozenset({"MeterValueSampleInterval"})
+    assert config.secondaries[0].policy.change_configuration_allow_keys == frozenset({"metervaluesampleinterval"})
 
 
 def test_invalid_log_level_is_rejected():
