@@ -64,7 +64,8 @@ class ChargerConfig:
     id: str
     password: str | None
     primary_id: str
-    secondary_id: str
+    # Backend name -> the id that backend knows this charger by (defaults to the charger id).
+    secondary_ids: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,7 @@ class Config:
     proxy: ProxyConfig
     chargers: Mapping[str, ChargerConfig]
     primary: BackendConfig
-    secondary: SecondaryConfig | None
+    secondaries: tuple[SecondaryConfig, ...]
 
 
 def load(path: Path, environ: Mapping[str, str] = os.environ) -> Config:
@@ -106,9 +107,40 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     if "primary" not in raw:
         raise ConfigError("[primary] backend is required")
     primary = _parse_backend("primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE)
-    secondary = _parse_secondary(raw["secondary"], secrets) if "secondary" in raw else None
-    _validate_command_assignments(primary, [secondary] if secondary else ())
-    return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondary)
+    secondaries = _parse_secondaries(raw.get("secondary"), secrets)
+    _validate_charger_backend_ids(chargers, secondaries)
+    _validate_command_assignments(primary, secondaries)
+    return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondaries)
+
+
+def _parse_secondaries(entries: Any, secrets: _Secrets) -> tuple[SecondaryConfig, ...]:
+    if entries is None:
+        return ()
+    if isinstance(entries, Mapping):
+        raise ConfigError("[secondary] entries are [[secondary]] array-of-tables, each with a unique name")
+    secondaries: list[SecondaryConfig] = []
+    names: set[str] = set()
+    for section in entries:
+        if not isinstance(section, Mapping):
+            raise ConfigError("[[secondary]] entries must be tables")
+        name = _charger_id(section.get("name"), "[[secondary]] name")
+        if name in names:
+            raise ConfigError(f"duplicate secondary backend name {name!r}")
+        names.add(name)
+        secondaries.append(_parse_secondary(name, section, secrets))
+    return tuple(secondaries)
+
+
+def _validate_charger_backend_ids(
+    chargers: Mapping[str, ChargerConfig], secondaries: Sequence[SecondaryConfig]
+) -> None:
+    names = {backend.name for backend in secondaries}
+    for charger in chargers.values():
+        unknown = set(charger.secondary_ids) - names
+        if unknown:
+            raise ConfigError(
+                f"charger {charger.id!r}: secondary_ids names backends that are not configured: {sorted(unknown)}"
+            )
 
 
 def _validate_command_assignments(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
@@ -230,9 +262,19 @@ def _parse_chargers(entries: list[Mapping[str, Any]], secrets: _Secrets) -> dict
             id=charger_id,
             password=secrets.get(entry, f"charger {charger_id}"),
             primary_id=_charger_id(entry.get("primary_id", charger_id), "primary_id"),
-            secondary_id=_charger_id(entry.get("secondary_id", charger_id), "secondary_id"),
+            secondary_ids=_parse_secondary_ids(entry, charger_id),
         )
     return chargers
+
+
+def _parse_secondary_ids(entry: Mapping[str, Any], charger_id: str) -> dict[str, str]:
+    raw_ids = entry.get("secondary_ids", {})
+    if not isinstance(raw_ids, Mapping):
+        raise ConfigError(f"charger {charger_id!r}: secondary_ids must be a table of backend name -> charger id")
+    return {
+        name: _charger_id(backend_id, f"charger {charger_id!r} secondary_ids[{name!r}]")
+        for name, backend_id in raw_ids.items()
+    }
 
 
 def _charger_id(value: Any, where: str) -> str:
@@ -288,10 +330,10 @@ def _parse_policy(
         raise ConfigError(f"[{name}.policy] {exc}") from exc
 
 
-def _parse_secondary(section: Mapping[str, Any], secrets: _Secrets) -> SecondaryConfig:
-    base = _parse_backend("secondary", section, secrets, SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE)
+def _parse_secondary(name: str, section: Mapping[str, Any], secrets: _Secrets) -> SecondaryConfig:
+    base = _parse_backend(name, section, secrets, SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE)
     if base.auth is AuthMode.FORWARD:
-        raise ConfigError("[secondary] auth = 'forward' would leak the charger's credentials; use 'basic' or 'none'")
+        raise ConfigError(f"[{name}] auth = 'forward' would leak the charger's credentials; use 'basic' or 'none'")
     return SecondaryConfig(
         **vars(base),
         forward_actions=frozenset(section.get("forward_actions", DEFAULT_SECONDARY_FORWARD_ACTIONS)),

@@ -1,13 +1,14 @@
-"""One connected charger: relays between it, the primary backend and the secondary backend.
+"""One connected charger: relays between it, the primary backend and the secondary backends.
 
 Routing rules (OCPP 1.6J):
   charger Call         -> primary (its reply goes back to the charger)
-                       -> secondary, if the action is forwarded (its reply is kept by the proxy)
+                        -> every secondary whose forward_actions include it
+                           (their replies are kept by the proxy)
   backend Call         -> policy -> charger with a proxy-unique id, or answered by the proxy
   charger CallResult/  -> the backend that issued the command, with its original id
-          CallError
-The session lives as long as the charger is connected; the primary and secondary
-reconnect independently, and neither backend outage ends the session.
+           CallError
+The session lives as long as the charger is connected; the backends reconnect
+independently, and no backend outage ends the session.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from functools import partial
 
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
@@ -54,7 +56,7 @@ class ChargerSession:
         self._transactions = charger.transactions
         self._router = CommandRouter()
         self._relays: set[asyncio.Task] = set()
-        self._secondary: SecondaryChannel | None = None
+        self._secondaries: dict[str, SecondaryChannel] = {}
 
     async def run(self) -> None:
         try:
@@ -64,9 +66,11 @@ class ChargerSession:
             await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "primary backend unavailable")
             return
 
-        self._secondary = self._build_secondary()
+        self._secondaries = self._build_secondaries()
         essential = {asyncio.create_task(self._read_charger(), name="charger")}
-        background = {asyncio.create_task(self._secondary.run(), name="secondary")} if self._secondary else set()
+        background = {
+            asyncio.create_task(channel.run(), name=f"secondary-{name}") for name, channel in self._secondaries.items()
+        }
         try:
             await asyncio.gather(*essential)
             logger.info("%s charger disconnected; ending session", self.charger_id)
@@ -78,21 +82,22 @@ class ChargerSession:
             self._primary.detach()
             await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "proxy session ended")
 
-    def _build_secondary(self) -> SecondaryChannel | None:
-        backend = self._config.secondary
-        if backend is None:
-            return None
-        backend_id = self._identity.charger.secondary_id
-        return SecondaryChannel(
-            config=backend,
-            url=backend_url(backend, backend_id),
-            headers=backend_headers(backend, backend_id, self._identity),
-            user_agent=self._identity.user_agent,
-            store=self._store,
-            transactions=self._transactions,
-            traffic=self._traffic,
-            on_call=self._on_secondary_call,
-        )
+    def _build_secondaries(self) -> dict[str, SecondaryChannel]:
+        channels: dict[str, SecondaryChannel] = {}
+        for backend in self._config.secondaries:
+            backend_id = self._identity.charger.secondary_ids.get(backend.name, self._identity.charger.id)
+            channels[backend.name] = SecondaryChannel(
+                config=backend,
+                url=backend_url(backend, backend_id),
+                headers=backend_headers(backend, backend_id, self._identity),
+                user_agent=self._identity.user_agent,
+                store=self._store,
+                transactions=self._transactions,
+                traffic=self._traffic,
+                # Resolved at call time: channels is complete before any backend connects.
+                on_call=lambda call, name=backend.name: self._on_secondary_call(channels[name], call),
+            )
+        return channels
 
     # --- charger -> backends --------------------------------------------------------------
 
@@ -120,13 +125,15 @@ class ChargerSession:
         task.add_done_callback(self._relays.discard)
 
     async def _relay_charger_call(self, call: Call) -> None:
-        # Only correlate starts the secondary will actually see; otherwise nothing ever pairs them.
-        tracks_start = call.action == "StartTransaction" and self._secondary and self._secondary.forwards(call.action)
+        # Only correlate starts a secondary will actually see; otherwise nothing ever pairs them.
+        tracks_start = call.action == "StartTransaction" and any(
+            channel.forwards(call.action) for channel in self._secondaries.values()
+        )
         start_ref = new_message_id() if tracks_start else None
         # The secondary handoff is independent of the primary's answer (UC-003 step 3): the
         # pending-start bookkeeping links the numbers even when the primary never confirms.
-        if self._secondary:
-            self._secondary.submit(call, start_ref)
+        for channel in self._secondaries.values():
+            channel.submit(call, start_ref)
         reply = await self._primary.call(call, self._config.primary.call_timeout)
         if start_ref:
             self._record_primary_start(start_ref, reply)
@@ -156,10 +163,9 @@ class ChargerSession:
     async def _on_primary_call(self, call: Call) -> None:
         await self._handle_backend_call(self._primary, self._config.primary.policy, _unchanged, call)
 
-    async def _on_secondary_call(self, call: Call) -> None:
-        await self._handle_backend_call(
-            self._secondary, self._config.secondary.policy, self._transactions.rewrite_for_charger, call
-        )
+    async def _on_secondary_call(self, channel: SecondaryChannel, call: Call) -> None:
+        translate = partial(self._transactions.rewrite_for_charger, backend_name=channel.name)
+        await self._handle_backend_call(channel, channel.policy, translate, call)
 
     async def _handle_backend_call(
         self, origin: ReplyTarget, policy: CommandPolicy, translate: Translate, call: Call

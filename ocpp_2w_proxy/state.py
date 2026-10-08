@@ -11,20 +11,21 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass
 class ChargerState:
-    # primary transactionId (as str) -> secondary transactionId
-    transactions: dict[str, int] = field(default_factory=dict)
-    # StartTransaction message id -> transactionId, while waiting for the other backend's answer
+    # primary transactionId (as str) -> {backend name: that backend's transactionId}
+    transactions: dict[str, dict[str, int]] = field(default_factory=dict)
+    # StartTransaction message id -> transactionId, while waiting for the backends' answers
     pending_primary_starts: dict[str, int] = field(default_factory=dict)
-    pending_secondary_starts: dict[str, int] = field(default_factory=dict)
+    # Backend name -> {StartTransaction message id: that backend's transactionId}
+    pending_secondary_starts: dict[str, dict[str, int]] = field(default_factory=dict)
     # Primary calls acknowledged locally while the primary backend was unavailable
     primary_outbox: list[dict[str, Any]] = field(default_factory=list)
-    # Durable calls not yet confirmed by the secondary backend, oldest first
-    outbox: list[dict[str, Any]] = field(default_factory=list)
+    # Backend name -> durable calls not yet confirmed by that backend, oldest first
+    outboxes: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     # Last BootNotification payload and last StatusNotification payload per connector
     boot: dict[str, Any] | None = None
     statuses: dict[str, dict[str, Any]] = field(default_factory=dict)

@@ -1,8 +1,8 @@
-"""Translate OCPP 1.6 transaction ids between the primary and secondary backend.
+"""Translate OCPP 1.6 transaction ids between the primary and each secondary backend.
 
 The charger only ever knows the primary's transactionId (it receives the primary's
-StartTransaction.conf). The secondary backend issues its own id, so every message that
-carries a transactionId has to be rewritten on the way to / from the secondary.
+StartTransaction.conf). Each secondary backend issues its own id, so every message that
+carries a transactionId has to be rewritten on the way to / from that backend.
 """
 
 from __future__ import annotations
@@ -27,57 +27,67 @@ class TransactionMap:
 
     def primary_started(self, start_ref: str, primary_tx: int) -> None:
         """The primary answered StartTransaction (start_ref = the charger's message id)."""
-        secondary_tx = self._state.pending_secondary_starts.pop(start_ref, None)
-        if secondary_tx is None:
-            _put_capped(self._state.pending_primary_starts, start_ref, primary_tx)
-        else:
-            self._link(primary_tx, secondary_tx)
+        links = {
+            name: pending.pop(start_ref)
+            for name, pending in self._state.pending_secondary_starts.items()
+            if start_ref in pending
+        }
+        if links:
+            self._link(primary_tx, links)
+        # Keep the record: secondary backends that answer later still link through it.
+        _put_capped(self._state.pending_primary_starts, start_ref, primary_tx)
         self._store.save()
 
-    def secondary_started(self, start_ref: str, secondary_tx: int) -> None:
-        primary_tx = self._state.pending_primary_starts.pop(start_ref, None)
+    def secondary_started(self, backend_name: str, start_ref: str, secondary_tx: int) -> None:
+        primary_tx = self._state.pending_primary_starts.get(start_ref)
         if primary_tx is None:
-            _put_capped(self._state.pending_secondary_starts, start_ref, secondary_tx)
+            pending = self._state.pending_secondary_starts.setdefault(backend_name, {})
+            _put_capped(pending, start_ref, secondary_tx)
         else:
-            self._link(primary_tx, secondary_tx)
+            self._link(primary_tx, {backend_name: secondary_tx})
         self._store.save()
 
     def primary_start_failed(self, start_ref: str) -> None:
-        """The primary never confirmed this start; a secondary id for it can never be linked."""
-        if self._state.pending_secondary_starts.pop(start_ref, None) is not None:
-            logger.warning("secondary transaction for start %s has no primary counterpart", start_ref)
+        """The primary never confirmed this start; secondary ids for it can never be linked."""
+        if any(pending.pop(start_ref, None) is not None for pending in self._state.pending_secondary_starts.values()):
+            logger.warning("secondary transactions for start %s have no primary counterpart", start_ref)
             self._store.save()
 
     def forget(self, primary_tx: int) -> None:
-        if self._state.transactions.pop(str(primary_tx), None) is not None:
+        """The transaction ended: drop the mapping and the pending start records for it."""
+        changed = self._state.transactions.pop(str(primary_tx), None) is not None
+        stale = [start_ref for start_ref, tx in self._state.pending_primary_starts.items() if tx == primary_tx]
+        for start_ref in stale:
+            del self._state.pending_primary_starts[start_ref]
+        if changed or stale:
             self._store.save()
 
-    def _link(self, primary_tx: int, secondary_tx: int) -> None:
-        logger.info("transaction %s (primary) <-> %s (secondary)", primary_tx, secondary_tx)
-        self._state.transactions[str(primary_tx)] = secondary_tx
+    def _link(self, primary_tx: int, links: Mapping[str, int]) -> None:
+        logger.info("transaction %s (primary) <-> %s", primary_tx, links)
+        self._state.transactions.setdefault(str(primary_tx), {}).update(links)
 
     # --- lookup ----------------------------------------------------------------------------
 
-    def to_secondary(self, primary_tx: int) -> int | None:
-        return self._state.transactions.get(str(primary_tx))
+    def to_secondary(self, primary_tx: int, backend_name: str) -> int | None:
+        return self._state.transactions.get(str(primary_tx), {}).get(backend_name)
 
-    def to_primary(self, secondary_tx: int) -> int | None:
-        for primary_tx, mapped in self._state.transactions.items():
-            if mapped == secondary_tx:
+    def to_primary(self, secondary_tx: int, backend_name: str) -> int | None:
+        for primary_tx, links in self._state.transactions.items():
+            if links.get(backend_name) == secondary_tx:
                 return int(primary_tx)
         return None
 
     # --- rewriting -------------------------------------------------------------------------
 
-    def rewrite_for_secondary(self, call: Call) -> Call | None:
+    def rewrite_for_secondary(self, call: Call, backend_name: str) -> Call | None:
         """Charger -> secondary. None means: do not send (it cannot be made meaningful)."""
         rewrite = _TO_SECONDARY.get(call.action)
-        return rewrite(self, call) if rewrite else call
+        return rewrite(self, call, backend_name) if rewrite else call
 
-    def rewrite_for_charger(self, call: Call) -> Call | None:
+    def rewrite_for_charger(self, call: Call, backend_name: str) -> Call | None:
         """Secondary -> charger. None means: unknown transaction, reject it."""
         rewrite = _TO_CHARGER.get(call.action)
-        return rewrite(self, call) if rewrite else call
+        return rewrite(self, call, backend_name) if rewrite else call
 
 
 def _put_capped(pending: dict[str, int], key: str, value: int) -> None:
@@ -88,10 +98,10 @@ def _put_capped(pending: dict[str, int], key: str, value: int) -> None:
         del pending[dropped]
 
 
-def _meter_values_to_secondary(txmap: TransactionMap, call: Call) -> Call:
+def _meter_values_to_secondary(txmap: TransactionMap, call: Call, backend_name: str) -> Call:
     if "transactionId" not in call.payload:
         return call
-    secondary_tx = txmap.to_secondary(call.payload["transactionId"])
+    secondary_tx = txmap.to_secondary(call.payload["transactionId"], backend_name)
     payload = dict(call.payload)
     if secondary_tx is None:
         # Still useful to the backend as connector meter readings, just not tied to a session.
@@ -101,29 +111,30 @@ def _meter_values_to_secondary(txmap: TransactionMap, call: Call) -> Call:
     return call.with_payload(payload)
 
 
-def _stop_transaction_to_secondary(txmap: TransactionMap, call: Call) -> Call | None:
-    secondary_tx = txmap.to_secondary(call.payload.get("transactionId"))
+def _stop_transaction_to_secondary(txmap: TransactionMap, call: Call, backend_name: str) -> Call | None:
+    secondary_tx = txmap.to_secondary(call.payload.get("transactionId"), backend_name)
     if secondary_tx is None:
         logger.error(
-            "StopTransaction for primary transaction %s has no secondary counterpart; not sent to secondary",
+            "StopTransaction for primary transaction %s has no %s counterpart; not sent to that backend",
             call.payload.get("transactionId"),
+            backend_name,
         )
         return None
     return call.with_payload({**call.payload, "transactionId": secondary_tx})
 
 
-def _remote_stop_to_charger(txmap: TransactionMap, call: Call) -> Call | None:
-    primary_tx = txmap.to_primary(call.payload.get("transactionId"))
+def _remote_stop_to_charger(txmap: TransactionMap, call: Call, backend_name: str) -> Call | None:
+    primary_tx = txmap.to_primary(call.payload.get("transactionId"), backend_name)
     if primary_tx is None:
         return None
     return call.with_payload({**call.payload, "transactionId": primary_tx})
 
 
-_TO_SECONDARY: Mapping[str, Callable[[TransactionMap, Call], Call | None]] = {
+_TO_SECONDARY: Mapping[str, Callable[[TransactionMap, Call, str], Call | None]] = {
     "MeterValues": _meter_values_to_secondary,
     "StopTransaction": _stop_transaction_to_secondary,
 }
 
-_TO_CHARGER: Mapping[str, Callable[[TransactionMap, Call], Call | None]] = {
+_TO_CHARGER: Mapping[str, Callable[[TransactionMap, Call, str], Call | None]] = {
     "RemoteStopTransaction": _remote_stop_to_charger,
 }

@@ -19,6 +19,7 @@ from .backend_link import BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .config import SecondaryConfig
 from .ocpp import Call, CallError, CallResult, Reply, from_dict, new_message_id, to_dict
+from .policy import CommandPolicy
 from .state import StateStore
 from .traffic_log import TrafficLog
 from .transactions import TransactionMap
@@ -44,8 +45,6 @@ class _QueuedCall:
 
 
 class SecondaryChannel:
-    name = "secondary"
-
     def __init__(
         self,
         config: SecondaryConfig,
@@ -58,6 +57,7 @@ class SecondaryChannel:
         on_call: Callable[[Call], Awaitable[None]],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
+        self.name = config.name
         self._config = config
         self._url = url
         self._headers = headers
@@ -71,15 +71,19 @@ class SecondaryChannel:
         self._link: BackendLink | None = None
         self._queue: deque[_QueuedCall] = deque(
             _QueuedCall(from_dict(item["call"]), durable=True, start_ref=item.get("start_ref"))
-            for item in self._state.outbox
+            for item in self._state.outboxes.get(config.name, [])
         )
         self._queue_changed = asyncio.Event()
         if self._queue:
-            logger.info("%d queued call(s) for the secondary backend restored from disk", len(self._queue))
+            logger.info("%s: %d queued call(s) restored from disk", self.name, len(self._queue))
 
     @property
     def connected(self) -> bool:
         return self._link is not None
+
+    @property
+    def policy(self) -> CommandPolicy:
+        return self._config.policy
 
     # --- charger -> secondary -------------------------------------------------------------
 
@@ -112,10 +116,10 @@ class SecondaryChannel:
         while sum(item.durable for item in self._queue) > self._config.max_queue:
             victim = next((i for i in self._queue if i.call.action == EXPENDABLE_ACTION), self._queue[0])
             self._queue.remove(victim)
-            logger.error("secondary queue full (%d); dropped queued %s", self._config.max_queue, victim.call.action)
+            logger.error("%s queue full (%d); dropped queued %s", self.name, self._config.max_queue, victim.call.action)
 
     def _persist_queue(self) -> None:
-        self._state.outbox = [
+        self._state.outboxes[self._config.name] = [
             {"call": to_dict(item.call), "start_ref": item.start_ref} for item in self._queue if item.durable
         ]
         self._store.save()
@@ -133,14 +137,14 @@ class SecondaryChannel:
             try:
                 link = await BackendLink.open(self.name, self._url, self._headers, self._user_agent, self._traffic)
             except (OSError, TimeoutError, InvalidHandshake, InvalidURI) as exc:
-                logger.warning("secondary backend unreachable (%s); retrying in ~%.0fs", exc, backoff.current)
+                logger.warning("%s unreachable (%s); retrying in ~%.0fs", self.name, exc, backoff.current)
             else:
                 try:
                     if await self._serve(link):
                         backoff.reset()
                 except Exception:
                     # Never let a bug end the secondary for the rest of the charger session.
-                    logger.exception("secondary connection failed unexpectedly")
+                    logger.exception("%s connection failed unexpectedly", self.name)
             await self._sleep(backoff.next_delay())
 
     async def _serve(self, link: BackendLink) -> bool:
@@ -154,7 +158,7 @@ class SecondaryChannel:
             if sender in done and not sender.cancelled() and sender.exception():
                 exc = sender.exception()
                 if not isinstance(exc, BackendUnavailable):
-                    logger.error("secondary sender failed: %r", exc)
+                    logger.error("%s sender failed: %r", self.name, exc)
         finally:
             self._link = None
             for task in (reader, sender):
@@ -178,10 +182,12 @@ class SecondaryChannel:
             await self._send_head(link)
 
     async def _boot(self, link: BackendLink) -> None:
+        if not self.forwards("BootNotification"):
+            return  # this backend is not configured to receive boots
         if self._queue and self._queue[0].call.action == "BootNotification":
             return  # the charger just booted; its own BootNotification is first in line
         if self._state.boot is None:
-            logger.warning("no BootNotification cached yet; secondary backend gets none until the charger reboots")
+            logger.warning("no BootNotification cached yet; %s gets none until the charger reboots", self.name)
             return
         while True:
             try:
@@ -194,19 +200,21 @@ class SecondaryChannel:
             interval = DEFAULT_BOOT_RETRY_INTERVAL
             if isinstance(reply, CallResult):
                 interval = max(10, int(reply.payload.get("interval") or DEFAULT_BOOT_RETRY_INTERVAL))
-            logger.warning("secondary backend did not accept BootNotification (%s); retry in %ss", reply, interval)
+            logger.warning("%s did not accept BootNotification (%s); retry in %ss", self.name, reply, interval)
             await self._sleep(interval)
 
     async def _send_statuses(self, link: BackendLink) -> None:
+        if not self.forwards("StatusNotification"):
+            return
         for payload in list(self._state.statuses.values()):
             try:
                 await link.call(Call(new_message_id(), "StatusNotification", payload), self._timeout)
             except TimeoutError:
-                logger.warning("secondary backend did not answer StatusNotification")
+                logger.warning("%s did not answer StatusNotification", self.name)
 
     async def _send_head(self, link: BackendLink) -> None:
         item = self._queue[0]
-        outgoing = self._transactions.rewrite_for_secondary(item.call)
+        outgoing = self._transactions.rewrite_for_secondary(item.call, self.name)
         if outgoing is None:
             self._complete(item)
             return
@@ -215,9 +223,9 @@ class SecondaryChannel:
         except TimeoutError:
             item.attempts += 1
             if item.attempts < MAX_ATTEMPTS_PER_CALL:
-                logger.warning("secondary backend did not answer %s (attempt %d)", item.call.action, item.attempts)
+                logger.warning("%s did not answer %s (attempt %d)", self.name, item.call.action, item.attempts)
                 return
-            logger.error("secondary backend never answered %s; dropped", item.call.action)
+            logger.error("%s never answered %s; dropped", self.name, item.call.action)
             self._complete(item)
             return
         self._complete(item)
@@ -237,7 +245,7 @@ class SecondaryChannel:
 
     def _handle_result(self, item: _QueuedCall, reply: Reply) -> None:
         if isinstance(reply, CallError):
-            logger.warning("secondary backend rejected %s: %s %s", item.call.action, reply.code, reply.description)
+            logger.warning("%s rejected %s: %s %s", self.name, item.call.action, reply.code, reply.description)
             return
         handler = _RESULT_HANDLERS.get(item.call.action)
         if handler:
@@ -247,7 +255,7 @@ class SecondaryChannel:
         _warn_if_not_accepted(reply, "StartTransaction")
         transaction_id = reply.payload.get("transactionId")
         if isinstance(transaction_id, int) and item.start_ref:
-            self._transactions.secondary_started(item.start_ref, transaction_id)
+            self._transactions.secondary_started(self.name, item.start_ref, transaction_id)
 
     def _stop_transaction_result(self, item: _QueuedCall, reply: CallResult) -> None:
         primary_tx = item.call.payload.get("transactionId")

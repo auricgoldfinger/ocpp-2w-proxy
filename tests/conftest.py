@@ -12,6 +12,9 @@ from ocpp_2w_proxy.server import ProxyServer
 
 CHARGER_ID = "CH1"
 
+# Stable names for the secondary backends created in tests, in connection order.
+SECONDARY_NAMES = ("tap", "stats", "beta", "gamma", "delta")
+
 
 @pytest.fixture(autouse=True)
 def fast_reconnect(monkeypatch):
@@ -33,21 +36,30 @@ async def secondary():
     await csms.stop()
 
 
-def make_raw_config(primary_url: str, secondary_url: str | None, state_dir: Path, **overrides: Any) -> dict:
+def make_raw_config(
+    primary_url: str, secondary_urls: str | list[str] | None, state_dir: Path, **overrides: Any
+) -> dict:
+    urls = [secondary_urls] if isinstance(secondary_urls, str) else list(secondary_urls or [])
     raw: dict[str, Any] = {
         "proxy": {"listen": "127.0.0.1", "port": 0, "state_dir": str(state_dir)},
         "logging": {"level": "DEBUG", "log_payloads": True},
         "chargers": [{"id": CHARGER_ID, **overrides.pop("charger", {})}],
         "primary": {"url": primary_url, "auth": "forward", "call_timeout": 3, **overrides.pop("primary", {})},
     }
-    if secondary_url:
-        raw["secondary"] = {
-            "url": secondary_url,
+    secondary_overrides = overrides.pop("secondary", {})
+    entries = [
+        {
+            "name": SECONDARY_NAMES[i],
+            "url": url,
             "auth": "basic",
             "password_env": "TAP_PASSWORD",
             "call_timeout": 2,
-            **overrides.pop("secondary", {}),
+            **secondary_overrides,
         }
+        for i, url in enumerate(urls)
+    ]
+    if entries:
+        raw["secondary"] = entries
     return raw
 
 
@@ -55,9 +67,9 @@ def make_raw_config(primary_url: str, secondary_url: str | None, state_dir: Path
 async def start_proxy(tmp_path):
     proxies = []
 
-    async def _start(primary_url: str, secondary_url: str | None, environ=None, **overrides) -> str:
+    async def _start(primary_url: str, secondary_urls: str | list[str] | None = None, environ=None, **overrides) -> str:
         environ = {"TAP_PASSWORD": "tap-secret", **(environ or {})}
-        config = parse(make_raw_config(primary_url, secondary_url, tmp_path, **overrides), environ)
+        config = parse(make_raw_config(primary_url, secondary_urls, tmp_path, **overrides), environ)
         proxy = ProxyServer(config)
         server = await proxy.start()
         proxies.append(proxy)

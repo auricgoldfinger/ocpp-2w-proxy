@@ -6,28 +6,31 @@ from ocpp_2w_proxy.traffic_log import TrafficLog
 from ocpp_2w_proxy.transactions import TransactionMap
 
 
-def make_channel(tmp_path, max_queue=3):
-    config = parse(
+def make_config(*secondaries):
+    return parse(
         {
             "chargers": [{"id": "CH1"}],
             "primary": {"url": "ws://p"},
-            "secondary": {"url": "ws://s", "max_queue": max_queue},
+            "secondary": [dict(entry, call_timeout=1) for entry in secondaries],
         },
         {},
     )
-    store = StateStore(tmp_path / "CH1.json")
 
+
+def make_channel(config, backend_name, store):
     async def on_call(call):  # pragma: no cover
         pass
 
-    channel = SecondaryChannel(
-        config.secondary, "ws://s/CH1", {}, None, store, TransactionMap(store), TrafficLog("CH1", False), on_call
+    backend = next(b for b in config.secondaries if b.name == backend_name)
+    return SecondaryChannel(
+        backend, f"ws://{backend_name}/CH1", {}, None, store, TransactionMap(store), TrafficLog("CH1", False), on_call
     )
-    return channel, store
 
 
 def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):
-    channel, store = make_channel(tmp_path)
+    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
+    store = StateStore(tmp_path / "CH1.json")
+    channel = make_channel(config, "tap", store)
     channel.submit(Call("1", "BootNotification", {"chargePointVendor": "v", "chargePointModel": "m"}))
     channel.submit(Call("2", "StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"}))
     channel.submit(Call("3", "Heartbeat", {}))
@@ -35,27 +38,70 @@ def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):
     channel.submit(Call("5", "StartTransaction", {"connectorId": 1}), start_ref="ref")
 
     state = StateStore(tmp_path / "CH1.json").state
-    assert [item["call"]["action"] for item in state.outbox] == ["StartTransaction"]
-    assert state.outbox[0]["start_ref"] == "ref"
-    assert state.outbox[0]["call"]["id"] != "5"  # own id, charger ids restart after reboot
+    assert [item["call"]["action"] for item in state.outboxes["tap"]] == ["StartTransaction"]
+    assert state.outboxes["tap"][0]["start_ref"] == "ref"
+    assert state.outboxes["tap"][0]["call"]["id"] != "5"  # own id, charger ids restart after reboot
     assert state.boot["chargePointVendor"] == "v"
     assert state.statuses["1"]["status"] == "Available"
 
 
+def test_each_backend_has_its_own_queue(tmp_path):
+    config = make_config({"name": "tap", "url": "ws://s"}, {"name": "stats", "url": "ws://s"})
+    store = StateStore(tmp_path / "CH1.json")
+    tap = make_channel(config, "tap", store)
+    stats = make_channel(config, "stats", store)
+    tap.submit(Call("1", "StartTransaction", {"connectorId": 1}), start_ref="a")
+    stats.submit(Call("2", "StartTransaction", {"connectorId": 1}), start_ref="a")
+
+    assert len(store.state.outboxes["tap"]) == 1
+    assert len(store.state.outboxes["stats"]) == 1
+
+    tap._complete(tap._queue[0])
+    assert len(store.state.outboxes["tap"]) == 0
+    assert len(store.state.outboxes["stats"]) == 1  # the other backend's queue is untouched
+
+
 def test_queue_limit_drops_meter_values_first(tmp_path):
-    channel, store = make_channel(tmp_path, max_queue=3)
+    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
+    store = StateStore(tmp_path / "CH1.json")
+    channel = make_channel(config, "tap", store)
     channel.submit(Call("1", "StartTransaction", {"connectorId": 1}))
     channel.submit(Call("2", "MeterValues", {"connectorId": 1, "meterValue": [1]}))
     channel.submit(Call("3", "MeterValues", {"connectorId": 1, "meterValue": [2]}))
     channel.submit(Call("4", "StopTransaction", {"transactionId": 1}))
 
-    actions = [(item["call"]["action"], item["call"]["payload"].get("meterValue")) for item in store.state.outbox]
+    actions = [
+        (item["call"]["action"], item["call"]["payload"].get("meterValue")) for item in store.state.outboxes["tap"]
+    ]
     assert actions == [("StartTransaction", None), ("MeterValues", [2]), ("StopTransaction", None)]
 
 
 def test_queue_restored_from_disk(tmp_path):
-    channel, _ = make_channel(tmp_path)
+    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
+    store = StateStore(tmp_path / "CH1.json")
+    channel = make_channel(config, "tap", store)
     channel.submit(Call("1", "StartTransaction", {"connectorId": 1}), start_ref="r")
-    restored, _ = make_channel(tmp_path)
+    restored = make_channel(config, "tap", StateStore(tmp_path / "CH1.json"))
     assert [item.call.action for item in restored._queue] == ["StartTransaction"]
     assert restored._queue[0].start_ref == "r"
+
+
+def test_boot_and_status_replay_only_for_backends_that_forward_them(tmp_path):
+    config = make_config(
+        {"name": "tap", "url": "ws://s"},
+        {"name": "stats", "url": "ws://s", "forward_actions": ["MeterValues"]},
+    )
+    store = StateStore(tmp_path / "CH1.json")
+    tap = make_channel(config, "tap", store)
+    stats = make_channel(config, "stats", store)
+    boot = Call("1", "BootNotification", {"chargePointVendor": "v", "chargePointModel": "m"})
+    tap.submit(boot)
+    stats.submit(boot)
+    stats.submit(Call("2", "StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"}))
+
+    assert tap.forwards("BootNotification")
+    assert not stats.forwards("BootNotification")
+    assert not stats.forwards("StatusNotification")
+    # The boot/status cache is shared charger data; stats simply does not replay it.
+    assert store.state.boot is not None
+    assert store.state.statuses == {}

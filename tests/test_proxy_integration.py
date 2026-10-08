@@ -1,4 +1,4 @@
-"""End-to-end: fake charger <-> proxy <-> fake primary (SolarEdge) + fake secondary (Tap)."""
+"""End-to-end: fake charger <-> proxy <-> fake primary (Tap) + fake secondary backends."""
 
 from __future__ import annotations
 
@@ -319,3 +319,105 @@ async def test_reconnecting_charger_replaces_old_session(primary, secondary, sta
     with pytest.raises(ConnectionClosed):
         await old.call("Heartbeat", {})
     await new.close()
+
+
+async def test_two_secondaries_get_independent_transaction_ids(primary, start_proxy):
+    tap = await FakeCsms(responder_with_transaction(9)).start()
+    stats = await FakeCsms(responder_with_transaction(77)).start()
+    try:
+        primary.responder = responder_with_transaction(100)
+        url = await start_proxy(primary.url, [tap.url, stats.url])
+        charger = await FakeCharger.connect(url, CHARGER_ID)
+        await tap.connected.wait()
+        await stats.connected.wait()
+
+        start = await charger.call("StartTransaction", START)
+        assert start[2]["transactionId"] == 100  # the primary's id goes to the charger
+        await tap.wait_for_call("StartTransaction")
+        await stats.wait_for_call("StartTransaction")
+        await asyncio.sleep(0.05)  # let both backends' StartTransaction.conf be processed
+
+        await charger.call("MeterValues", {"connectorId": 1, "transactionId": 100, "meterValue": []})
+        await charger.call("StopTransaction", {"transactionId": 100, "meterStop": 7, "timestamp": "t"})
+        assert (await tap.wait_for_call("MeterValues"))[0]["transactionId"] == 9
+        assert (await stats.wait_for_call("MeterValues"))[0]["transactionId"] == 77
+        assert (await tap.wait_for_call("StopTransaction"))[0]["transactionId"] == 9
+        assert (await stats.wait_for_call("StopTransaction"))[0]["transactionId"] == 77
+        await charger.close()
+    finally:
+        await tap.stop()
+        await stats.stop()
+
+
+async def test_remote_stop_from_each_secondary_uses_its_own_transaction(primary, start_proxy):
+    tap = await FakeCsms(responder_with_transaction(9)).start()
+    stats = await FakeCsms(responder_with_transaction(77)).start()
+    try:
+        primary.responder = responder_with_transaction(100)
+        url = await start_proxy(primary.url, [tap.url, stats.url])
+        charger = await FakeCharger.connect(url, CHARGER_ID)
+        await tap.connected.wait()
+        await stats.connected.wait()
+        await charger.call("StartTransaction", START)
+        await tap.wait_for_call("StartTransaction")
+        await stats.wait_for_call("StartTransaction")
+        await asyncio.sleep(0.05)  # let both backends' StartTransaction.conf arrive
+
+        from_tap = await tap.call("RemoteStopTransaction", {"transactionId": 9})
+        from_stats = await stats.call("RemoteStopTransaction", {"transactionId": 77})
+        assert from_tap[2] == {"status": "Accepted"}
+        assert from_stats[2] == {"status": "Accepted"}
+        # Each backend's stop refers to the same charger transaction: the primary's id 100.
+        assert charger.received_calls[-2][3] == {"transactionId": 100}
+        assert charger.received_calls[-1][3] == {"transactionId": 100}
+        await charger.close()
+    finally:
+        await tap.stop()
+        await stats.stop()
+
+
+async def test_offline_secondary_does_not_delay_the_other(primary, start_proxy):
+    offline = await FakeCsms(responder_with_transaction(77)).start()
+    offline_port = offline.port
+    await offline.stop()  # unreachable: its calls queue on disk
+    tap = await FakeCsms(responder_with_transaction(9)).start()
+    try:
+        primary.responder = responder_with_transaction(100)
+        url = await start_proxy(primary.url, [tap.url, f"ws://127.0.0.1:{offline_port}/ocpp"])
+        charger = await FakeCharger.connect(url, CHARGER_ID)
+        await tap.connected.wait()
+
+        start = await charger.call("StartTransaction", START)
+        assert start[2]["transactionId"] == 100  # the offline backend does not delay the charger
+        assert (await tap.wait_for_call("StartTransaction"))[0]["idTag"] == START["idTag"]
+        await charger.call("MeterValues", {"connectorId": 1, "transactionId": 100, "meterValue": []})
+        assert (await tap.wait_for_call("MeterValues"))[0]["transactionId"] == 9
+
+        # The charger session (and the healthy backend) stays untouched while the offline
+        # backend recovers and its durable queue drains in order.
+        recovered = await FakeCsms(responder_with_transaction(77)).start(offline_port)
+        try:
+            assert (await recovered.wait_for_call("StartTransaction"))[0]["idTag"] == START["idTag"]
+            assert (await recovered.wait_for_call("MeterValues"))[0]["transactionId"] == 77
+            assert (await charger.call("Heartbeat", {}))[2] == {"currentTime": "2026-01-01T00:00:00Z"}
+        finally:
+            await recovered.stop()
+        await charger.close()
+    finally:
+        await tap.stop()
+
+
+async def test_five_secondary_backends_per_session(primary, start_proxy):
+    backends = [await FakeCsms().start() for _ in range(5)]
+    try:
+        url = await start_proxy(primary.url, [backend.url for backend in backends])
+        charger = await FakeCharger.connect(url, CHARGER_ID)
+        await charger.call("BootNotification", BOOT)
+        await charger.call("StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"})
+        for backend in backends:
+            await backend.wait_for_call("BootNotification")
+            await backend.wait_for_call("StatusNotification")
+        await charger.close()
+    finally:
+        for backend in backends:
+            await backend.stop()

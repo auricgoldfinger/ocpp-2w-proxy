@@ -8,7 +8,7 @@ def raw(**sections):
     base = {
         "chargers": [{"id": "CH1"}],
         "primary": {"url": "wss://primary.example/ocpp/"},
-        "secondary": {"url": "wss://secondary.example", "auth": "basic", "password_env": "TAP"},
+        "secondary": [{"name": "tap", "url": "wss://secondary.example", "auth": "basic", "password_env": "TAP"}],
     }
     base.update(sections)
     return base
@@ -18,11 +18,11 @@ def test_parses_defaults_and_secrets():
     config = parse(raw(), {"TAP": "pw"})
     assert config.primary.url == "wss://primary.example/ocpp"
     assert config.primary.auth is AuthMode.NONE
-    assert config.secondary.password == "pw"
-    assert config.secondary.policy.rule_for("Reset") is Rule.ANSWER
-    assert config.secondary.policy.rule_for("RemoteStartTransaction") is Rule.ANSWER
-    assert not config.secondary.policy.strip_charging_profile
-    assert "MeterValues" in config.secondary.forward_actions
+    assert config.secondaries[0].password == "pw"
+    assert config.secondaries[0].policy.rule_for("Reset") is Rule.ANSWER
+    assert config.secondaries[0].policy.rule_for("RemoteStartTransaction") is Rule.ANSWER
+    assert not config.secondaries[0].policy.strip_charging_profile
+    assert "MeterValues" in config.secondaries[0].forward_actions
 
 
 def test_missing_secret_env_is_an_error():
@@ -32,31 +32,43 @@ def test_missing_secret_env_is_an_error():
 
 def test_secondary_forward_auth_refused():
     with pytest.raises(ConfigError, match="leak"):
-        parse(raw(secondary={"url": "wss://x", "auth": "forward"}), {})
+        parse(raw(secondary=[{"name": "tap", "url": "wss://x", "auth": "forward"}]), {})
 
 
 def test_policy_overrides_are_validated():
     with pytest.raises(ConfigError):
-        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"Foo": "answer"}}}), {})
+        parse(raw(secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {"Foo": "answer"}}}]), {})
     with pytest.raises(ConfigError):
-        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"Reset": "maybe"}}}), {})
+        parse(raw(secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {"Reset": "maybe"}}}]), {})
 
 
 def test_exclusive_command_moved_to_secondary():
     config = parse(
         raw(
             primary={"url": "wss://p", "policy": {"actions": {"Reset": "answer"}}},
-            secondary={"url": "wss://x", "policy": {"actions": {"Reset": "forward"}}},
+            secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {"Reset": "forward"}}}],
         ),
         {},
     )
     assert config.primary.policy.rule_for("Reset") is Rule.ANSWER
-    assert config.secondary.policy.rule_for("Reset") is Rule.FORWARD
+    assert config.secondaries[0].policy.rule_for("Reset") is Rule.FORWARD
 
 
 def test_conflicting_exclusive_command_is_rejected():
     with pytest.raises(ConfigError, match="exclusive command Reset is forwarded by more than one backend: primary"):
-        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"Reset": "forward"}}}), {})
+        parse(raw(secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {"Reset": "forward"}}}]), {})
+
+
+def test_exclusive_command_forwarded_by_two_secondaries_is_rejected():
+    raw_config = raw(
+        primary={"url": "wss://p", "policy": {"actions": {"Reset": "answer"}}},
+        secondary=[
+            {"name": "tap", "url": "wss://x", "policy": {"actions": {"Reset": "forward"}}},
+            {"name": "stats", "url": "wss://y", "policy": {"actions": {"Reset": "forward"}}},
+        ],
+    )
+    with pytest.raises(ConfigError, match="exclusive command Reset.*tap, stats"):
+        parse(raw_config, {})
 
 
 @pytest.mark.parametrize(
@@ -65,38 +77,79 @@ def test_conflicting_exclusive_command_is_rejected():
 )
 def test_authorization_command_stays_with_primary(action):
     with pytest.raises(ConfigError, match=f"authorization command {action}"):
-        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {action: "forward"}}}), {})
+        parse(raw(secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {action: "forward"}}}]), {})
 
 
 def test_secondary_forwarding_all_configuration_changes_is_rejected():
     with pytest.raises(ConfigError, match="may not forward all configuration changes"):
-        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"ChangeConfiguration": "forward"}}}), {})
+        parse(
+            raw(
+                secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {"ChangeConfiguration": "forward"}}}]
+            ),
+            {},
+        )
 
 
 def test_secondary_authorization_settings_key_is_rejected():
     bad = raw(
         primary={"url": "wss://p", "policy": {"actions": {"ChangeConfiguration": "answer"}}},
-        secondary={"url": "wss://x", "policy": {"change_configuration_allow_keys": ["LocalAuthListEnabled"]}},
+        secondary=[
+            {"name": "tap", "url": "wss://x", "policy": {"change_configuration_allow_keys": ["LocalAuthListEnabled"]}}
+        ],
     )
     with pytest.raises(ConfigError, match="LocalAuthListEnabled"):
         parse(bad, {})
 
 
 def test_configuration_key_blocked_while_primary_forwards_all_changes():
-    bad = raw(secondary={"url": "wss://x", "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]}})
+    bad = raw(
+        secondary=[
+            {
+                "name": "tap",
+                "url": "wss://x",
+                "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]},
+            }
+        ]
+    )
     with pytest.raises(ConfigError, match="MeterValueSampleInterval.*forwards all configuration changes"):
         parse(bad, {})
+
+
+def test_configuration_key_permitted_for_one_backend_only():
+    raw_config = raw(
+        primary={"url": "wss://p", "policy": {"actions": {"ChangeConfiguration": "answer"}}},
+        secondary=[
+            {
+                "name": "tap",
+                "url": "wss://x",
+                "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]},
+            },
+            {
+                "name": "stats",
+                "url": "wss://y",
+                "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval", "HeartbeatInterval"]},
+            },
+        ],
+    )
+    with pytest.raises(ConfigError, match="configuration key 'MeterValueSampleInterval' is permitted for both"):
+        parse(raw_config, {})
 
 
 def test_configuration_key_permitted_for_one_backend():
     config = parse(
         raw(
             primary={"url": "wss://p", "policy": {"actions": {"ChangeConfiguration": "answer"}}},
-            secondary={"url": "wss://x", "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]}},
+            secondary=[
+                {
+                    "name": "tap",
+                    "url": "wss://x",
+                    "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]},
+                }
+            ],
         ),
         {},
     )
-    assert config.secondary.policy.change_configuration_allow_keys == frozenset({"MeterValueSampleInterval"})
+    assert config.secondaries[0].policy.change_configuration_allow_keys == frozenset({"MeterValueSampleInterval"})
 
 
 def test_invalid_log_level_is_rejected():
@@ -109,7 +162,7 @@ def test_invalid_log_level_is_rejected():
     [
         {"chargers": [{"id": "CH1", "password": "secret"}]},
         {"primary": {"url": "wss://p", "password": "secret"}},
-        {"secondary": {"url": "wss://x", "auth": "basic", "password": "secret"}},
+        {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password": "secret"}]},
     ],
 )
 def test_password_in_config_file_is_rejected(where):
@@ -126,6 +179,10 @@ def test_password_in_config_file_is_rejected(where):
         {"primary": {"url": "http://x"}},
         {"primary": {"url": "wss://x", "auth": "basic"}},
         {"proxy": {"tls_cert": "/c"}},
+        {"secondary": {"name": "tap", "url": "wss://x"}},  # a table, not [[secondary]] entries
+        {"secondary": [{"url": "wss://x"}]},  # missing name
+        {"secondary": [{"name": "bad name", "url": "wss://x"}]},
+        {"secondary": [{"name": "tap", "url": "wss://x"}, {"name": "tap", "url": "wss://y"}]},
     ],
 )
 def test_invalid_configs(bad):
@@ -136,4 +193,29 @@ def test_invalid_configs(bad):
 def test_secondary_is_optional():
     config = raw()
     del config["secondary"]
-    assert parse(config, {}).secondary is None
+    assert parse(config, {}).secondaries == ()
+
+
+def test_five_named_secondaries_parse():
+    config = raw(secondary=[{"name": name, "url": f"wss://{name}.example"} for name in ("a", "b", "c", "d", "e")])
+    parsed = parse(config, {})
+    assert [backend.name for backend in parsed.secondaries] == ["a", "b", "c", "d", "e"]
+
+
+def test_charger_secondary_ids_per_backend():
+    config = raw(
+        chargers=[{"id": "CH1", "primary_id": "P1", "secondary_ids": {"tap": "TAP-1"}}],
+        secondary=[{"name": "tap", "url": "wss://x"}, {"name": "stats", "url": "wss://y"}],
+    )
+    parsed = parse(config, {})
+    assert parsed.chargers["CH1"].primary_id == "P1"
+    assert parsed.chargers["CH1"].secondary_ids == {"tap": "TAP-1"}
+
+
+def test_charger_secondary_id_for_unknown_backend_is_rejected():
+    bad = raw(
+        chargers=[{"id": "CH1", "secondary_ids": {"nope": "X"}}],
+        secondary=[{"name": "tap", "url": "wss://x"}],
+    )
+    with pytest.raises(ConfigError, match="nope"):
+        parse(bad, {})
