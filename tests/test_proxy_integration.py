@@ -537,6 +537,22 @@ async def test_secondaries_deliver_while_the_charger_is_offline(primary, start_p
         await secondary.stop()
 
 
+async def test_proxy_shutdown_closes_the_charger_connection_politely(primary, secondary, tmp_path):
+    """A normal session end is not a server error: the socket closes with 1001
+    (Going Away), not 1011, so chargers do not log a fault."""
+    config = parse(make_raw_config(primary.url, secondary.url, tmp_path), {"TAP_PASSWORD": "tap-secret"})
+    proxy = ProxyServer(config)
+    server = await proxy.start()
+    url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/ocpp"
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})
+
+    await proxy.close()
+
+    await asyncio.wait_for(charger.ws.wait_closed(), 5)
+    assert charger.ws.close_code == 1001
+
+
 async def test_backend_commands_get_an_error_while_the_charger_is_offline(primary, secondary, start_proxy, caplog):
     url = await start_proxy(primary.url, secondary.url)
     charger = await FakeCharger.connect(url, CHARGER_ID)

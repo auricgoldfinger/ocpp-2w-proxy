@@ -44,6 +44,8 @@ from .secondary_channel import SecondaryChannel
 logger = logging.getLogger(__name__)
 
 CLOSE_PRIMARY_UNAVAILABLE = 1011
+# A normal session end (charger gone, replaced, or proxy shutting down): not an error.
+SESSION_ENDED = 1001
 
 Translate = Callable[[Call], Call | None]
 
@@ -94,7 +96,7 @@ class ChargerSession:
             for name, secondary_token in secondary_tokens.items():
                 self._secondaries[name].detach(secondary_token)
             self._primary.detach(token)
-            await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "proxy session ended")
+            await self._ws.close(SESSION_ENDED, "proxy session ended")
 
     # --- charger -> backends --------------------------------------------------------------
 
