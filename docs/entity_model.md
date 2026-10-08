@@ -127,7 +127,7 @@ A Primary Backend update waiting for ordered delivery after an outage.
 #### Constraints
 
 - Calls are delivered oldest first and removed after a Primary Backend reply.
-- The queue holds at most 10,000 calls per Charger; overflow drops the oldest call.
+- The queue holds at most `max_queue` calls per Charger (default 10,000); overflow drops a queued meter reading first, then the oldest call, never the call currently being sent.
 - The queue survives proxy restarts. Credentials are not stored with queued calls.
 
 ### BOOT_INFO

@@ -44,7 +44,7 @@ The proxy is vendor-neutral and supports Chargers and Backends using the protoco
 | NFR-008 | Test Suite               | The automated test suite must pass 100% and the linter (ruff, line length 120) must report 0 errors before a release.             | Maintainability | Medium   | Implemented |
 | NFR-009 | Secondary Isolation      | An outage, slowness or rejection of one Secondary Backend must cause 0 delayed or lost messages to any other Secondary Backend.     | Availability    | High     | Open        |
 | NFR-010 | Backend Count            | The proxy must serve at least 5 Secondary Backends per Charger session at the same time.                                           | Scalability     | Medium   | Implemented        |
-| NFR-011 | Primary Outage Recovery   | After a session starts, a Primary Backend outage must not close the Charger connection. The proxy must retry indefinitely, retain up to 10,000 eligible updates per Charger across restarts, replay them in order, and log/drop the oldest only on overflow. | Availability | High | Open |
+| NFR-011 | Primary Outage Recovery   | After a session starts, a Primary Backend outage must not close the Charger connection. The proxy must retry indefinitely, retain up to 10,000 eligible updates per Charger (default, configurable) across restarts, replay them in order, and log/drop meter readings first on overflow, then the oldest. | Availability | High | Open        |
 
 ## Constraints
 
