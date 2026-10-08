@@ -259,6 +259,39 @@ def test_bad_numbers_are_config_errors(bad):
         parse(raw(**bad), {"TAP": "pw"})
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"proxy": {"port": 70000}},
+        {"proxy": {"port": -1}},
+        {"proxy": {"ping_interval": 0}},
+        {"primary": {"url": "wss://p", "call_timeout": 0}},
+        {"primary": {"url": "wss://p", "max_queue": 0}},
+        {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "max_queue": -5}]},
+    ],
+)
+def test_out_of_range_numbers_are_config_errors(bad):
+    with pytest.raises(ConfigError, match="must be (between|at least)"):
+        parse(raw(**bad), {"TAP": "pw"})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"logging": {"log_payloads": "false"}},  # a non-empty string would have meant True
+        {"primary": {"url": "wss://p", "policy": {"strip_charging_profile": "no"}}},
+    ],
+)
+def test_flags_must_be_real_booleans(bad):
+    with pytest.raises(ConfigError, match="must be true or false"):
+        parse(raw(**bad), {"TAP": "pw"})
+
+
+def test_charger_entry_that_is_not_a_table_is_a_config_error():
+    with pytest.raises(ConfigError, match="must be tables"):
+        parse(raw(chargers=["CH1"]), {"TAP": "pw"})
+
+
 def test_misspelled_policy_action_is_rejected():
     with pytest.raises(ConfigError, match="unknown action"):
         parse(raw(secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {"Resett": "answer"}}}]), {})

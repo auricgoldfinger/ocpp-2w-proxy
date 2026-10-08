@@ -117,12 +117,33 @@ def _reject_unknown_keys(section: Mapping[str, Any], known: frozenset[str], wher
         raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
 
 
-def _number(section: Mapping[str, Any], key: str, default: Any, where: str, cast: type) -> Any:
+def _number(
+    section: Mapping[str, Any],
+    key: str,
+    default: Any,
+    where: str,
+    cast: type,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> Any:
     value = section.get(key, default)
     try:
-        return cast(value)
+        if isinstance(value, bool):
+            raise TypeError
+        number = cast(value)
     except TypeError, ValueError:
         raise ConfigError(f"{where}: {key} must be a number, not {value!r}") from None
+    if (minimum is not None and number < minimum) or (maximum is not None and number > maximum):
+        bounds = f"between {minimum} and {maximum}" if None not in (minimum, maximum) else f"at least {minimum}"
+        raise ConfigError(f"{where}: {key} must be {bounds}, not {value!r}")
+    return number
+
+
+def _flag(section: Mapping[str, Any], key: str, where: str) -> bool:
+    value = section.get(key, False)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{where}: {key} must be true or false, not {value!r}")
+    return value
 
 
 def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Config:
@@ -258,14 +279,14 @@ def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any])
         raise ConfigError(f"[logging] level must be one of {', '.join(LOG_LEVELS)}, not {log_level!r}")
     return ProxyConfig(
         listen=str(section.get("listen", "0.0.0.0")),
-        port=_number(section, "port", 8321, "[proxy]", int),
+        port=_number(section, "port", 8321, "[proxy]", int, 0, 65535),
         state_dir=Path(section.get("state_dir", "./state")),
         tls_cert=Path(tls_cert) if tls_cert else None,
         tls_key=Path(tls_key) if tls_key else None,
-        ping_interval=_number(section, "ping_interval", 30, "[proxy]", float),
-        ping_timeout=_number(section, "ping_timeout", 60, "[proxy]", float),
+        ping_interval=_number(section, "ping_interval", 30, "[proxy]", float, 1),
+        ping_timeout=_number(section, "ping_timeout", 60, "[proxy]", float, 1),
         log_level=log_level,
-        log_payloads=bool(logging_section.get("log_payloads", False)),
+        log_payloads=_flag(logging_section, "log_payloads", "[logging]"),
     )
 
 
@@ -281,6 +302,8 @@ def _parse_chargers(entries: Any, secrets: _Secrets) -> dict[str, ChargerConfig]
         raise ConfigError("at least one [[chargers]] entry is required (allowlist)")
     chargers: dict[str, ChargerConfig] = {}
     for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise ConfigError("[[chargers]] entries must be tables")
         charger_id = _charger_id(entry.get("id"), "[[chargers]] id")
         if charger_id in chargers:
             raise ConfigError(f"duplicate charger id {charger_id!r}")
@@ -337,8 +360,8 @@ def _parse_backend(
         auth=auth,
         password=password,
         policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule),
-        call_timeout=_number(section, "call_timeout", 30, f"[{name}]", float),
-        max_queue=_number(section, "max_queue", 10_000, f"[{name}]", int),
+        call_timeout=_number(section, "call_timeout", 30, f"[{name}]", float, 1),
+        max_queue=_number(section, "max_queue", 10_000, f"[{name}]", int, 1),
     )
 
 
@@ -367,7 +390,7 @@ def _parse_policy(
             rules=rules,
             default_rule=Rule(section.get("default", default_rule)),
             change_configuration_allow_keys=allow_keys,
-            strip_charging_profile=bool(section.get("strip_charging_profile", False)),
+            strip_charging_profile=_flag(section, "strip_charging_profile", f"[{name}.policy]"),
         )
     except ValueError as exc:
         raise ConfigError(f"[{name}.policy] {exc}") from exc
