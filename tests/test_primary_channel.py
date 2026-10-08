@@ -35,6 +35,44 @@ async def test_primary_queue_drops_oldest_when_full(tmp_path, monkeypatch):
         await channel.close()
 
 
+async def test_live_queued_actions_wait_behind_the_outbox(primary, tmp_path):
+    """A StatusNotification sent live while an older queued MeterValues is still
+    unconfirmed would overtake it on the primary: queue it behind instead."""
+    primary.responder = lambda action, payload: (
+        None if action == "MeterValues" else FakeCsms().responder(action, payload)
+    )
+    config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    channel = PrimaryChannel(
+        config.primary,
+        charger,
+        StateStore.for_charger(config.proxy.state_dir, CHARGER_ID),
+        TrafficLog(CHARGER_ID, False),
+    )
+    try:
+
+        async def on_call(call: Call) -> None:
+            pass
+
+        await channel.attach(ChargerIdentity(charger, None, None), on_call)
+        channel._queue.append(Call("old", "MeterValues", {"connectorId": 1}))  # left over from an outage
+
+        status = await channel.call(
+            Call("new", "StatusNotification", {"connectorId": 1, "status": "Available"}), timeout=3
+        )
+        assert status == CallResult("new", {})  # acknowledged locally, not sent out of order
+        assert [call.id for call in channel._queue] == ["old", "new"]
+
+        # Actions that are never queued still go out live.
+        heartbeat = await channel.call(Call("hb", "Heartbeat", {}), timeout=3)
+        assert heartbeat.payload["currentTime"] == "2026-01-01T00:00:00Z"
+        await primary.wait_for_call("MeterValues")
+        await primary.wait_for_call("Heartbeat")
+        assert "StatusNotification" not in primary.actions()
+    finally:
+        await channel.close()
+
+
 async def test_stale_detach_cannot_unhook_the_newer_session(primary, tmp_path):
     """UC-002 BR-004: a replaced session that outlives the replacement grace still runs
     detach() during its cleanup; that must not unhook the newer session's routing."""

@@ -104,9 +104,12 @@ class PrimaryChannel:
             self._ensure_worker()
 
     async def call(self, call: Call, timeout: float) -> Reply:
-        link = self._link
-        if link is None:
+        # While the outbox drains, StatusNotification/MeterValues/StopTransaction
+        # wait their turn: sent live they would overtake older queued messages and
+        # the primary would see a new status before the previous transaction's stop.
+        if self._link is None or (call.action in QUEUED_ACTIONS and self._queue):
             return self._unavailable(call)
+        link = self._link
         try:
             return await link.call(call, timeout)
         except BackendUnavailable:
