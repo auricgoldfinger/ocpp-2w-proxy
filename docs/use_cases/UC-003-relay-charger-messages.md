@@ -20,12 +20,12 @@
 
 1. Charger sends a message such as a boot notification, status, card authorization, start or stop of a charging transaction, or meter readings.
 2. System logs the message with card numbers masked.
-3. System independently hands the message to each Secondary Backend configured to receive its type: Billing Messages are retained for durable delivery (UC-006); Live Messages are forwarded only while that backend is connected, with the latest boot information and connector status retained for reconnection.
+3. System hands the message to each Secondary Backend configured to receive its type: Billing Messages are retained for durable delivery (UC-006); Live Messages are forwarded only while that backend is connected, with the latest boot information and connector status retained for reconnection. A `StartTransaction` is excluded here: it is handed over only in step 5, after the Primary Backend confirmed the transaction.
 4. If the Primary Backend is connected, System sends the message and waits for its answer
    without waiting for Secondary Backend delivery. If the Primary Backend is unavailable,
    System queues eligible messages for later delivery and handles other calls as described
    in A1.
-5. System records the Primary Backend's transaction number when a charging transaction starts, so that each Secondary Backend's number can be linked to it.
+5. System records the Primary Backend's transaction number when a charging transaction starts, then hands the confirmed start to each configured Secondary Backend, so that each backend's own number can be linked to it - also when that backend answers much later.
 6. System returns the Primary Backend's answer, including its Card Authorization, to the
    Charger; for an eligible queued message, System immediately returns an empty local OCPP
    acknowledgement.
@@ -39,10 +39,13 @@
 
 1. If the message is a `StatusNotification`, `MeterValues`, or `StopTransaction`, System
    stores it durably in the Primary outbox and returns an empty OCPP `CallResult` to the
-   Charger; the Primary Backend's eventual reply is discarded.
+   Charger; the Primary Backend's eventual reply is discarded. The same applies while the
+   outbox still drains after a reconnection: those messages keep their place in line, so the
+   Primary Backend never sees a newer message before an older queued one.
 2. Otherwise, System returns an OCPP `GenericError`; it does not queue or replay calls whose
    Primary Backend reply is needed, such as `Authorize`, `StartTransaction`, `BootNotification`,
-   `Heartbeat`, or `DataTransfer`.
+   or `DataTransfer`. A `Heartbeat` is answered locally with the current time, so the Charger
+   keeps its clock in sync without treating the outage as a fault.
 3. System keeps the established Charger session open and reconnects to the Primary Backend
    with exponential backoff and jitter; queued messages are sent oldest first.
 4. Use case ends when the Charger disconnects.
@@ -52,7 +55,9 @@
 **Trigger:** The message cannot be understood (step 1)  
 **Flow:**
 
-1. System logs a warning and ignores the message.
+1. System logs a warning and answers with a `ProtocolError` `CallError` on the message id it
+   could still read off the frame (a fresh id otherwise), so the sender does not wait for an
+   answer it will never get.
 2. Use case ends.
 
 ### A3: Answer to a backend command
@@ -84,6 +89,8 @@
 ### Failure Postconditions
 
 - The Charger receives no invented Card Authorization or transaction id.
+- A start the Primary Backend did not confirm reaches no Secondary Backend, so no unconfirmed
+  charging session accumulates in any Secondary Backend (step 3).
 - A local acknowledgement under A1 confirms receipt into the proxy's queue, not acceptance
   by the Primary Backend.
 - Delivery to the Secondary Backends is not affected.
@@ -122,13 +129,19 @@ Card numbers are masked except the last four characters; message contents are on
 Transaction starts, Transaction stops and meter readings are Billing Messages. A
 `StopTransaction` and `MeterValues` message received while the Primary Backend is unavailable
 are stored durably and replayed in order; a `StartTransaction` is not queued because its
-Primary Backend reply supplies the transaction id. UC-006 provides separate durable delivery
+Primary Backend reply supplies the transaction id. A `StatusNotification`, `MeterValues` or
+`StopTransaction` sent while the outbox drains is stored too and keeps its place in line
+behind the older queued messages. On every new Primary Backend connection the proxy replays
+the Charger's last `BootNotification`, so backends that key their charger state to the
+booting connection accept the session's calls. UC-006 provides separate durable delivery
 to Secondary Backends.
 
 ### BR-008: Primary outbox
 
-The Primary outbox holds at most 10,000 messages per Charger across proxy restarts. On
-overflow, the oldest message is dropped and an error is logged. Retries continue indefinitely
+The Primary outbox holds at most `max_queue` messages per Charger (default 10,000) across
+proxy restarts. On overflow, queued meter readings are dropped first; if there is none, the
+oldest message is dropped, and an error is logged. The message currently being sent is never
+dropped by an overflow. Retries continue indefinitely
 with delays that start at 1 second, double up to 300 seconds, and vary by ±50%. The outbox
 continues draining after the Charger disconnects. When Primary Backend authentication
 forwards Charger credentials, those credentials are never persisted; after a proxy restart,

@@ -142,7 +142,7 @@ class ChargerSession:
         confirmed: its transactionId is the one the charger will use. A start the
         primary refused (or answered while unavailable) would otherwise leave a
         phantom session in every secondary, and the charger's retry would open yet
-        another one per attempt (UC-003 step 3, revisited).
+        another one per attempt (UC-003 step 3).
         """
         reply = await self._primary.call(call, self._config.primary.call_timeout)
         transaction_id = reply.payload.get("transactionId") if isinstance(reply, CallResult) else None
