@@ -116,7 +116,8 @@ AUTHORIZATION_ACTIONS: frozenset[str] = frozenset(
 
 # OCPP 1.6 configuration keys that change the charger's authorization behavior: the local
 # authorization list, offline authorization, pre-authorization, authorization of remote
-# starts and stopping on an invalid card. Only the primary backend may change them.
+# starts and stopping on an invalid card, plus the charger's credentials and security profile.
+# Only the primary backend may change them.
 # Keys are lowercase: OCPP configuration keys are case-insensitive (CiString).
 AUTHORIZATION_CONFIG_KEYS: frozenset[str] = frozenset(
     {
@@ -125,8 +126,12 @@ AUTHORIZATION_CONFIG_KEYS: frozenset[str] = frozenset(
         "localpreauthorize",
         "allowofflinetxforunknownid",
         "authorizationcacheenabled",
-        "authorizeremotextxrequests",
+        "authorizeremotetxrequests",
         "stoptransactiononinvalidid",
+        "maxenergyoninvalidid",
+        # The charger's own credentials and transport security: changing them can lock it out.
+        "authorizationkey",
+        "securityprofile",
     }
 )
 

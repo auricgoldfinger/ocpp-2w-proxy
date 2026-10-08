@@ -115,6 +115,19 @@ def test_authorization_settings_key_is_rejected_in_any_case():
         parse(bad, {})
 
 
+@pytest.mark.parametrize(
+    "key",
+    ["AuthorizeRemoteTxRequests", "AuthorizationKey", "SecurityProfile", "MaxEnergyOnInvalidId"],
+)
+def test_authorization_and_security_keys_stay_with_primary(key):
+    bad = raw(
+        primary={"url": "wss://p", "policy": {"actions": {"ChangeConfiguration": "answer"}}},
+        secondary=[{"name": "tap", "url": "wss://x", "policy": {"change_configuration_allow_keys": [key]}}],
+    )
+    with pytest.raises(ConfigError, match=key.lower()):
+        parse(bad, {})
+
+
 def test_configuration_key_blocked_while_primary_forwards_all_changes():
     bad = raw(
         secondary=[
