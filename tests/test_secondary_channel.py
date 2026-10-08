@@ -1,11 +1,13 @@
 import asyncio
 
+import pytest
 from fakes import FakeCsms
 
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError
-from ocpp_2w_proxy.secondary_channel import MAX_ATTEMPTS_PER_CALL, SecondaryChannel, _QueuedCall
+from ocpp_2w_proxy.backend_link import BackendUnavailable
+from ocpp_2w_proxy.secondary_channel import SecondaryChannel, _QueuedCall
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
 from ocpp_2w_proxy.transactions import TransactionMap
@@ -177,7 +179,9 @@ class _SilentLink:
         raise TimeoutError
 
 
-async def test_dropped_stop_transaction_frees_the_transaction_link(tmp_path):
+async def test_a_timed_out_message_stays_queued_and_forces_a_reconnect(tmp_path):
+    """A silent backend must not lose billing data: the message stays at the head of the
+    queue and the link is torn down (BackendUnavailable) so the worker reconnects."""
     config = make_config({"name": "tap", "url": "ws://s"})
     store = StateStore(tmp_path / "CH1.json")
     channel = make_channel(config, "tap", store)
@@ -185,9 +189,10 @@ async def test_dropped_stop_transaction_frees_the_transaction_link(tmp_path):
     channel._transactions.secondary_started("tap", "a", 9)
     stop = _QueuedCall(Call("m", "StopTransaction", {"transactionId": 100, "meterStop": 1}), durable=True)
     channel._queue.append(stop)
-    stop.attempts = MAX_ATTEMPTS_PER_CALL - 1  # the next timeout drops it
 
-    await channel._send_head(_SilentLink())
+    for _ in range(5):  # however often it times out
+        with pytest.raises(BackendUnavailable):
+            await channel._send_head(_SilentLink())
 
-    assert channel._transactions.to_secondary(100, "tap") is None
-    assert stop not in channel._queue
+    assert channel._queue[0] is stop
+    assert channel._transactions.to_secondary(100, "tap") == 9  # the link to its transaction is kept

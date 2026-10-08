@@ -38,7 +38,6 @@ DURABLE_ACTIONS = frozenset({"StartTransaction", "StopTransaction", "MeterValues
 # Dropped first when the queue overflows.
 EXPENDABLE_ACTION = "MeterValues"
 
-MAX_ATTEMPTS_PER_CALL = 3
 DEFAULT_BOOT_RETRY_INTERVAL = 60
 
 OnCall = Callable[[Call], Awaitable[None]]
@@ -50,7 +49,6 @@ class _QueuedCall:
     durable: bool
     # Correlates a StartTransaction with the primary's answer for the same charger call.
     start_ref: str | None = None
-    attempts: int = 0
 
 
 class SecondaryChannel:
@@ -326,15 +324,11 @@ class SecondaryChannel:
         self._in_flight = item
         try:
             reply = await link.call(outgoing, self._timeout)
-        except TimeoutError:
-            item.attempts += 1
-            if item.attempts < MAX_ATTEMPTS_PER_CALL:
-                logger.warning("%s did not answer %s (attempt %d)", self.name, item.call.action, item.attempts)
-                return
-            logger.error("%s never answered %s; dropped", self.name, item.call.action)
-            self._forget_stopped_transaction(item)
-            self._complete(item)
-            return
+        except TimeoutError as exc:
+            # A silent link is wedged: reconnect and send the message again. Only the
+            # backend's own CallError ends a message's life; a timeout never does.
+            logger.warning("%s did not answer %s; reconnecting to send it again", self.name, item.call.action)
+            raise BackendUnavailable(f"{self.name} did not answer {item.call.action}") from exc
         finally:
             self._in_flight = None
         self._complete(item)
