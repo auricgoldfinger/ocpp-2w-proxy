@@ -14,9 +14,14 @@ from websockets.http11 import Request, Response
 
 from .backend_link import SUBPROTOCOL
 from .charger_auth import AuthRejected, ChargerIdentity, authenticate, parse_basic
-from .config import Config
+from .charger_context import ChargerContext
+from .config import ChargerConfig, Config
+from .primary_channel import PrimaryChannel
 from .redact import describe_credentials
 from .session import ChargerSession
+from .state import StateStore
+from .traffic_log import TrafficLog
+from .transactions import TransactionMap
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,11 @@ class _ActiveSession:
 class ProxyServer:
     def __init__(self, config: Config):
         self._config = config
+        self._chargers = {
+            charger_id: self._build_context(charger)
+            for charger_id, charger in config.chargers.items()
+        }
+        self._server: Server | None = None
         # Weak: a handshake can still fail after process_request (e.g. subprotocol mismatch).
         self._identities: weakref.WeakKeyDictionary[ServerConnection, ChargerIdentity] = weakref.WeakKeyDictionary()
         self._sessions: dict[str, _ActiveSession] = {}
@@ -49,9 +59,25 @@ class ProxyServer:
             ping_timeout=proxy.ping_timeout,
             server_header=None,
         )
+        self._server = server
+        for context in self._chargers.values():
+            context.primary.start_background()
         scheme = "wss" if proxy.tls_cert else "ws"
         logger.info("listening on %s://%s:%d/<chargerId>", scheme, proxy.listen, proxy.port)
         return server
+
+    async def close(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+        await asyncio.gather(*(context.primary.close() for context in self._chargers.values()))
+
+    def _build_context(self, charger: ChargerConfig) -> ChargerContext:
+        store = StateStore.for_charger(self._config.proxy.state_dir, charger.id)
+        traffic = TrafficLog(charger.id, self._config.proxy.log_payloads)
+        primary = PrimaryChannel(self._config.primary, charger, store, traffic)
+        return ChargerContext(primary=primary, store=store, transactions=TransactionMap(store), traffic=traffic)
 
     def _ssl_context(self) -> ssl.SSLContext | None:
         proxy = self._config.proxy
@@ -93,7 +119,7 @@ class ProxyServer:
         self._sessions[charger_id] = active
         logger.info("%s connected (subprotocol %s)", charger_id, ws.subprotocol)
         try:
-            await ChargerSession(ws, identity, self._config).run()
+            await ChargerSession(ws, identity, self._config, self._chargers[charger_id]).run()
         except Exception:
             logger.exception("%s session crashed", charger_id)
         finally:

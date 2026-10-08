@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from fakes import FakeCsms
 
-from ocpp_2w_proxy import secondary_channel
+from ocpp_2w_proxy import backoff
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.server import ProxyServer
 
@@ -15,8 +15,8 @@ CHARGER_ID = "CH1"
 
 @pytest.fixture(autouse=True)
 def fast_reconnect(monkeypatch):
-    monkeypatch.setattr(secondary_channel, "MIN_RETRY_DELAY", 0.05)
-    monkeypatch.setattr(secondary_channel, "MAX_RETRY_DELAY", 0.1)
+    monkeypatch.setattr(backoff, "MIN_RETRY_DELAY", 0.05)
+    monkeypatch.setattr(backoff, "MAX_RETRY_DELAY", 0.1)
 
 
 @pytest.fixture
@@ -52,17 +52,18 @@ def make_raw_config(primary_url: str, secondary_url: str | None, state_dir: Path
 
 
 @pytest.fixture
-def start_proxy(tmp_path):
-    servers = []
+async def start_proxy(tmp_path):
+    proxies = []
 
     async def _start(primary_url: str, secondary_url: str | None, environ=None, **overrides) -> str:
         environ = {"TAP_PASSWORD": "tap-secret", **(environ or {})}
         config = parse(make_raw_config(primary_url, secondary_url, tmp_path, **overrides), environ)
-        server = await ProxyServer(config).start()
-        servers.append(server)
+        proxy = ProxyServer(config)
+        server = await proxy.start()
+        proxies.append(proxy)
         port = server.sockets[0].getsockname()[1]
         return f"ws://127.0.0.1:{port}/ocpp"
 
     yield _start
-    for server in servers:
-        server.close()
+    for proxy in proxies:
+        await proxy.close()

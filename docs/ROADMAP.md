@@ -27,12 +27,13 @@ references below describe follow-up work, not completed support for those requir
 | `charger_auth.py` | Handshake auth: path → charger id, allowlist, Basic auth |
 | `backend_auth.py` | Upstream URL + Authorization header per backend auth mode |
 | `backend_link.py` | One WebSocket to a backend; `call()` with reply correlation, `serve()` read loop |
+| `primary_channel.py` | Reconnecting Primary Backend link and durable outbox for selected charger messages |
 | `secondary_channel.py` | Reconnecting store-and-forward link to the secondary (boot replay, durable queue) |
 | `transactions.py` | primary ↔ secondary transactionId mapping and payload rewriting |
 | `command_router.py` | Proxy-unique ids for backend→charger commands; routes replies back |
 | `state.py` | Atomic JSON persistence per charger (`<state_dir>/<id>.json`) |
-| `session.py` | One charger session wiring all of the above |
-| `server.py` | WebSocket server, handshake hook, one session per charger id |
+| `session.py` | One charger session wiring the primary and secondary channels |
+| `server.py` | WebSocket server, handshake hook, one session per charger id, persistent outbox workers |
 | `redact.py`, `traffic_log.py` | Safe logging |
 
 **Conventions.**
@@ -140,6 +141,12 @@ block the project.
   hour and calls `load_cert_chain` on the existing `SSLContext` (applies to new handshakes).
   Log reload failures and keep the old cert.
   *Done when:* a unit test with a temp cert pair shows the context reloads after an mtime change.
+
+- [ ] **4.7 Retain selected Primary Backend updates during outages.**
+  `PrimaryChannel` keeps established Charger sessions open, locally acknowledges and durably
+  queues `StatusNotification`, `MeterValues`, and `StopTransaction`, then retries and replays
+  them in order. It retries indefinitely with exponential backoff and jitter, and the per-Charger
+  queue survives restarts with a 10,000-call limit.
 
 ## Phase 5: Observability and operations
 

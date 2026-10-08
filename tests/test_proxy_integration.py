@@ -7,9 +7,12 @@ import base64
 import json
 
 import pytest
-from conftest import CHARGER_ID
+from conftest import CHARGER_ID, make_raw_config
 from fakes import FakeCharger, FakeCsms
 from websockets.exceptions import ConnectionClosed, InvalidStatus
+
+from ocpp_2w_proxy.config import parse
+from ocpp_2w_proxy.server import ProxyServer
 
 BOOT = {"chargePointVendor": "SolarEdge", "chargePointModel": "ONE"}
 START = {"connectorId": 1, "idTag": "04A2B3C4", "meterStart": 0, "timestamp": "2026-01-01T10:00:00Z"}
@@ -224,13 +227,56 @@ async def test_primary_unreachable_closes_charger(secondary, start_proxy):
     assert charger.ws.close_code == 1011
 
 
-async def test_primary_disconnect_closes_charger(primary, secondary, start_proxy):
+async def test_primary_disconnect_queues_selected_calls_and_recovers(primary, secondary, start_proxy):
+    port = primary.port
     url = await start_proxy(primary.url, secondary.url)
     charger = await FakeCharger.connect(url, CHARGER_ID)
     await primary.connected.wait()
-    await primary.drop_connection()
-    await asyncio.wait_for(charger.ws.wait_closed(), 5)
-    assert charger.ws.close_code == 1011
+    await secondary.connected.wait()
+    await primary.stop()
+
+    assert (await charger.call("StatusNotification", {"connectorId": 1, "status": "Charging"}))[2] == {}
+    assert (await charger.call("MeterValues", {"connectorId": 1, "meterValue": []}))[2] == {}
+    assert (await charger.call("Heartbeat", {}))[0] == 4
+    assert (await charger.call("StartTransaction", START))[0] == 4
+    assert charger.ws.close_code is None
+    # The secondary handoff is independent of the primary's answer (UC-003 step 3).
+    await secondary.wait_for_call("StartTransaction")
+
+    recovered = await FakeCsms().start(port)
+    try:
+        await recovered.wait_for_call("MeterValues")
+        assert recovered.actions() == ["StatusNotification", "MeterValues"]
+        assert (await charger.call("Heartbeat", {}))[2] == {"currentTime": "2026-01-01T00:00:00Z"}
+    finally:
+        await charger.close()
+        await recovered.stop()
+
+
+async def test_primary_outbox_survives_proxy_restart(primary, tmp_path):
+    port = primary.port
+    primary_url = f"ws://127.0.0.1:{port}/ocpp"
+    config = parse(make_raw_config(primary_url, None, tmp_path, primary={"auth": "none"}), {})
+    proxy = ProxyServer(config)
+    server = await proxy.start()
+    url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/ocpp"
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await primary.connected.wait()
+    await primary.stop()
+
+    assert (await charger.call("StopTransaction", {"transactionId": 100, "meterStop": 20}))[2] == {}
+    await charger.close()
+    await proxy.close()
+
+    recovered = await FakeCsms().start(port)
+    restarted = ProxyServer(config)
+    try:
+        await restarted.start()
+        await recovered.wait_for_call("StopTransaction")
+        assert recovered.actions() == ["StopTransaction"]
+    finally:
+        await restarted.close()
+        await recovered.stop()
 
 
 async def test_malformed_charger_frame_is_ignored(primary, secondary, start_proxy):

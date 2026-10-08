@@ -30,7 +30,8 @@ id = "CHANGE-ME"
 # secondary_id = "CHANGE-ME"
 
 # Primary = control backend (SolarEdge). Its replies are what the charger sees.
-# If it is unreachable, the proxy refuses the charger so the charger buffers offline itself.
+# It must be reachable to start a session; during later outages the proxy keeps the charger
+# connected, queues StatusNotification/MeterValues/StopTransaction, and retries in the background.
 [primary]
 url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 # none    : no credentials

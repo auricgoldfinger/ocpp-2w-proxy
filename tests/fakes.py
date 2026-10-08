@@ -55,8 +55,9 @@ class FakeCsms:
         return f"ws://127.0.0.1:{self.port}/ocpp"
 
     async def stop(self) -> None:
-        self._server.close()
-        await self._server.wait_closed()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
 
     async def drop_connection(self) -> None:
         if self.connection:

@@ -21,6 +21,17 @@ class BackendUnavailable(Exception):
     """The connection closed (or never opened) before a reply arrived."""
 
 
+async def send_reply(link: BackendLink | None, message: Reply, backend_name: str) -> None:
+    """Deliver a reply if the backend link is alive; log and drop it otherwise (UC-004 A4)."""
+    if link is None:
+        logger.warning("%s backend offline; reply %s dropped", backend_name, message.id)
+        return
+    try:
+        await link.send(message)
+    except BackendUnavailable:
+        logger.warning("%s backend went offline; reply %s dropped", backend_name, message.id)
+
+
 class BackendLink:
     def __init__(self, name: str, ws: ClientConnection, traffic: TrafficLog):
         self.name = name

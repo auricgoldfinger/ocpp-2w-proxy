@@ -38,11 +38,12 @@ async def _serve(server: ProxyServer) -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
-    ws_server = await server.start()
-    await stop.wait()
-    logger.info("shutting down")
-    ws_server.close()
-    await ws_server.wait_closed()
+    await server.start()
+    try:
+        await stop.wait()
+    finally:
+        logger.info("shutting down")
+        await server.close()
 
 
 def main() -> int:

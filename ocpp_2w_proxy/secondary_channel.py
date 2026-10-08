@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from websockets.exceptions import InvalidHandshake, InvalidURI
 
-from .backend_link import BackendLink, BackendUnavailable
+from .backend_link import BackendLink, BackendUnavailable, send_reply
+from .backoff import Backoff
 from .config import SecondaryConfig
 from .ocpp import Call, CallError, CallResult, Reply, from_dict, new_message_id, to_dict
 from .state import StateStore
@@ -30,8 +30,6 @@ DURABLE_ACTIONS = frozenset({"StartTransaction", "StopTransaction", "MeterValues
 # Dropped first when the queue overflows.
 EXPENDABLE_ACTION = "MeterValues"
 
-MIN_RETRY_DELAY = 1.0
-MAX_RETRY_DELAY = 300.0
 MAX_ATTEMPTS_PER_CALL = 3
 DEFAULT_BOOT_RETRY_INTERVAL = 60
 
@@ -125,32 +123,25 @@ class SecondaryChannel:
     # --- secondary -> charger replies -----------------------------------------------------
 
     async def reply(self, message: Reply) -> None:
-        if self._link is None:
-            logger.warning("secondary backend offline; reply %s dropped", message.id)
-            return
-        try:
-            await self._link.send(message)
-        except BackendUnavailable:
-            logger.warning("secondary backend went offline; reply %s dropped", message.id)
+        await send_reply(self._link, message, self.name)
 
     # --- connection lifecycle -------------------------------------------------------------
 
     async def run(self) -> None:
-        delay = MIN_RETRY_DELAY
+        backoff = Backoff()
         while True:
             try:
                 link = await BackendLink.open(self.name, self._url, self._headers, self._user_agent, self._traffic)
             except (OSError, TimeoutError, InvalidHandshake, InvalidURI) as exc:
-                logger.warning("secondary backend unreachable (%s); retrying in ~%.0fs", exc, delay)
+                logger.warning("secondary backend unreachable (%s); retrying in ~%.0fs", exc, backoff.current)
             else:
                 try:
                     if await self._serve(link):
-                        delay = MIN_RETRY_DELAY
+                        backoff.reset()
                 except Exception:
                     # Never let a bug end the secondary for the rest of the charger session.
                     logger.exception("secondary connection failed unexpectedly")
-            await self._sleep(delay * random.uniform(0.5, 1.5))
-            delay = min(delay * 2, MAX_RETRY_DELAY)
+            await self._sleep(backoff.next_delay())
 
     async def _serve(self, link: BackendLink) -> bool:
         """Run one connection until it drops. Returns True if the boot was accepted."""

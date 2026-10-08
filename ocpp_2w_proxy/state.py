@@ -21,6 +21,8 @@ class ChargerState:
     # StartTransaction message id -> transactionId, while waiting for the other backend's answer
     pending_primary_starts: dict[str, int] = field(default_factory=dict)
     pending_secondary_starts: dict[str, int] = field(default_factory=dict)
+    # Primary calls acknowledged locally while the primary backend was unavailable
+    primary_outbox: list[dict[str, Any]] = field(default_factory=list)
     # Durable calls not yet confirmed by the secondary backend, oldest first
     outbox: list[dict[str, Any]] = field(default_factory=list)
     # Last BootNotification payload and last StatusNotification payload per connector
