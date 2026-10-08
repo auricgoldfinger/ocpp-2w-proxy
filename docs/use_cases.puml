@@ -1,0 +1,25 @@
+@startuml Use Cases Overview
+left to right direction
+
+actor "Proxy Administrator" as admin
+actor "Charger" as charger
+actor "Primary Backend" as primary
+actor "Secondary Backend" as secondary
+
+rectangle "ocpp-2w-proxy" {
+    usecase "UC-001\nConfigure and Run Proxy" as UC001
+    usecase "UC-002\nConnect Charger" as UC002
+    usecase "UC-003\nRelay Charger Messages" as UC003
+    usecase "UC-004\nRelay Primary Backend Commands" as UC004
+    usecase "UC-005\nControl Secondary Backend Commands" as UC005
+    usecase "UC-006\nDeliver Billing Messages to Secondary Backend" as UC006
+}
+
+admin --> UC001
+charger --> UC002
+charger --> UC003
+primary --> UC004
+secondary --> UC005
+secondary --> UC006
+
+@enduml
