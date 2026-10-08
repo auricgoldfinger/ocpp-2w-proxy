@@ -34,8 +34,10 @@ id = "CHANGE-ME"
 # Primary = the backend in charge (Tap Electric): card authorization, transaction
 # numbers and remote starts come from here. Its replies are what the charger sees.
 # It must be reachable to start a session; during later outages the proxy keeps the
-# charger connected, queues StatusNotification/MeterValues/StopTransaction, and
-# retries in the background.
+# charger connected and retries in the background. Meanwhile it queues StopTransaction and
+# the MeterValues of a transaction, keeps only the newest StatusNotification per connector,
+# drops other meter readings, and refuses what needs the primary's own answer
+# (Authorize, StartTransaction, ...) so the charger falls back on its local behavior.
 [primary]
 url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 # none    : no credentials
@@ -45,7 +47,7 @@ auth = "none"
 # password_env = "PRIMARY_PASSWORD"
 call_timeout = 30
 # Max queued transaction messages while the primary backend is unreachable.
-# When it overflows, MeterValues are dropped first; Start/Stop are kept.
+# When it overflows, MeterValues are dropped first; stops are kept.
 max_queue = 10000
 
 [primary.policy]
@@ -94,8 +96,10 @@ max_queue = 10000
 # Remote start, local list and reservations are Authorization Commands: the proxy
 # refuses to start if a secondary backend is configured to forward one.
 actions = { SetChargingProfile = "forward", ClearChargingProfile = "forward" }
-# ChangeConfiguration keys this backend may still set (empty: none). Keys that change
-# the charger's authorization behavior (e.g. LocalAuthListEnabled) are refused.
+# ChangeConfiguration keys this backend owns (empty: none), e.g. a power or current limit.
+# The primary still changes every other key, but its changes to these keys are answered
+# "Rejected" by the proxy. Keys that change the charger's authorization behavior or its
+# credentials (e.g. LocalAuthListEnabled, AuthorizationKey) are refused.
 change_configuration_allow_keys = []
 
 # A statistics backend only needs meter data: add it as another [[secondary]] entry

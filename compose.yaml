@@ -12,7 +12,8 @@ services:
       - "192.168.1.10:8321:8321"
     environment:
       - TZ=Europe/Amsterdam
-      - SECONDARY_PASSWORD=change-me     # Tap OCPP password
+      # - PRIMARY_PASSWORD=change-me      # Tap (primary): if [primary] uses auth = "basic"
+      - SECONDARY_PASSWORD=change-me     # SolarEdge (secondary): [[secondary]] password_env
       # - CHARGER_PASSWORD=change-me     # if [[chargers]] password_env is set
     volumes:
       - /mnt/tank/apps/ocpp-2w-proxy/config:/config:ro

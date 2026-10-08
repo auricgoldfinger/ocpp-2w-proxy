@@ -136,9 +136,10 @@ AUTHORIZATION_CONFIG_KEYS: frozenset[str] = frozenset(
 )
 
 
-# Billing backend (Tap): may start/stop sessions and read state, but must not touch anything
-# the control backend (SolarEdge) relies on: charging profiles, configuration, availability,
-# firmware, the local authorization list, or card authorization (remote start).
+# A secondary backend (e.g. the SolarEdge control backend): may stop sessions and read state,
+# but by default must not touch what the primary backend (Tap, which authorizes and bills)
+# relies on: charging profiles, configuration, availability, firmware, the local
+# authorization list, or card authorization (remote start). Config can hand it some of these.
 SECONDARY_DEFAULT_RULES: Mapping[str, Rule] = {
     "RemoteStopTransaction": Rule.FORWARD,
     "TriggerMessage": Rule.FORWARD,
