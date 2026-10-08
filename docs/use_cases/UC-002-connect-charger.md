@@ -5,10 +5,12 @@
 **Use Case ID:** UC-002  
 **Use Case Name:** Connect Charger  
 **Primary Actor:** Charger  
-**Secondary Actors:** Primary Backend  
-**Goal:** The charger establishes a session through the proxy so that it is controlled by the primary backend.  
+**Secondary Actors:** Primary Backend, Secondary Backend  
+**Goal:** The charger establishes a session through the proxy so that it is controlled by the Primary Backend.  
 **Trigger:** Charger opens a connection to the proxy under its own id.  
-**Status:** Implemented  
+**Status:** Draft  
+
+**Requirements:** [FR-001, FR-002, FR-015, FR-016, FR-017, FR-018, FR-021, NFR-001, NFR-003, NFR-011, C-004](../requirements.md)
 
 ## Preconditions
 
@@ -19,10 +21,11 @@
 1. Charger opens a connection that carries its id and, optionally, credentials.
 2. System checks that the charger is on the allowlist and that any credentials are valid.
 3. System ends an already running session of the same charger.
-4. System connects to the primary backend on behalf of the charger.
+4. System connects to the Primary Backend on behalf of the charger.
 5. System starts the session; messages are relayed as described in UC-003 and UC-004.
-6. System connects to the secondary backend, if one is configured, and keeps retrying in the background (UC-006).
-7. Session ends when the charger or the primary backend disconnects.
+6. System connects to every configured Secondary Backend independently and keeps retrying each in the background (UC-006).
+7. Session ends when the Charger disconnects; a Primary Backend interruption after the
+   session starts does not end the session (UC-003).
 
 ## Alternative Flows
 
@@ -42,21 +45,26 @@
 1. System refuses the connection as unauthorized.
 2. Use case ends.
 
-### A3: Primary backend unreachable
+### A3: Primary Backend unreachable
 
-**Trigger:** The primary backend cannot be reached or credentials for it are missing (step 4)  
+**Trigger:** The Primary Backend cannot be reached or credentials for it are missing (step 4)  
 **Flow:**
 
-1. System closes the charger connection and signals that the primary backend is unavailable.
+1. System closes the charger connection and signals that the Primary Backend is unavailable.
 2. Use case ends.
 
-### A4: Primary backend disconnects
+### A4: Primary Backend disconnects after session start
 
-**Trigger:** The primary backend drops the connection during the session (step 7)  
+**Trigger:** The Primary Backend drops the connection during the session (step 7)  
 **Flow:**
 
-1. System ends the session and closes the charger connection.
-2. Use case ends.
+1. System keeps the Charger connection open and retries the Primary Backend with increasing,
+   randomized delays.
+2. System queues eligible Charger messages for ordered delivery after reconnection (UC-003);
+   calls requiring an immediate Primary Backend decision receive an OCPP error.
+3. When the Charger disconnects, System ends the live session while retaining and delivering
+   queued messages in the background.
+4. Use case ends when the Charger disconnects.
 
 ## Postconditions
 
@@ -88,14 +96,16 @@ If a password is configured for the charger it is required and must match exactl
 
 A new connection of a charger replaces its previous session; the old session gets up to 15 seconds to finish.
 
-### BR-005: Primary backend is mandatory
+### BR-005: Primary Backend is mandatory
 
-A session lives only as long as both the charger and the primary backend are connected. The secondary backend never ends a session.
+The Primary Backend is required to start a session and remains the authority for backend
+decisions. A temporary Primary Backend interruption does not end an established session;
+the session ends when the Charger disconnects. A Secondary Backend never ends a session.
 
 ### BR-006: Backend identities
 
-The charger may be known under a different id at each backend; by default the charger id is used for both.
+The charger may be known under a different id at each backend; by default the charger id is used for every backend.
 
 ### BR-007: Credentials are not exposed
 
-Passwords are never logged; the charger's credentials are never passed on to the secondary backend.
+Passwords are never logged; the charger's credentials are never passed on to a Secondary Backend.

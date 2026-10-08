@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_BP-001" targetNamespace="http://bpmn.io/schema/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:collaboration id="Collaboration_BP-001">
+    <bpmn:participant id="Participant_ocpp_2w_proxy" name="ocpp-2w-proxy" processRef="BP-001" />
+  </bpmn:collaboration>
+  <bpmn:process id="BP-001" name="Proxy Startup" isExecutable="false">
+    <bpmn:documentation>Goal: The proxy starts with valid policies and accepts Charger connections.
+Trigger: The Proxy Administrator starts the proxy with a configuration file.
+Requirements: FR-007, FR-008, FR-013, FR-014, FR-015, FR-016, FR-018, FR-019
+Status: Draft</bpmn:documentation>
+    <bpmn:laneSet id="LaneSet_BP-001">
+      <bpmn:lane id="Lane_ProxyAdministrator" name="Proxy Administrator">
+        <bpmn:flowNodeRef>StartEvent_ProxyStartupRequested</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Activity_ConfigureAndRunProxy</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_ProxyReady</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_ProxyStartupRequested" name="Proxy startup requested" />
+    <bpmn:userTask id="Activity_ConfigureAndRunProxy" name="UC-001 Configure and Run Proxy" />
+    <bpmn:endEvent id="EndEvent_ProxyReady" name="Proxy accepting Charger connections" />
+    <bpmn:sequenceFlow id="Flow_ProxyStartupRequested" sourceRef="StartEvent_ProxyStartupRequested" targetRef="Activity_ConfigureAndRunProxy" />
+    <bpmn:sequenceFlow id="Flow_ProxyReady" sourceRef="Activity_ConfigureAndRunProxy" targetRef="EndEvent_ProxyReady" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collaboration_BP-001">
+      <bpmndi:BPMNShape id="Participant_ocpp_2w_proxy_di" bpmnElement="Participant_ocpp_2w_proxy" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="528" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_ProxyAdministrator_di" bpmnElement="Lane_ProxyAdministrator" isHorizontal="true">
+        <dc:Bounds x="190" y="80" width="498" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_ProxyStartupRequested_di" bpmnElement="StartEvent_ProxyStartupRequested">
+        <dc:Bounds x="302" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_ConfigureAndRunProxy_di" bpmnElement="Activity_ConfigureAndRunProxy">
+        <dc:Bounds x="420" y="100" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_ProxyReady_di" bpmnElement="EndEvent_ProxyReady">
+        <dc:Bounds x="602" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ProxyStartupRequested_di" bpmnElement="Flow_ProxyStartupRequested">
+        <di:waypoint x="338" y="140" />
+        <di:waypoint x="420" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ProxyReady_di" bpmnElement="Flow_ProxyReady">
+        <di:waypoint x="520" y="140" />
+        <di:waypoint x="602" y="140" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

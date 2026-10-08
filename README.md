@@ -40,8 +40,14 @@ Details that make this work in practice:
   `StartTransaction`, `MeterValues` and `StopTransaction` are queued on disk and replayed in
   order (with their original timestamps) when it is back, after re-sending the last
   `BootNotification` and `StatusNotification`s. Heartbeats/Authorize are not replayed.
-- **The primary is required.** If it is unreachable or drops, the proxy closes the charger
-  connection (code 1011). The charger then uses its own offline buffering and reconnects.
+- **The primary is required to start a session.** If it is unreachable during connection setup,
+  the proxy closes the charger connection (code 1011). If it drops after the session starts,
+  the proxy keeps the charger connection open and retries with increasing delays (1–300 seconds,
+  ±50% jitter). `StatusNotification`, `MeterValues`, and `StopTransaction` are durably queued,
+  acknowledged locally, and replayed in order; other calls that need a primary decision receive
+  an OCPP error. The queue holds up to 10,000 messages per charger; overflow drops the oldest and
+  is logged. Delivery continues after the charger disconnects. With primary `auth = "forward"`,
+  a proxy restart cannot replay queued calls until a new charger handshake supplies credentials.
 - Vendor `DataTransfer` and firmware/diagnostics notifications go to the primary only.
 
 ### Secondary (Tap) command policy
@@ -172,6 +178,6 @@ sudo docker load -i /tmp/ocpp-2w-proxy-0.2.0.tar.gz
 2. **Apps → Discover Apps → ⋮ → Install via YAML** and paste `compose.yaml`, after adjusting
    the host paths, the LAN IP in `ports`, the timezone and the secrets.
 3. Check the logs in the app's page. Back up the `data` dataset: it holds the transaction
-   mapping and any not-yet-delivered billing messages.
+   mapping and any not-yet-delivered Primary or Secondary Backend messages.
 
 To upgrade: bump the tag, build/save/load again, change `image:` in the app's YAML.

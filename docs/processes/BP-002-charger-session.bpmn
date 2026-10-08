@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_BP-002" targetNamespace="http://bpmn.io/schema/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:collaboration id="Collaboration_BP-002">
+    <bpmn:participant id="Participant_ocpp_2w_proxy" name="ocpp-2w-proxy" processRef="BP-002" />
+  </bpmn:collaboration>
+  <bpmn:process id="BP-002" name="Charger Session" isExecutable="false">
+    <bpmn:documentation>Goal: An allowed Charger establishes a session through the proxy to its Primary Backend.
+Trigger: A Charger opens a connection to the proxy under its own id.
+Requirements: FR-001, FR-002, FR-015, FR-016, FR-017, FR-018
+Status: Draft</bpmn:documentation>
+    <bpmn:laneSet id="LaneSet_BP-002">
+      <bpmn:lane id="Lane_Charger" name="Charger">
+        <bpmn:flowNodeRef>StartEvent_ChargerConnectionRequested</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Activity_ConnectCharger</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_ChargerSessionEstablished</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_ChargerConnectionRequested" name="Charger connection requested" />
+    <bpmn:serviceTask id="Activity_ConnectCharger" name="UC-002 Connect Charger" />
+    <bpmn:endEvent id="EndEvent_ChargerSessionEstablished" name="Charger session established" />
+    <bpmn:sequenceFlow id="Flow_ChargerConnectionRequested" sourceRef="StartEvent_ChargerConnectionRequested" targetRef="Activity_ConnectCharger" />
+    <bpmn:sequenceFlow id="Flow_ChargerSessionEstablished" sourceRef="Activity_ConnectCharger" targetRef="EndEvent_ChargerSessionEstablished" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collaboration_BP-002">
+      <bpmndi:BPMNShape id="Participant_ocpp_2w_proxy_di" bpmnElement="Participant_ocpp_2w_proxy" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="528" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Charger_di" bpmnElement="Lane_Charger" isHorizontal="true">
+        <dc:Bounds x="190" y="80" width="498" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_ChargerConnectionRequested_di" bpmnElement="StartEvent_ChargerConnectionRequested">
+        <dc:Bounds x="302" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_ConnectCharger_di" bpmnElement="Activity_ConnectCharger">
+        <dc:Bounds x="420" y="100" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_ChargerSessionEstablished_di" bpmnElement="EndEvent_ChargerSessionEstablished">
+        <dc:Bounds x="602" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ChargerConnectionRequested_di" bpmnElement="Flow_ChargerConnectionRequested">
+        <di:waypoint x="338" y="140" />
+        <di:waypoint x="420" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ChargerSessionEstablished_di" bpmnElement="Flow_ChargerSessionEstablished">
+        <di:waypoint x="520" y="140" />
+        <di:waypoint x="602" y="140" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

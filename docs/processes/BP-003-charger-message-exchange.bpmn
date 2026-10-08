@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_BP-003" targetNamespace="http://bpmn.io/schema/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:collaboration id="Collaboration_BP-003">
+    <bpmn:participant id="Participant_ocpp_2w_proxy" name="ocpp-2w-proxy" processRef="BP-003" />
+  </bpmn:collaboration>
+  <bpmn:process id="BP-003" name="Charger Message Exchange" isExecutable="false">
+    <bpmn:documentation>Goal: Charger messages and permitted Backend Commands are relayed with replies routed to the intended recipient.
+Trigger: A Charger sends a message or a Backend sends a Command.
+Requirements: FR-003, FR-004, FR-005, FR-006, FR-007, FR-009, FR-012, FR-019, FR-020
+Status: Draft</bpmn:documentation>
+    <bpmn:laneSet id="LaneSet_BP-003">
+      <bpmn:lane id="Lane_Charger" name="Charger">
+        <bpmn:flowNodeRef>StartEvent_ChargerMessageReceived</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Activity_RelayChargerMessages</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Activity_RelayCommandReply</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_ChargerMessageRelayed</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_CommandReplyRouted</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_PrimaryBackend" name="Primary Backend">
+        <bpmn:flowNodeRef>StartEvent_BackendCommandReceived</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Activity_RelayBackendCommands</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_ChargerMessageReceived" name="Charger message received" />
+    <bpmn:startEvent id="StartEvent_BackendCommandReceived" name="Backend Command received" />
+    <bpmn:serviceTask id="Activity_RelayChargerMessages" name="UC-003 Relay Charger Messages" />
+    <bpmn:serviceTask id="Activity_RelayBackendCommands" name="UC-004 Relay Backend Commands" />
+    <bpmn:serviceTask id="Activity_RelayCommandReply" name="UC-003 Relay Charger Messages" />
+    <bpmn:endEvent id="EndEvent_ChargerMessageRelayed" name="Charger message relayed" />
+    <bpmn:endEvent id="EndEvent_CommandReplyRouted" name="Command reply routed to originating Backend" />
+    <bpmn:sequenceFlow id="Flow_ChargerMessageReceived" sourceRef="StartEvent_ChargerMessageReceived" targetRef="Activity_RelayChargerMessages" />
+    <bpmn:sequenceFlow id="Flow_ChargerMessageRelayed" sourceRef="Activity_RelayChargerMessages" targetRef="EndEvent_ChargerMessageRelayed" />
+    <bpmn:sequenceFlow id="Flow_BackendCommandReceived" sourceRef="StartEvent_BackendCommandReceived" targetRef="Activity_RelayBackendCommands" />
+    <bpmn:sequenceFlow id="Flow_CommandReplyReceived" sourceRef="Activity_RelayBackendCommands" targetRef="Activity_RelayCommandReply" />
+    <bpmn:sequenceFlow id="Flow_CommandReplyRouted" sourceRef="Activity_RelayCommandReply" targetRef="EndEvent_CommandReplyRouted" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collaboration_BP-003">
+      <bpmndi:BPMNShape id="Participant_ocpp_2w_proxy_di" bpmnElement="Participant_ocpp_2w_proxy" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="828" height="360" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Charger_di" bpmnElement="Lane_Charger" isHorizontal="true">
+        <dc:Bounds x="190" y="80" width="798" height="240" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_PrimaryBackend_di" bpmnElement="Lane_PrimaryBackend" isHorizontal="true">
+        <dc:Bounds x="190" y="320" width="798" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_ChargerMessageReceived_di" bpmnElement="StartEvent_ChargerMessageReceived">
+        <dc:Bounds x="302" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_BackendCommandReceived_di" bpmnElement="StartEvent_BackendCommandReceived">
+        <dc:Bounds x="302" y="362" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_RelayChargerMessages_di" bpmnElement="Activity_RelayChargerMessages">
+        <dc:Bounds x="570" y="100" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_RelayBackendCommands_di" bpmnElement="Activity_RelayBackendCommands">
+        <dc:Bounds x="420" y="340" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_RelayCommandReply_di" bpmnElement="Activity_RelayCommandReply">
+        <dc:Bounds x="720" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_ChargerMessageRelayed_di" bpmnElement="EndEvent_ChargerMessageRelayed">
+        <dc:Bounds x="902" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_CommandReplyRouted_di" bpmnElement="EndEvent_CommandReplyRouted">
+        <dc:Bounds x="902" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ChargerMessageReceived_di" bpmnElement="Flow_ChargerMessageReceived">
+        <di:waypoint x="338" y="140" />
+        <di:waypoint x="570" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ChargerMessageRelayed_di" bpmnElement="Flow_ChargerMessageRelayed">
+        <di:waypoint x="670" y="140" />
+        <di:waypoint x="902" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_BackendCommandReceived_di" bpmnElement="Flow_BackendCommandReceived">
+        <di:waypoint x="338" y="380" />
+        <di:waypoint x="420" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_CommandReplyReceived_di" bpmnElement="Flow_CommandReplyReceived">
+        <di:waypoint x="520" y="380" />
+        <di:waypoint x="620" y="380" />
+        <di:waypoint x="620" y="200" />
+        <di:waypoint x="720" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_CommandReplyRouted_di" bpmnElement="Flow_CommandReplyRouted">
+        <di:waypoint x="820" y="200" />
+        <di:waypoint x="861" y="200" />
+        <di:waypoint x="861" y="260" />
+        <di:waypoint x="902" y="260" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -5,21 +5,37 @@ actor "Proxy Administrator" as admin
 actor "Charger" as charger
 actor "Primary Backend" as primary
 actor "Secondary Backend" as secondary
+actor "Secondary Backend Operator" as secondary_operator
 
 rectangle "ocpp-2w-proxy" {
     usecase "UC-001\nConfigure and Run Proxy" as UC001
     usecase "UC-002\nConnect Charger" as UC002
     usecase "UC-003\nRelay Charger Messages" as UC003
-    usecase "UC-004\nRelay Primary Backend Commands" as UC004
-    usecase "UC-005\nControl Secondary Backend Commands" as UC005
-    usecase "UC-006\nDeliver Billing Messages to Secondary Backend" as UC006
+    usecase "UC-004\nRelay Backend Commands" as UC004
+    usecase "UC-006\nDeliver Billing Messages to Secondary Backends" as UC006
 }
+
+note bottom of secondary
+  Any number of Secondary Backends
+  may be configured per Charger.
+end note
 
 admin --> UC001
 charger --> UC002
 charger --> UC003
+primary --> UC003
+secondary --> UC003
 primary --> UC004
-secondary --> UC005
+secondary --> UC004
 secondary --> UC006
+secondary_operator --> UC006
+
+note bottom of UC006
+  Delivery is initiated automatically by the proxy.
+  The operator is the beneficiary; the queue is internal.
+  Primary billing delivery is part of UC-003.
+end note
+
+' UC-005 "Control Secondary Backend Commands" is obsolete, superseded by UC-004.
 
 @enduml

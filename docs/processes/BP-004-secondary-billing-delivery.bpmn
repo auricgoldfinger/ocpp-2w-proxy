@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_BP-004" targetNamespace="http://bpmn.io/schema/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:collaboration id="Collaboration_BP-004">
+    <bpmn:participant id="Participant_ocpp_2w_proxy" name="ocpp-2w-proxy" processRef="BP-004" />
+  </bpmn:collaboration>
+  <bpmn:process id="BP-004" name="Secondary Billing Delivery" isExecutable="false">
+    <bpmn:documentation>Goal: Each Secondary Backend receives permitted Billing Messages in order, or undelivered messages remain retained.
+Trigger: A Billing Message becomes available, a queued message becomes eligible for retry, or connection recovery is needed.
+Requirements: FR-010, FR-011, FR-012
+Status: Draft</bpmn:documentation>
+    <bpmn:laneSet id="LaneSet_BP-004">
+      <bpmn:lane id="Lane_SecondaryBackendOperator" name="Secondary Backend Operator">
+        <bpmn:flowNodeRef>StartEvent_BillingMessageAvailable</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>StartEvent_QueuedMessageRetryEligible</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>StartEvent_ConnectionRecoveryNeeded</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Activity_DeliverBillingMessages</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_BillingDeliveryOutcome</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_BillingMessageAvailable" name="Billing Message available" />
+    <bpmn:startEvent id="StartEvent_QueuedMessageRetryEligible" name="Queued message eligible for retry" />
+    <bpmn:startEvent id="StartEvent_ConnectionRecoveryNeeded" name="Secondary Backend connection recovery needed" />
+    <bpmn:userTask id="Activity_DeliverBillingMessages" name="UC-006 Deliver Billing Messages to Secondary Backends" />
+    <bpmn:endEvent id="EndEvent_BillingDeliveryOutcome" name="Billing Messages delivered or retained" />
+    <bpmn:sequenceFlow id="Flow_BillingMessageAvailable" sourceRef="StartEvent_BillingMessageAvailable" targetRef="Activity_DeliverBillingMessages" />
+    <bpmn:sequenceFlow id="Flow_QueuedMessageRetryEligible" sourceRef="StartEvent_QueuedMessageRetryEligible" targetRef="Activity_DeliverBillingMessages" />
+    <bpmn:sequenceFlow id="Flow_ConnectionRecoveryNeeded" sourceRef="StartEvent_ConnectionRecoveryNeeded" targetRef="Activity_DeliverBillingMessages" />
+    <bpmn:sequenceFlow id="Flow_BillingDeliveryOutcome" sourceRef="Activity_DeliverBillingMessages" targetRef="EndEvent_BillingDeliveryOutcome" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collaboration_BP-004">
+      <bpmndi:BPMNShape id="Participant_ocpp_2w_proxy_di" bpmnElement="Participant_ocpp_2w_proxy" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="528" height="360" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_SecondaryBackendOperator_di" bpmnElement="Lane_SecondaryBackendOperator" isHorizontal="true">
+        <dc:Bounds x="190" y="80" width="498" height="360" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_BillingMessageAvailable_di" bpmnElement="StartEvent_BillingMessageAvailable">
+        <dc:Bounds x="302" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_QueuedMessageRetryEligible_di" bpmnElement="StartEvent_QueuedMessageRetryEligible">
+        <dc:Bounds x="302" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_ConnectionRecoveryNeeded_di" bpmnElement="StartEvent_ConnectionRecoveryNeeded">
+        <dc:Bounds x="302" y="362" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_DeliverBillingMessages_di" bpmnElement="Activity_DeliverBillingMessages">
+        <dc:Bounds x="420" y="100" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_BillingDeliveryOutcome_di" bpmnElement="EndEvent_BillingDeliveryOutcome">
+        <dc:Bounds x="602" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_BillingMessageAvailable_di" bpmnElement="Flow_BillingMessageAvailable">
+        <di:waypoint x="338" y="140" />
+        <di:waypoint x="420" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_QueuedMessageRetryEligible_di" bpmnElement="Flow_QueuedMessageRetryEligible">
+        <di:waypoint x="338" y="260" />
+        <di:waypoint x="379" y="260" />
+        <di:waypoint x="379" y="140" />
+        <di:waypoint x="420" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ConnectionRecoveryNeeded_di" bpmnElement="Flow_ConnectionRecoveryNeeded">
+        <di:waypoint x="338" y="380" />
+        <di:waypoint x="379" y="380" />
+        <di:waypoint x="379" y="140" />
+        <di:waypoint x="420" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_BillingDeliveryOutcome_di" bpmnElement="Flow_BillingDeliveryOutcome">
+        <di:waypoint x="520" y="140" />
+        <di:waypoint x="602" y="140" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
