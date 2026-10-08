@@ -257,8 +257,9 @@ async def test_primary_disconnect_queues_selected_calls_and_recovers(primary, se
     assert heartbeat[0] == 3 and heartbeat[2]["currentTime"]  # answered locally, not an error
     assert (await charger.call("StartTransaction", START))[0] == 4
     assert charger.ws.close_code is None
-    # The secondary handoff is independent of the primary's answer (UC-003 step 3).
-    await secondary.wait_for_call("StartTransaction")
+    # A start the primary never confirmed opens no session in the secondary: the
+    # charger's retry must not stack phantom sessions there (UC-003 step 3).
+    assert [action for action, _ in secondary.calls if action == "StartTransaction"] == []
 
     recovered = await FakeCsms().start(port)
     try:
@@ -510,6 +511,30 @@ async def test_backend_commands_get_an_error_while_the_charger_is_offline(primar
     assert reply[0] == 4
     assert reply[2] == "GenericError"
     assert "charger is disconnected" in reply[3]
+
+
+async def test_refused_start_opens_no_secondary_session(primary, secondary, start_proxy):
+    """The primary refuses the start; the charger retries. No secondary may have
+    opened a session for the refused attempt, and the retry gets exactly one."""
+    primary.responder = lambda action, payload: (
+        {"idTagInfo": {"status": "Blocked"}} if action == "StartTransaction" else FakeCsms().responder(action, payload)
+    )
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})  # the session is attached by now
+    try:
+        refused = await charger.call("StartTransaction", START)
+        assert refused[2] == {"idTagInfo": {"status": "Blocked"}}  # the primary's answer, verbatim
+        await asyncio.sleep(0.05)
+        assert [action for action, _ in secondary.calls if action == "StartTransaction"] == []
+
+        primary.responder = responder_with_transaction(100)  # the charger retries
+        retry = await charger.call("StartTransaction", START)
+        assert retry[2]["transactionId"] == 100
+        await secondary.wait_for_call("StartTransaction")
+        assert len([action for action, _ in secondary.calls if action == "StartTransaction"]) == 1
+    finally:
+        await charger.close()
 
 
 async def test_slow_backend_still_gets_its_stop_after_the_fast_one_stopped(primary, start_proxy):

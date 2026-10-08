@@ -27,7 +27,7 @@ from .charger_auth import ChargerIdentity
 from .charger_context import ChargerContext
 from .command_router import CommandRouter, ReplyTarget
 from .config import Config
-from .ocpp import Call, CallError, CallResult, Message, ProtocolError, Reply, new_message_id, parse, serialize
+from .ocpp import Call, CallError, CallResult, Message, ProtocolError, Reply, parse, serialize
 from .policy import CANNED_ANSWERS, CommandPolicy
 from .secondary_channel import SecondaryChannel
 
@@ -112,26 +112,34 @@ class ChargerSession:
         task.add_done_callback(self._relays.discard)
 
     async def _relay_charger_call(self, call: Call) -> None:
-        # Only correlate starts a secondary will actually see; otherwise nothing ever pairs them.
-        tracks_start = call.action == "StartTransaction" and any(
-            channel.forwards(call.action) for channel in self._secondaries.values()
-        )
-        start_ref = new_message_id() if tracks_start else None
-        # The secondary handoff is independent of the primary's answer (UC-003 step 3): the
-        # pending-start bookkeeping links the numbers even when the primary never confirms.
+        if call.action == "StartTransaction":
+            await self._relay_start_transaction(call)
+            return
         for channel in self._secondaries.values():
-            channel.submit(call, start_ref)
+            channel.submit(call)
         reply = await self._primary.call(call, self._config.primary.call_timeout)
-        if start_ref:
-            self._record_primary_start(start_ref, reply)
         await self._send_to_charger(reply)
 
-    def _record_primary_start(self, start_ref: str, reply: Reply) -> None:
+    async def _relay_start_transaction(self, call: Call) -> None:
+        """A start goes to the primary first and only then to the secondaries.
+
+        The secondaries may only open their sessions for a transaction the primary
+        confirmed: its transactionId is the one the charger will use. A start the
+        primary refused (or answered while unavailable) would otherwise leave a
+        phantom session in every secondary, and the charger's retry would open yet
+        another one per attempt (UC-003 step 3, revisited).
+        """
+        reply = await self._primary.call(call, self._config.primary.call_timeout)
         transaction_id = reply.payload.get("transactionId") if isinstance(reply, CallResult) else None
         if isinstance(transaction_id, int):
-            self._transactions.primary_started(start_ref, transaction_id)
+            # Record the primary's answer first: each secondary's own answer links
+            # through it, however long it takes to arrive.
+            self._transactions.primary_started(call.id, transaction_id)
+            for channel in self._secondaries.values():
+                channel.submit(call, start_ref=call.id)
         else:
-            self._transactions.primary_start_failed(start_ref)
+            self._transactions.primary_start_failed(call.id)
+        await self._send_to_charger(reply)
 
     async def _route_charger_reply(self, reply: Reply) -> None:
         routed = self._router.take(reply)
