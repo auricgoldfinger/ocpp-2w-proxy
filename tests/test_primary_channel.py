@@ -313,3 +313,38 @@ async def test_start_transaction_is_refused_while_the_queue_does_not_drain(prima
         assert "StartTransaction" not in primary.actions()
     finally:
         await channel.close()
+
+
+async def test_nothing_reaches_the_primary_before_the_replayed_boot_is_answered(primary, tmp_path):
+    primary.responder = lambda action, payload: None if action == "BootNotification" else FakeCsms().responder(action, payload)
+    store = StateStore.for_charger(tmp_path, CHARGER_ID)
+    store.state.boot = {"chargePointVendor": "Grubby"}
+    store.save()
+    channel = await _attached_channel(primary, tmp_path)
+    try:
+        await primary.wait_for_call("BootNotification")
+
+        reply = await channel.call(Call("hb", "Heartbeat", {}), timeout=0.3)
+
+        assert isinstance(reply, CallResult)  # answered locally
+        assert "Heartbeat" not in primary.actions()
+    finally:
+        await channel.close()
+
+
+async def test_the_chargers_identical_boot_is_not_sent_twice(primary, tmp_path):
+    boot = {"chargePointVendor": "Grubby"}
+    store = StateStore.for_charger(tmp_path, CHARGER_ID)
+    store.state.boot = boot
+    store.save()
+    channel = await _attached_channel(primary, tmp_path)
+    try:
+        first = await channel.call(Call("b1", "BootNotification", boot), timeout=3)
+        assert first.id == "b1"
+        assert first.payload["status"] == "Accepted"
+        assert primary.actions().count("BootNotification") == 1  # the replay answered for it
+
+        await channel.call(Call("b2", "BootNotification", boot), timeout=3)
+        assert primary.actions().count("BootNotification") == 2  # a later boot is a real one
+    finally:
+        await channel.close()
