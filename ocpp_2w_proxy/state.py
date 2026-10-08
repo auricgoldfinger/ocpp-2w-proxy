@@ -53,10 +53,19 @@ class StateStore:
             return ChargerState(**data)
         except (OSError, ValueError, TypeError) as exc:
             # Never silently discard billing data: keep the unreadable file for inspection.
-            backup = self.path.with_suffix(".corrupt")
+            backup = self._park_corrupt()
             logger.error("state file %s unreadable (%s); moved to %s and starting empty", self.path, exc, backup)
-            self.path.replace(backup)
             return ChargerState()
+
+    def _park_corrupt(self) -> Path:
+        """Move the unreadable state file aside, never overwriting an earlier backup."""
+        backup = self.path.with_suffix(".corrupt")
+        suffix = 0
+        while backup.exists():
+            suffix += 1
+            backup = self.path.with_suffix(f".corrupt.{suffix}")
+        self.path.replace(backup)
+        return backup
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

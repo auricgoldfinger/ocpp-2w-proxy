@@ -27,3 +27,13 @@ def test_v1_state_file_is_parked_for_inspection(tmp_path):
     store = StateStore(path)
     assert store.state.transactions == {}
     assert (tmp_path / "c.corrupt").exists()  # undelivered billing data is kept, never silently discarded
+
+
+def test_corrupt_backups_are_numbered_not_overwritten(tmp_path):
+    path = tmp_path / "c.json"
+    for text in ("{first", "{second", "{third"):
+        path.write_text(text)
+        StateStore(path)
+    assert (tmp_path / "c.corrupt").read_text() == "{first"
+    assert (tmp_path / "c.corrupt.1").read_text() == "{second"
+    assert (tmp_path / "c.corrupt.2").read_text() == "{third"
