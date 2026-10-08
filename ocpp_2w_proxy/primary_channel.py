@@ -22,7 +22,8 @@ from .traffic_log import TrafficLog
 logger = logging.getLogger(__name__)
 
 QUEUED_ACTIONS = frozenset({"StatusNotification", "MeterValues", "StopTransaction"})
-MAX_QUEUE = 10_000
+# Dropped first when the queue overflows: meter data is expendable, stops are not.
+EXPENDABLE_ACTION = "MeterValues"
 
 OnCall = Callable[[Call], Awaitable[None]]
 
@@ -46,6 +47,7 @@ class PrimaryChannel:
         self._charger = charger
         self._store = store
         self._traffic = traffic
+        self._max_queue = backend.max_queue
         self._identity = ChargerIdentity(charger, None, None)
         # A session is attached exactly while _on_call is set. The generation ties that routing
         # to the latest attach, so a replaced session that outlives the server's replacement
@@ -134,9 +136,7 @@ class PrimaryChannel:
     def _unavailable(self, call: Call) -> Reply:
         if call.action in QUEUED_ACTIONS:
             self._queue.append(call)
-            while len(self._queue) > MAX_QUEUE:
-                dropped = self._queue.popleft()
-                logger.error("primary queue full (%d); dropped oldest queued %s", MAX_QUEUE, dropped.action)
+            self._enforce_queue_limit()
             self._persist_queue()
             self._queue_changed.set()
             self._ensure_worker()
@@ -144,6 +144,12 @@ class PrimaryChannel:
             return CallResult(call.id, {})
         logger.warning("%s primary unavailable; refusing %s", self._charger.id, call.action)
         return CallError(call.id, "GenericError", "primary backend unavailable")
+
+    def _enforce_queue_limit(self) -> None:
+        while len(self._queue) > self._max_queue:
+            victim = next((c for c in self._queue if c.action == EXPENDABLE_ACTION), self._queue[0])
+            self._queue.remove(victim)
+            logger.error("primary queue full (%d); dropped queued %s", self._max_queue, victim.action)
 
     def _persist_queue(self) -> None:
         self._store.state.primary_outbox = [to_dict(call) for call in self._queue]

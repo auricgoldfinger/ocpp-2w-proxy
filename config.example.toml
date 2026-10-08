@@ -44,6 +44,9 @@ url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 auth = "none"
 # password_env = "PRIMARY_PASSWORD"
 call_timeout = 30
+# Max queued transaction messages while the primary backend is unreachable.
+# When it overflows, MeterValues are dropped first; Start/Stop are kept.
+max_queue = 10000
 
 [primary.policy]
 # Everything is forwarded by default. An Exclusive Command (charging profile,

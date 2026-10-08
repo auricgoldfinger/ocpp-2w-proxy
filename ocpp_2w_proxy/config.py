@@ -76,12 +76,12 @@ class BackendConfig:
     password: str | None
     policy: CommandPolicy
     call_timeout: float
+    max_queue: int = 10_000
 
 
 @dataclass(frozen=True)
 class SecondaryConfig(BackendConfig):
-    forward_actions: frozenset[str]
-    max_queue: int
+    forward_actions: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -308,6 +308,7 @@ def _parse_backend(
         password=password,
         policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule),
         call_timeout=float(section.get("call_timeout", 30)),
+        max_queue=int(section.get("max_queue", 10_000)),
     )
 
 
@@ -337,5 +338,4 @@ def _parse_secondary(name: str, section: Mapping[str, Any], secrets: _Secrets) -
     return SecondaryConfig(
         **vars(base),
         forward_actions=frozenset(section.get("forward_actions", DEFAULT_SECONDARY_FORWARD_ACTIONS)),
-        max_queue=int(section.get("max_queue", 10_000)),
     )

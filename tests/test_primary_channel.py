@@ -5,7 +5,7 @@ import asyncio
 from conftest import CHARGER_ID, make_raw_config
 from fakes import FakeCsms
 
-from ocpp_2w_proxy import backoff, primary_channel
+from ocpp_2w_proxy import backoff
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallResult
@@ -14,23 +14,34 @@ from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
 
 
-async def test_primary_queue_drops_oldest_when_full(tmp_path, monkeypatch):
-    monkeypatch.setattr(primary_channel, "MAX_QUEUE", 2)
-    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
+async def test_primary_queue_overflow_drops_meter_values_first(tmp_path):
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none", "max_queue": 2}), {})
     charger = config.chargers[CHARGER_ID]
     store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
-    channel = PrimaryChannel(
-        config.primary,
-        charger,
-        store,
-        TrafficLog(CHARGER_ID, False),
-    )
+    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    try:
+        channel._unavailable(Call("s", "StatusNotification", {"connectorId": 1}))
+        channel._unavailable(Call("m1", "MeterValues", {"connectorId": 1}))
+        channel._unavailable(Call("m2", "MeterValues", {"connectorId": 1}))
+        channel._unavailable(Call("st", "StopTransaction", {"transactionId": 1}))
+
+        # m1 and m2 are sacrificed so the status and the billing-critical stop survive.
+        assert [call.id for call in channel._queue] == ["s", "st"]
+        assert [call["id"] for call in store.state.primary_outbox] == ["s", "st"]
+    finally:
+        await channel.close()
+
+
+async def test_primary_queue_overflow_drops_oldest_when_no_meter_values(tmp_path):
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none", "max_queue": 2}), {})
+    charger = config.chargers[CHARGER_ID]
+    store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
+    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
     try:
         for message_id in ("one", "two", "three"):
-            channel._unavailable(Call(message_id, "MeterValues", {"value": message_id}))
+            channel._unavailable(Call(message_id, "StatusNotification", {"connectorId": 1}))
 
         assert [call.id for call in channel._queue] == ["two", "three"]
-        assert [call["id"] for call in store.state.primary_outbox] == ["two", "three"]
     finally:
         await channel.close()
 
