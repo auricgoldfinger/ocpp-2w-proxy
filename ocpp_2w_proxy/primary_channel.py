@@ -71,7 +71,7 @@ class PrimaryChannel:
         self._ensure_worker()
         try:
             await self._connect()
-        except (OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials):
+        except OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials:
             self._on_call = None
             self._queue_changed.set()
             self._wake.set()
@@ -227,12 +227,7 @@ class PrimaryChannel:
                 exc = task.exception()
                 if exc and not isinstance(exc, BackendUnavailable):
                     logger.error("%s primary channel task failed: %r", self._charger.id, exc)
-            parked = (
-                sender in done
-                and not sender.cancelled()
-                and sender.exception() is None
-                and reader not in done
-            )
+            parked = sender in done and not sender.cancelled() and sender.exception() is None and reader not in done
             return not parked
         finally:
             sender.cancel()

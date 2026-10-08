@@ -37,10 +37,7 @@ class _ActiveSession:
 class ProxyServer:
     def __init__(self, config: Config):
         self._config = config
-        self._chargers = {
-            charger_id: self._build_context(charger)
-            for charger_id, charger in config.chargers.items()
-        }
+        self._chargers = {charger_id: self._build_context(charger) for charger_id, charger in config.chargers.items()}
         self._server: Server | None = None
         # Weak: a handshake can still fail after process_request (e.g. subprotocol mismatch).
         self._identities: weakref.WeakKeyDictionary[ServerConnection, ChargerIdentity] = weakref.WeakKeyDictionary()
