@@ -27,7 +27,17 @@ from .charger_auth import ChargerIdentity
 from .charger_context import ChargerContext
 from .command_router import CommandRouter, ReplyTarget
 from .config import Config
-from .ocpp import Call, CallError, CallResult, Message, ProtocolError, Reply, parse, serialize
+from .ocpp import (
+    Call,
+    CallError,
+    CallResult,
+    Message,
+    ProtocolError,
+    Reply,
+    parse,
+    protocol_error_reply,
+    serialize,
+)
 from .policy import CANNED_ANSWERS, CommandPolicy
 from .secondary_channel import SecondaryChannel
 
@@ -94,7 +104,10 @@ class ChargerSession:
                 try:
                     message = parse(text)
                 except ProtocolError as exc:
-                    logger.warning("%s charger sent a malformed frame (%s); ignored", self.charger_id, exc)
+                    # Answer the malformed frame with a ProtocolError CallError so the
+                    # charger stops waiting for an answer it will never get.
+                    logger.warning("%s charger sent a malformed frame (%s)", self.charger_id, exc)
+                    await self._send_to_charger(protocol_error_reply(exc))
                     continue
                 self._traffic.frame("charger ->", message)
                 if isinstance(message, Call):

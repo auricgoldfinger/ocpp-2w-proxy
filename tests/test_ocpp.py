@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ocpp_2w_proxy.ocpp import Call, CallError, CallResult, ProtocolError, parse, serialize
+from ocpp_2w_proxy.ocpp import Call, CallError, CallResult, ProtocolError, parse, protocol_error_reply, serialize
 
 
 def test_round_trip_all_message_types():
@@ -32,3 +32,21 @@ def test_round_trip_all_message_types():
 def test_malformed_frames_raise_protocol_error(frame):
     with pytest.raises(ProtocolError):
         parse(frame)
+
+
+def test_protocol_error_salvages_the_message_id():
+    with pytest.raises(ProtocolError) as exc:
+        parse(json.dumps([2, "x", "Heartbeat"]))  # a Call missing its payload
+    assert exc.value.message_id == "x"
+
+    with pytest.raises(ProtocolError) as unreadable:
+        parse("this is not ocpp")
+    assert unreadable.value.message_id is None
+
+
+def test_protocol_error_reply_uses_the_salvaged_id():
+    error = ProtocolError("Call must have 4 elements", "x")
+    assert protocol_error_reply(error) == CallError("x", "ProtocolError", "Call must have 4 elements")
+    anonymous = ProtocolError("not valid JSON: ...")
+    reply = protocol_error_reply(anonymous)
+    assert isinstance(reply, CallError) and reply.id != "x"

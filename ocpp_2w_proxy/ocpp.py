@@ -24,7 +24,15 @@ class MessageType(IntEnum):
 
 
 class ProtocolError(ValueError):
-    """Raised when a frame is not a well-formed OCPP-J message."""
+    """Raised when a frame is not a well-formed OCPP-J message.
+
+    message_id is the sender's id when it could still be read off the frame, so the
+    caller can correlate its error reply; None when not even that was readable.
+    """
+
+    def __init__(self, reason: str, message_id: str | None = None):
+        super().__init__(reason)
+        self.message_id = message_id
 
 
 @dataclass(frozen=True)
@@ -82,14 +90,24 @@ def parse(text: str | bytes) -> Message:
     if not isinstance(message_id, str) or not 0 < len(message_id) <= MAX_MESSAGE_ID_LENGTH:
         raise ProtocolError("invalid message id")
 
-    match message_type:
-        case MessageType.CALL:
-            return _parse_call(frame, message_id)
-        case MessageType.CALL_RESULT:
-            return _parse_call_result(frame, message_id)
-        case MessageType.CALL_ERROR:
-            return _parse_call_error(frame, message_id)
-    raise ProtocolError(f"unknown message type {message_type!r}")
+    try:
+        match message_type:
+            case MessageType.CALL:
+                return _parse_call(frame, message_id)
+            case MessageType.CALL_RESULT:
+                return _parse_call_result(frame, message_id)
+            case MessageType.CALL_ERROR:
+                return _parse_call_error(frame, message_id)
+            case _:
+                raise ProtocolError(f"unknown message type {message_type!r}")
+    except ProtocolError as exc:
+        exc.message_id = message_id  # salvage the id: the sender can correlate our reply
+        raise
+
+
+def protocol_error_reply(error: ProtocolError) -> CallError:
+    """The reply for a malformed frame, so its sender stops waiting for an answer."""
+    return CallError(error.message_id or new_message_id(), "ProtocolError", str(error))
 
 
 def _parse_call(frame: list, message_id: str) -> Call:

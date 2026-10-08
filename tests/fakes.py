@@ -87,6 +87,9 @@ class FakeCsms:
                 self.connection = None
                 self.connected.clear()
 
+    async def send_raw(self, text: str) -> None:
+        await self.connection.send(text)
+
     async def call(self, action: str, payload: dict[str, Any], message_id: str | None = None) -> list[Any]:
         """Send a command to the charger (through the proxy) and wait for the reply frame."""
         message_id = message_id or str(uuid.uuid4())
@@ -117,6 +120,7 @@ class FakeCharger:
         self.ws = ws
         self.responder = responder
         self.received_calls: list[list[Any]] = []
+        self.frames: list[list[Any]] = []  # every frame received, calls included
         self._pending: dict[str, asyncio.Future] = {}
         self._reader = asyncio.create_task(self._read())
 
@@ -139,6 +143,7 @@ class FakeCharger:
     async def _read(self) -> None:
         async for text in self.ws:
             frame = json.loads(text)
+            self.frames.append(frame)
             if frame[0] == 2:
                 self.received_calls.append(frame)
                 await self.ws.send(json.dumps([3, frame[1], self.responder(frame[2], frame[3])]))

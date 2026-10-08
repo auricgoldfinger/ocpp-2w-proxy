@@ -297,12 +297,33 @@ async def test_primary_outbox_survives_proxy_restart(primary, tmp_path):
         await recovered.stop()
 
 
-async def test_malformed_charger_frame_is_ignored(primary, secondary, start_proxy):
+async def test_malformed_charger_frame_gets_a_protocol_error_reply(primary, secondary, start_proxy):
+    """A malformed frame must be answered with a ProtocolError CallError on its own
+    message id, so the sender stops waiting for an answer it will never get."""
     url = await start_proxy(primary.url, secondary.url)
     charger = await FakeCharger.connect(url, CHARGER_ID)
-    await charger.send_raw("this is not ocpp")
-    await charger.send_raw(json.dumps([2, "x", "Heartbeat"]))
-    assert (await charger.call("Heartbeat", {}))[0] == 3
+
+    await charger.send_raw(json.dumps([2, "x", "Heartbeat"]))  # a Call missing its payload
+    await eventually(lambda: any(frame[:2] == [4, "x"] for frame in charger.frames))
+    frame = next(frame for frame in charger.frames if frame[:2] == [4, "x"])
+    assert frame[2] == "ProtocolError"
+
+    await charger.send_raw("this is not ocpp")  # not even the id is readable
+    await eventually(lambda: any(frame[0] == 4 and frame[1] != "x" for frame in charger.frames))
+
+    assert (await charger.call("Heartbeat", {}))[0] == 3  # the connection is unaffected
+    await charger.close()
+
+
+async def test_malformed_backend_frame_gets_a_protocol_error_reply(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})  # the session is attached by now
+
+    await secondary.send_raw(json.dumps([2, "y", "Heartbeat"]))
+    await eventually(lambda: any(frame[:2] == [4, "y"] for frame in secondary.replies))
+    frame = next(frame for frame in secondary.replies if frame[:2] == [4, "y"])
+    assert frame[2] == "ProtocolError"
     await charger.close()
 
 
