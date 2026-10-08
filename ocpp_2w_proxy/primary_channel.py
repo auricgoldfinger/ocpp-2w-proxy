@@ -65,6 +65,10 @@ class PrimaryChannel:
         }
         self._in_flight: Call | None = None  # the queued head whose reply the drain awaits
         self._queue_changed = asyncio.Event()
+        # Set while no billing data waits in the queue (a StartTransaction waits for it).
+        self._drained = asyncio.Event()
+        if not self._queue:
+            self._drained.set()
         self._wake = asyncio.Event()
         self._connect_lock = asyncio.Lock()
         self._worker: asyncio.Task | None = None
@@ -125,15 +129,28 @@ class PrimaryChannel:
             return self._unavailable(call)
         if call.action == "BootNotification":
             self._remember_boot(call)
+        deadline = asyncio.get_running_loop().time() + timeout
+        if call.action == "StartTransaction" and not await self._wait_drained(timeout):
+            # The previous transaction's stop is still queued: the primary must see it
+            # first. Failing now makes the charger retry instead of overtaking it.
+            logger.warning("%s primary still has queued messages; refusing StartTransaction", self._charger.id)
+            return CallError(call.id, "GenericError", "primary backend still catching up")
         link = self._link
+        if link is None:
+            return self._unavailable(call)
         try:
-            return await link.call(call, timeout)
+            return await link.call(call, max(deadline - asyncio.get_running_loop().time(), 0.1))
         except BackendUnavailable:
             return self._unavailable(call)
         except TimeoutError:
             # A wedged link is useless: closing it makes the worker reconnect (UC-003 A1).
             await link.close()
             return self._unavailable(call)
+
+    async def _wait_drained(self, timeout: float) -> bool:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._drained.wait(), timeout)
+        return self._drained.is_set()
 
     def _remember_boot(self, call: Call) -> None:
         """Cache the charger's boot: the next reconnect replays it to the primary."""
@@ -158,6 +175,7 @@ class PrimaryChannel:
         match classify(call):
             case MessageClass.DURABLE:
                 self._queue.append(call)
+                self._drained.clear()
                 self._enforce_queue_limit()
                 self._persist()
                 logger.warning("%s queued %s while the primary backend is unavailable", self._charger.id, call.action)
@@ -364,6 +382,8 @@ class PrimaryChannel:
             self._in_flight = None
         self._log_rejection(call, reply)
         self._queue.popleft()
+        if not self._queue:
+            self._drained.set()
         self._persist()
 
     async def _send_latest(self, link: BackendLink) -> None:

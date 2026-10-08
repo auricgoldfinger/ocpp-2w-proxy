@@ -266,3 +266,50 @@ async def test_attach_during_backoff_sleep_is_served_and_drained(primary, tmp_pa
     finally:
         await channel.close()
         await recovered.stop()
+
+
+async def _attached_channel(primary, tmp_path):
+    config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    channel = PrimaryChannel(
+        config.primary,
+        charger,
+        StateStore.for_charger(config.proxy.state_dir, CHARGER_ID),
+        TrafficLog(CHARGER_ID, False),
+    )
+
+    async def on_call(call: Call) -> None:
+        pass
+
+    await channel.attach(ChargerIdentity(charger, None, None), on_call)
+    return channel
+
+
+START = {"connectorId": 1, "idTag": "tag", "meterStart": 0, "timestamp": "2026-01-01T00:00:00Z"}
+
+
+async def test_start_transaction_waits_for_the_queued_stop_of_the_previous_one(primary, tmp_path):
+    channel = await _attached_channel(primary, tmp_path)
+    try:
+        channel._unavailable(Call("old", "StopTransaction", {"transactionId": 1, "meterStop": 5}))
+
+        reply = await channel.call(Call("new", "StartTransaction", START), timeout=3)
+
+        assert isinstance(reply, CallResult)
+        assert primary.actions() == ["StopTransaction", "StartTransaction"]
+    finally:
+        await channel.close()
+
+
+async def test_start_transaction_is_refused_while_the_queue_does_not_drain(primary, tmp_path):
+    primary.responder = lambda action, payload: None if action == "StopTransaction" else FakeCsms().responder(action, payload)
+    channel = await _attached_channel(primary, tmp_path)
+    try:
+        channel._unavailable(Call("old", "StopTransaction", {"transactionId": 1, "meterStop": 5}))
+
+        reply = await channel.call(Call("new", "StartTransaction", START), timeout=0.3)
+
+        assert isinstance(reply, CallError)
+        assert "StartTransaction" not in primary.actions()
+    finally:
+        await channel.close()
