@@ -410,6 +410,42 @@ async def test_offline_secondary_does_not_delay_the_other(primary, start_proxy):
         await tap.stop()
 
 
+async def test_tx_profile_from_secondary_is_translated(primary, secondary, start_proxy):
+    """A TxProfile the secondary sets names its own transactionId; the charger
+    only knows the primary's, so the id inside the profile must be translated."""
+    primary.responder = responder_with_transaction(100)
+    secondary.responder = responder_with_transaction(9)
+    url = await start_proxy(
+        primary.url,
+        secondary.url,
+        primary={"policy": {"actions": {"SetChargingProfile": "answer"}}},
+        secondary={"policy": {"actions": {"SetChargingProfile": "forward"}}},
+    )
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+    await charger.call("StartTransaction", START)
+    await secondary.wait_for_call("StartTransaction")
+    await asyncio.sleep(0.05)  # let the secondary's StartTransaction.conf be processed
+
+    tx_profile = {
+        "chargingProfileId": 1,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxProfile",
+        "transactionId": 9,
+        "chargingSchedule": [],
+    }
+    reply = await secondary.call("SetChargingProfile", {"connectorId": 1, "csChargingProfiles": tx_profile})
+    assert reply[2] == {"status": "Accepted"}
+    assert charger.received_calls[-1][3]["csChargingProfiles"]["transactionId"] == 100
+
+    # A profile for a transaction this backend does not know is rejected by the proxy.
+    unknown = await secondary.call(
+        "SetChargingProfile", {"connectorId": 1, "csChargingProfiles": {**tx_profile, "transactionId": 12345}}
+    )
+    assert unknown[2] == {"status": "Rejected"}
+    await charger.close()
+
+
 async def test_slow_backend_still_gets_its_stop_after_the_fast_one_stopped(primary, start_proxy):
     """The fast backend confirming its StopTransaction must not delete the slow
     backend's transaction mapping: that one still owes its own Stop."""

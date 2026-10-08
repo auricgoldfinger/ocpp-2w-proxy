@@ -68,6 +68,25 @@ def test_rewrite_remote_stop_for_charger(tmp_path):
     assert txmap.rewrite_for_charger(Call("1", "RemoteStopTransaction", {"transactionId": 9}), "stats") is None
 
 
+def test_rewrite_set_charging_profile_for_charger(tmp_path):
+    txmap = make(tmp_path)
+    txmap.primary_started("a", 100)
+    txmap.secondary_started("tap", "a", 9)
+
+    def call_for(profile):
+        return Call("1", "SetChargingProfile", {"connectorId": 1, "csChargingProfiles": profile})
+
+    tx_profile = {"chargingProfileId": 1, "stackLevel": 1, "transactionId": 9}
+    assert txmap.rewrite_for_charger(call_for(tx_profile), "tap").payload["csChargingProfiles"]["transactionId"] == 100
+
+    default_profile = {"chargingProfileId": 1, "stackLevel": 1}  # no transaction: nothing to translate
+    assert txmap.rewrite_for_charger(call_for(default_profile), "tap").payload["csChargingProfiles"] == default_profile
+
+    assert txmap.rewrite_for_charger(call_for(tx_profile), "stats") is None  # the other backend's transaction
+    unknown = {"chargingProfileId": 1, "stackLevel": 1, "transactionId": 12345}
+    assert txmap.rewrite_for_charger(call_for(unknown), "tap") is None
+
+
 def test_forget_drops_one_backend_and_keeps_the_rest(tmp_path):
     txmap = make(tmp_path)
     txmap.primary_started("a", 100)

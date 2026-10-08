@@ -138,6 +138,21 @@ def _remote_stop_to_charger(txmap: TransactionMap, call: Call, backend_name: str
     return call.with_payload({**call.payload, "transactionId": primary_tx})
 
 
+def _set_charging_profile_to_charger(txmap: TransactionMap, call: Call, backend_name: str) -> Call | None:
+    """A TxProfile names the transaction it applies to: that id is the backend's own
+    transactionId and must be translated, or the profile applies to nothing."""
+    profile = call.payload.get("csChargingProfiles")
+    if not isinstance(profile, dict):
+        return call
+    secondary_tx = profile.get("transactionId")
+    if secondary_tx is None:
+        return call  # TxDefaultProfile / ChargeProfileMaxStackLevel: no transaction to translate
+    primary_tx = txmap.to_primary(secondary_tx, backend_name)
+    if primary_tx is None:
+        return None
+    return call.with_payload({**call.payload, "csChargingProfiles": {**profile, "transactionId": primary_tx}})
+
+
 _TO_SECONDARY: Mapping[str, Callable[[TransactionMap, Call, str], Call | None]] = {
     "MeterValues": _meter_values_to_secondary,
     "StopTransaction": _stop_transaction_to_secondary,
@@ -145,4 +160,5 @@ _TO_SECONDARY: Mapping[str, Callable[[TransactionMap, Call, str], Call | None]] 
 
 _TO_CHARGER: Mapping[str, Callable[[TransactionMap, Call, str], Call | None]] = {
     "RemoteStopTransaction": _remote_stop_to_charger,
+    "SetChargingProfile": _set_charging_profile_to_charger,
 }
