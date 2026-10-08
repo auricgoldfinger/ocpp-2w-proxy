@@ -1,7 +1,7 @@
 [project]
 name = "ocpp-2w-proxy"
-version = "0.2.0"
-description = "A 2 way OCPP 1.6J proxy: one charger, a primary (control) and a secondary (billing) backend"
+version = "0.3.0"
+description = "A two-way OCPP 1.6J proxy: one charger, a primary backend and any number of named secondary backends"
 requires-python = ">=3.14"
 dependencies = [
     "websockets>=14",

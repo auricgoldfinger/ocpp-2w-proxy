@@ -2,7 +2,7 @@
 # or run it with `docker compose up -d`. Adjust the host paths and the LAN IP.
 services:
   ocpp-2w-proxy:
-    image: ocpp-2w-proxy:0.2.0
+    image: ocpp-2w-proxy:0.3.0
     pull_policy: never          # image is loaded manually with `docker load`
     container_name: ocpp-2w-proxy
     restart: unless-stopped

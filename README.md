@@ -1,47 +1,48 @@
 # ocpp-2w-proxy
 
-A two-way OCPP **1.6J** proxy. One charger connects to the proxy; the proxy connects to two
-backends (CSMSes) at the same time:
+A two-way OCPP **1.6J** proxy. One charger connects to the proxy; the proxy connects to one
+primary and any number of named secondary backends (CSMSes) at the same time:
 
 - **primary**: the backend *in charge*, e.g. **Tap Electric** (billing). Card authorization,
   transaction numbers and remote starts come from it; its answers are what the charger sees,
   and by default it may send any command.
-- **secondary**: the *control* backend, e.g. **SolarEdge** ("charge on solar"). It sees every
-  session and meter reading and may lower/pause/resume charging via charging profiles, but
-  cannot change anything the primary relies on.
+- **secondary backends**: *control* or statistics backends, e.g. **SolarEdge** ("charge on
+  solar"). Each sees the messages configured for it and may lower/pause/resume charging via
+  charging profiles assigned to it, but cannot change anything the primary relies on.
 
 ```
                           ┌──────────── primary (Tap) ────── billing, card authorisation, remote start
 charger ── wss ── proxy ─┤
-                          └──────────── secondary (SolarEdge) ─ solar charging profiles
+                          └──────────── secondaries (SolarEdge, ...) ─ solar charging profiles
 ```
 
 ## How messages are routed
 
 | From | Message | Goes to |
 |---|---|---|
-| charger | Call (BootNotification, StartTransaction, ...) | primary, **and** secondary if listed in `forward_actions` |
+| charger | Call (BootNotification, StartTransaction, ...) | primary, **and** every secondary whose `forward_actions` list it |
 | primary | reply to a charger Call | charger |
-| secondary | reply to a charger Call | kept by the proxy (used for transaction id mapping), not sent to the charger |
+| any secondary | reply to a charger Call | kept by the proxy (used for transaction id mapping), not sent to the charger |
 | primary | command (Call) | charger (policy: everything allowed by default) |
-| secondary | command (Call) | **policy**: forwarded, or answered by the proxy itself (see below) |
+| any secondary | command (Call) | **policy**: forwarded, or answered by the proxy itself (see below) |
 | charger | reply to a command | the backend that sent the command |
 
 Details that make this work in practice:
 
 - **Transaction ids.** In OCPP 1.6 each backend issues its own `transactionId`. The charger only
-  knows the primary's, so the proxy remembers which secondary id belongs to it and rewrites
-  `MeterValues`/`StopTransaction` (to the secondary) and `RemoteStopTransaction` (from the
-  secondary). The mapping is stored on disk.
+  knows the primary's, so the proxy remembers which id each secondary assigned to it and rewrites
+  `MeterValues`/`StopTransaction` (to that secondary) and `RemoteStopTransaction` (from it).
+  The mapping is stored on disk.
 - **Message ids.** Every backend command is given a fresh unique id on its way to the charger,
   so both backends using the same id (e.g. counters) cannot get each other's replies.
 - **Card authorisation** is decided by the primary (register your RFID card in Tap). If the
   secondary rejects a card the primary accepted, a warning is logged: that session may not
   be billed.
-- **The secondary can never break charging.** If it is down or slow the charger doesn't notice.
-  `StartTransaction`, `MeterValues` and `StopTransaction` are queued on disk and replayed in
-  order (with their original timestamps) when it is back, after re-sending the last
-  `BootNotification` and `StatusNotification`s. Heartbeats/Authorize are not replayed.
+- **The secondaries can never break charging.** If one is down or slow neither the charger nor
+  the other secondaries notice. `StartTransaction`, `MeterValues` and `StopTransaction` are
+  queued on disk **per backend** and replayed in order (with their original timestamps) when
+  it is back, after re-sending the last `BootNotification` and `StatusNotification`s it is
+  configured for. Heartbeats/Authorize are not replayed.
 - **The primary is required to start a session.** If it is unreachable during connection setup,
   the proxy closes the charger connection (code 1011). If it drops after the session starts,
   the proxy keeps the charger connection open and retries with increasing delays (1–300 seconds,
@@ -53,6 +54,8 @@ Details that make this work in practice:
 - Vendor `DataTransfer` and firmware/diagnostics notifications go to the primary only.
 
 ### Secondary command policy
+
+Each `[[secondary]]` entry has its own policy. Defaults for every secondary:
 
 | Command from secondary | Default |
 |---|---|
@@ -67,8 +70,9 @@ Details that make this work in practice:
 | UpdateFirmware, GetDiagnostics | answered with an empty confirmation |
 | anything else | `CallError NotSupported` |
 
-Override per action in `[secondary.policy] actions = { Reset = "forward" }`
-(`forward` | `answer` | `error`). The primary has the same mechanism (`[primary.policy]`).
+Override per action in that backend's `[secondary.policy] actions = { Reset = "forward" }`
+(`forward` | `answer` | `error`), right after its `[[secondary]]` entry. The primary has the
+same mechanism (`[primary.policy]`).
 
 The proxy **refuses to start** on configurations that would send conflicting commands
 (checked at startup, naming the command and the backends):
@@ -117,8 +121,8 @@ The proxy **refuses to start** on configurations that would send conflicting com
     - If the primary expects the charger's built-in password, use `auth = "forward"` for the
       primary (only works if the charger still sends it with a custom URL).
     - If a backend uses client certificates (Security Profile 3), no proxy can sit in between.
-3. **Start 1-way.** First run with only `[primary]` (remove `[secondary]`) and confirm charging
-    and card authorization work through the proxy. Then add the secondary.
+3. **Start 1-way.** First run with only `[primary]` (remove every `[[secondary]]` entry) and
+   confirm charging and card authorization work through the proxy. Then add the secondaries.
 
 ## TLS (the charger requires `wss://`) without owning a domain
 
@@ -161,7 +165,8 @@ password_env = "PRIMARY_PASSWORD"
 [primary.policy]                # hand the solar charging profiles to the secondary
 actions = { SetChargingProfile = "answer", ClearChargingProfile = "answer" }
 
-[secondary]                     # SolarEdge
+[[secondary]]                   # SolarEdge
+name = "solaredge"
 url = "wss://<solaredge-endpoint>"
 auth = "none"
 
@@ -185,12 +190,12 @@ The image is built on your PC and loaded on the NAS manually.
 
 ```sh
 # on your PC (build for the NAS architecture)
-docker build --platform linux/amd64 -t ocpp-2w-proxy:0.2.0 .
-docker save ocpp-2w-proxy:0.2.0 | gzip > ocpp-2w-proxy-0.2.0.tar.gz
-scp ocpp-2w-proxy-0.2.0.tar.gz admin@truenas:/tmp/
+docker build --platform linux/amd64 -t ocpp-2w-proxy:0.3.0 .
+docker save ocpp-2w-proxy:0.3.0 | gzip > ocpp-2w-proxy-0.3.0.tar.gz
+scp ocpp-2w-proxy-0.3.0.tar.gz admin@truenas:/tmp/
 
 # on the NAS (shell)
-sudo docker load -i /tmp/ocpp-2w-proxy-0.2.0.tar.gz
+sudo docker load -i /tmp/ocpp-2w-proxy-0.3.0.tar.gz
 ```
 
 1. Create datasets, e.g. `tank/apps/ocpp-2w-proxy/config` and `tank/apps/ocpp-2w-proxy/data`.

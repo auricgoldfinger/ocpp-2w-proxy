@@ -1,3 +1,6 @@
+import tomllib
+from pathlib import Path
+
 import pytest
 
 from ocpp_2w_proxy.config import AuthMode, ConfigError, parse
@@ -219,3 +222,14 @@ def test_charger_secondary_id_for_unknown_backend_is_rejected():
     )
     with pytest.raises(ConfigError, match="nope"):
         parse(bad, {})
+
+
+def test_example_config_is_valid():
+    example = Path(__file__).resolve().parent.parent / "config.example.toml"
+    config = parse(tomllib.loads(example.read_text()), {})
+    assert config.primary.name == "primary"
+    assert [backend.name for backend in config.secondaries] == ["solaredge"]
+    # The worked example of BR-009: the profiles are taken away from the primary ...
+    assert config.primary.policy.rule_for("SetChargingProfile") is Rule.ANSWER
+    # ... and assigned to exactly one secondary backend.
+    assert config.secondaries[0].policy.rule_for("SetChargingProfile") is Rule.FORWARD

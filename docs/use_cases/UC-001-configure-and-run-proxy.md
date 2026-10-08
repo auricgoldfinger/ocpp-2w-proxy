@@ -7,7 +7,7 @@
 **Primary Actor:** Proxy Administrator  
 **Goal:** The administrator starts the proxy with a valid configuration so that allowed chargers can connect to their backends.  
 **Trigger:** Administrator starts the proxy with a configuration file.  
-**Status:** Draft  
+**Status:** Implemented  
 
 **Requirements:** [FR-007, FR-008, FR-013, FR-014, FR-015, FR-016, FR-018, FR-019, NFR-002, NFR-007, C-004](../requirements.md)
 

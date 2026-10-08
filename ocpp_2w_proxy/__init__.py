@@ -1,3 +1,3 @@
-"""Two-way OCPP 1.6J proxy: one charger, a primary (control) and a secondary (billing) backend."""
+"""Two-way OCPP 1.6J proxy: one charger, a primary backend and any number of named secondary backends."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

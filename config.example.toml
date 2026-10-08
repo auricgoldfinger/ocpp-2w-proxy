@@ -27,7 +27,9 @@ id = "CHANGE-ME"
 # password_env = "CHARGER_PASSWORD"
 # Optional: the id each backend knows this charger by (defaults to id).
 # primary_id = "CHANGE-ME"
-# secondary_id = "CHANGE-ME"
+# Per secondary backend (defaults to id):
+# [chargers.secondary_ids]
+# solaredge = "CHANGE-ME"
 
 # Primary = the backend in charge (Tap Electric): card authorization, transaction
 # numbers and remote starts come from here. Its replies are what the charger sees.
@@ -54,16 +56,18 @@ actions = { SetChargingProfile = "answer", ClearChargingProfile = "answer" }
 # so a remote start cannot override the charging schedule the secondary backend sets.
 # strip_charging_profile = true
 
-# Secondary = solar/control backend (SolarEdge). Optional: remove this section for
-# a 1-way proxy. It sees the messages below, may stop sessions and - once assigned
-# above - set charging profiles, but may never change authorization, configuration,
-# availability or firmware, and never starts sessions.
-[secondary]
-url = "wss://CHANGE-ME"   # <url>/<secondary_id>
-auth = "basic"            # none | basic   ('forward' is refused: it would leak charger credentials)
-password_env = "SECONDARY_PASSWORD"
+# Secondary backends: zero or more, each a [[secondary]] entry with a unique name
+# that shows up in logs and errors. Remove all of them for a 1-way proxy.
+# This one is the solar/control backend (SolarEdge): it sees the messages below, may stop
+# sessions and - once assigned above - set charging profiles, but may never change
+# authorization, configuration, availability or firmware, and never starts sessions.
+[[secondary]]
+name = "solaredge"
+url = "wss://CHANGE-ME"   # <url>/<secondary_ids.solaredge or charger id>
+auth = "none"             # none | basic   ('forward' is refused: it would leak charger credentials)
+# password_env = "SECONDARY_PASSWORD"
 call_timeout = 30
-# Calls from the charger that are also sent to the secondary.
+# Calls from the charger that are also sent to this backend.
 forward_actions = [
     "BootNotification",
     "Heartbeat",
@@ -73,11 +77,11 @@ forward_actions = [
     "StopTransaction",
     "MeterValues",
 ]
-# Max queued transaction messages while the secondary is unreachable.
+# Max queued transaction messages while this backend is unreachable.
 max_queue = 10000
 
 [secondary.policy]
-# Commands from the secondary to the charger. Defaults:
+# Commands from this backend to the charger. Defaults:
 #   forward: RemoteStopTransaction, TriggerMessage, GetConfiguration, UnlockConnector,
 #            GetCompositeSchedule
 #   answer : RemoteStartTransaction, GetLocalListVersion, SendLocalList, ChangeConfiguration,
@@ -87,6 +91,15 @@ max_queue = 10000
 # Remote start, local list and reservations are Authorization Commands: the proxy
 # refuses to start if a secondary backend is configured to forward one.
 actions = { SetChargingProfile = "forward", ClearChargingProfile = "forward" }
-# ChangeConfiguration keys the secondary may still set (empty: none). Keys that change
+# ChangeConfiguration keys this backend may still set (empty: none). Keys that change
 # the charger's authorization behavior (e.g. LocalAuthListEnabled) are refused.
 change_configuration_allow_keys = []
+
+# A statistics backend only needs meter data: add it as another [[secondary]] entry
+# (with its own [[secondary]] and [secondary.policy] blocks).
+# [[secondary]]
+# name = "stats"
+# url = "wss://CHANGE-ME"
+# auth = "basic"
+# password_env = "STATS_PASSWORD"
+# forward_actions = ["BootNotification", "MeterValues", "StopTransaction"]
