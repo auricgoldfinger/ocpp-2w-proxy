@@ -18,6 +18,7 @@ from .charger_context import ChargerContext
 from .config import ChargerConfig, Config
 from .primary_channel import PrimaryChannel
 from .redact import describe_credentials
+from .secondary_channel import SecondaryChannel
 from .session import ChargerSession
 from .state import StateStore
 from .traffic_log import TrafficLog
@@ -59,6 +60,8 @@ class ProxyServer:
         self._server = server
         for context in self._chargers.values():
             context.primary.start_background()
+            for channel in context.secondaries.values():
+                channel.start_background()
         scheme = "wss" if proxy.tls_cert else "ws"
         logger.info("listening on %s://%s:%d/<chargerId>", scheme, proxy.listen, proxy.port)
         return server
@@ -69,12 +72,22 @@ class ProxyServer:
             await self._server.wait_closed()
             self._server = None
         await asyncio.gather(*(context.primary.close() for context in self._chargers.values()))
+        await asyncio.gather(
+            *(channel.close() for context in self._chargers.values() for channel in context.secondaries.values())
+        )
 
     def _build_context(self, charger: ChargerConfig) -> ChargerContext:
         store = StateStore.for_charger(self._config.proxy.state_dir, charger.id)
         traffic = TrafficLog(charger.id, self._config.proxy.log_payloads)
+        transactions = TransactionMap(store)
+        secondaries = {
+            backend.name: SecondaryChannel(backend, charger, store, transactions, traffic)
+            for backend in self._config.secondaries
+        }
         primary = PrimaryChannel(self._config.primary, charger, store, traffic)
-        return ChargerContext(primary=primary, store=store, transactions=TransactionMap(store), traffic=traffic)
+        return ChargerContext(
+            primary=primary, secondaries=secondaries, store=store, transactions=transactions, traffic=traffic
+        )
 
     def _ssl_context(self) -> ssl.SSLContext | None:
         proxy = self._config.proxy

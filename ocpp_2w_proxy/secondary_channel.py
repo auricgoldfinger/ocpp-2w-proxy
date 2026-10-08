@@ -3,6 +3,11 @@
 The charger must never notice the secondary backend: it can be slow, down or rejecting,
 and charging (driven by the primary) carries on. Transaction-related calls are queued on
 disk and replayed in order once the secondary is reachable again.
+
+The channel belongs to the server, not to a charger session: it connects at startup,
+replays the cached boot/status on every (re)connection, and drains its queue even while
+the charger is offline. Commands arrive only while a session is attached; without one,
+the backend is told the charger is disconnected.
 """
 
 from __future__ import annotations
@@ -15,9 +20,11 @@ from dataclasses import dataclass
 
 from websockets.exceptions import InvalidHandshake, InvalidURI
 
+from .backend_auth import backend_headers, backend_url
 from .backend_link import BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
-from .config import SecondaryConfig
+from .charger_auth import ChargerIdentity
+from .config import ChargerConfig, SecondaryConfig
 from .ocpp import Call, CallError, CallResult, Reply, new_message_id, to_dict
 from .policy import CommandPolicy
 from .state import StateStore, restore_outbox
@@ -34,6 +41,8 @@ EXPENDABLE_ACTION = "MeterValues"
 MAX_ATTEMPTS_PER_CALL = 3
 DEFAULT_BOOT_RETRY_INTERVAL = 60
 
+OnCall = Callable[[Call], Awaitable[None]]
+
 
 @dataclass
 class _QueuedCall:
@@ -48,26 +57,30 @@ class SecondaryChannel:
     def __init__(
         self,
         config: SecondaryConfig,
-        url: str,
-        headers: Mapping[str, str],
-        user_agent: str | None,
+        charger: ChargerConfig,
         store: StateStore,
         transactions: TransactionMap,
         traffic: TrafficLog,
-        on_call: Callable[[Call], Awaitable[None]],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.name = config.name
         self._config = config
-        self._url = url
-        self._headers = headers
-        self._user_agent = user_agent
+        self._charger = charger
+        backend_id = charger.secondary_ids.get(config.name, charger.id)
+        self._url = backend_url(config, backend_id)
+        # auth = 'forward' is refused for secondaries, so the headers never depend on
+        # the charger's session credentials: they are built once, here.
+        self._headers = backend_headers(config, backend_id, ChargerIdentity(charger, None, None))
         self._store = store
         self._state = store.state
         self._transactions = transactions
         self._traffic = traffic
-        self._on_call = on_call
         self._sleep = sleep
+        # A session is attached exactly while _on_call is set; the generation guards
+        # that routing so a replaced session cannot unhook its successor (UC-002 BR-004).
+        self._on_call: OnCall | None = None
+        self._generation = 0
+        self._user_agent: str | None = None
         self._link: BackendLink | None = None
         self._in_flight: _QueuedCall | None = None  # the queued head whose reply the sender awaits
         self._queue: deque[_QueuedCall] = deque(
@@ -75,8 +88,44 @@ class SecondaryChannel:
             for call, start_ref in restore_outbox(self._state.outboxes.get(config.name, []))
         )
         self._queue_changed = asyncio.Event()
+        self._worker: asyncio.Task | None = None
+        self._closed = False
         if self._queue:
             logger.info("%s: %d queued call(s) restored from disk", self.name, len(self._queue))
+
+    # --- charger session wiring ----------------------------------------------------------
+
+    def attach(self, identity: ChargerIdentity, on_call: OnCall) -> int:
+        """Route this backend's commands into the charger session until detach().
+
+        The returned token ties the routing to this attach: hand it to detach(). The
+        connection itself is owned by the background worker and never waits for a session.
+        """
+        self._user_agent = identity.user_agent
+        self._on_call = on_call
+        self._generation += 1
+        return self._generation
+
+    def detach(self, token: int) -> None:
+        """End charger-facing command routing; the durable outbox keeps draining."""
+        if token != self._generation:
+            return  # a newer session owns the channel now
+        self._on_call = None
+
+    def start_background(self) -> None:
+        """Connect and drain from server startup, with or without a charger session."""
+        self._ensure_worker()
+
+    async def close(self) -> None:
+        self._closed = True
+        worker = self._worker
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+    def _ensure_worker(self) -> None:
+        if not self._closed and (self._worker is None or self._worker.done()):
+            self._worker = asyncio.create_task(self._run(), name=f"secondary-{self.name}-{self._charger.id}")
 
     @property
     def connected(self) -> bool:
@@ -143,9 +192,10 @@ class SecondaryChannel:
 
     # --- connection lifecycle -------------------------------------------------------------
 
-    async def run(self) -> None:
+    async def _run(self) -> None:
+        """Connect, serve, reconnect: for as long as the server runs."""
         backoff = Backoff()
-        while True:
+        while not self._closed:
             try:
                 link = await BackendLink.open(self.name, self._url, self._headers, self._user_agent, self._traffic)
             except (OSError, TimeoutError, InvalidHandshake, InvalidURI) as exc:
@@ -155,7 +205,7 @@ class SecondaryChannel:
                     if await self._serve(link):
                         backoff.reset()
                 except Exception:
-                    # Never let a bug end the secondary for the rest of the charger session.
+                    # Never let a bug end the secondary for the rest of the server run.
                     logger.exception("%s connection failed unexpectedly", self.name)
             await self._sleep(backoff.next_delay())
 
@@ -163,7 +213,7 @@ class SecondaryChannel:
         """Run one connection until it drops. Returns True if the boot was accepted."""
         self._link = link
         booted = asyncio.Event()
-        reader = asyncio.create_task(link.serve(self._on_call))
+        reader = asyncio.create_task(link.serve(self._dispatch_call))
         sender = asyncio.create_task(self._sync_and_drain(link, booted))
         try:
             done, _ = await asyncio.wait({reader, sender}, return_when=asyncio.FIRST_COMPLETED)
@@ -176,9 +226,18 @@ class SecondaryChannel:
             for task in (reader, sender):
                 task.cancel()
             await asyncio.gather(reader, sender, return_exceptions=True)
-            await link.close()
+            # Shielded: closing the worker (server shutdown) must still close the link.
+            await asyncio.shield(link.close())
             self._drop_transient()
         return booted.is_set()
+
+    async def _dispatch_call(self, call: Call) -> None:
+        if self._on_call is None:
+            link = self._link
+            if link is not None:
+                await link.reply(CallError(call.id, "GenericError", "charger is disconnected"))
+            return
+        await self._on_call(call)
 
     def _drop_transient(self) -> None:
         self._queue = deque(item for item in self._queue if item.durable)

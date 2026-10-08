@@ -21,7 +21,7 @@ from functools import partial
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 
-from .backend_auth import MissingChargerCredentials, backend_headers, backend_url
+from .backend_auth import MissingChargerCredentials
 from .backend_link import BackendUnavailable
 from .charger_auth import ChargerIdentity
 from .charger_context import ChargerContext
@@ -54,9 +54,9 @@ class ChargerSession:
         self._traffic = charger.traffic
         self._store = charger.store
         self._transactions = charger.transactions
+        self._secondaries = dict(charger.secondaries)
         self._router = CommandRouter()
         self._relays: set[asyncio.Task] = set()
-        self._secondaries: dict[str, SecondaryChannel] = {}
 
     async def run(self) -> None:
         try:
@@ -66,38 +66,25 @@ class ChargerSession:
             await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "primary backend unavailable")
             return
 
-        self._secondaries = self._build_secondaries()
-        essential = {asyncio.create_task(self._read_charger(), name="charger")}
-        background = {
-            asyncio.create_task(channel.run(), name=f"secondary-{name}") for name, channel in self._secondaries.items()
+        # The secondary channels are owned by the charger context; this session only
+        # hooks its command routing into them.
+        secondary_tokens = {
+            name: channel.attach(self._identity, partial(self._on_secondary_call, channel))
+            for name, channel in self._secondaries.items()
         }
+        essential = {asyncio.create_task(self._read_charger(), name="charger")}
         try:
             await asyncio.gather(*essential)
             logger.info("%s charger disconnected; ending session", self.charger_id)
         finally:
-            tasks = essential | background | self._relays
+            tasks = essential | self._relays
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            for name, secondary_token in secondary_tokens.items():
+                self._secondaries[name].detach(secondary_token)
             self._primary.detach(token)
             await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "proxy session ended")
-
-    def _build_secondaries(self) -> dict[str, SecondaryChannel]:
-        channels: dict[str, SecondaryChannel] = {}
-        for backend in self._config.secondaries:
-            backend_id = self._identity.charger.secondary_ids.get(backend.name, self._identity.charger.id)
-            channels[backend.name] = SecondaryChannel(
-                config=backend,
-                url=backend_url(backend, backend_id),
-                headers=backend_headers(backend, backend_id, self._identity),
-                user_agent=self._identity.user_agent,
-                store=self._store,
-                transactions=self._transactions,
-                traffic=self._traffic,
-                # Resolved at call time: channels is complete before any backend connects.
-                on_call=lambda call, name=backend.name: self._on_secondary_call(channels[name], call),
-            )
-        return channels
 
     # --- charger -> backends --------------------------------------------------------------
 

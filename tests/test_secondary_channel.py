@@ -1,3 +1,4 @@
+from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError
 from ocpp_2w_proxy.secondary_channel import MAX_ATTEMPTS_PER_CALL, SecondaryChannel, _QueuedCall
@@ -22,9 +23,10 @@ def make_channel(config, backend_name, store):
         pass
 
     backend = next(b for b in config.secondaries if b.name == backend_name)
-    return SecondaryChannel(
-        backend, f"ws://{backend_name}/CH1", {}, None, store, TransactionMap(store), TrafficLog("CH1", False), on_call
-    )
+    charger = config.chargers["CH1"]
+    channel = SecondaryChannel(backend, charger, store, TransactionMap(store), TrafficLog("CH1", False))
+    channel.attach(ChargerIdentity(charger, None, None), on_call)
+    return channel
 
 
 def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):

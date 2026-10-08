@@ -110,7 +110,7 @@ async def test_remote_stop_from_secondary_is_translated(primary, secondary, star
 async def test_conflicting_secondary_commands_never_reach_charger(primary, secondary, start_proxy):
     url = await start_proxy(primary.url, secondary.url)
     charger = await FakeCharger.connect(url, CHARGER_ID)
-    await secondary.connected.wait()
+    await charger.call("Heartbeat", {})  # the session (and its routing) is attached by now
 
     for action, expected in [
         ("SetChargingProfile", {"status": "Rejected"}),
@@ -134,7 +134,7 @@ async def test_colliding_message_ids_are_routed_to_the_right_backend(primary, se
     charger = await FakeCharger.connect(
         url, CHARGER_ID, responder=lambda action, payload: {"configurationKey": [{"key": payload["key"][0]}]}
     )
-    await secondary.connected.wait()
+    await charger.call("Heartbeat", {})  # the session (and its routing) is attached by now
 
     from_primary, from_secondary = await asyncio.gather(
         primary.call("GetConfiguration", {"key": ["primary"]}, message_id="1"),
@@ -149,7 +149,7 @@ async def test_colliding_message_ids_are_routed_to_the_right_backend(primary, se
 async def test_remote_start_from_secondary_is_refused(primary, secondary, start_proxy):
     url = await start_proxy(primary.url, secondary.url)
     charger = await FakeCharger.connect(url, CHARGER_ID)
-    await secondary.connected.wait()
+    await charger.call("Heartbeat", {})  # the session (and its routing) is attached by now
     reply = await secondary.call(
         "RemoteStartTransaction", {"idTag": "ABC", "chargingProfile": {"chargingProfileId": 1}}
     )
@@ -194,25 +194,31 @@ async def test_secondary_outage_queues_and_replays_in_order(primary, start_proxy
         await secondary.stop()
 
 
-async def test_queue_survives_proxy_restart(primary, start_proxy):
+async def test_queue_survives_proxy_restart(primary, tmp_path):
     secondary = await FakeCsms(responder_with_transaction(9)).start()
     port = secondary.port
     await secondary.stop()
     secondary_url = f"ws://127.0.0.1:{port}/ocpp"
 
-    url = await start_proxy(primary.url, secondary_url)
+    config = parse(make_raw_config(primary.url, secondary_url, tmp_path), {"TAP_PASSWORD": "tap-secret"})
+    proxy = ProxyServer(config)
+    server = await proxy.start()
+    url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/ocpp"
     charger = await FakeCharger.connect(url, CHARGER_ID)
     await charger.call("BootNotification", BOOT)
     await charger.call("StartTransaction", START)
     await charger.close()
+    await proxy.close()  # a real restart: the old proxy is gone
 
     secondary = await FakeCsms(responder_with_transaction(9)).start(port)
     try:
-        url = await start_proxy(primary.url, secondary_url)  # same state_dir: a restarted proxy
-        charger = await FakeCharger.connect(url, CHARGER_ID)
+        proxy = ProxyServer(
+            parse(make_raw_config(primary.url, secondary_url, tmp_path), {"TAP_PASSWORD": "tap-secret"})
+        )
+        await proxy.start()
         assert (await secondary.wait_for_call("StartTransaction"))[0]["idTag"] == START["idTag"]
         assert secondary.actions()[0] == "BootNotification"  # cached boot replayed first
-        await charger.close()
+        await proxy.close()
     finally:
         await secondary.stop()
 
@@ -456,7 +462,7 @@ async def test_case_insensitive_configuration_key_from_secondary(primary, second
         secondary={"policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]}},
     )
     charger = await FakeCharger.connect(url, CHARGER_ID)
-    await secondary.connected.wait()
+    await charger.call("Heartbeat", {})  # the session (and its routing) is attached by now
 
     allowed = await secondary.call("ChangeConfiguration", {"key": "meterValueSampleInterval", "value": "30"})
     assert allowed[2] == {"status": "Accepted"}
@@ -466,6 +472,43 @@ async def test_case_insensitive_configuration_key_from_secondary(primary, second
     assert denied[2] == {"status": "Rejected"}
     assert len(charger.received_calls) == 1
     await charger.close()
+
+
+async def test_secondaries_deliver_while_the_charger_is_offline(primary, start_proxy):
+    """The secondary channels belong to the server, not the session: queued billing
+    data is delivered even while no charger is connected."""
+    secondary = await FakeCsms(responder_with_transaction(9)).start()
+    try:
+        primary.responder = responder_with_transaction(100)
+        url = await start_proxy(primary.url, secondary.url)
+        charger = await FakeCharger.connect(url, CHARGER_ID)
+        await charger.call("Heartbeat", {})  # the session is attached by now
+        await charger.call("StartTransaction", START)
+        await secondary.wait_for_call("StartTransaction")
+        await asyncio.sleep(0.05)  # let the secondary's StartTransaction.conf create the mapping
+        await secondary.drop_connection()  # the backend drops; its meter data queues durably
+
+        await charger.call("MeterValues", {"connectorId": 1, "transactionId": 100, "meterValue": []})
+        await charger.close()  # the charger goes offline too
+
+        await secondary.connected.wait()  # the channel reconnects on its own, session or not
+        assert (await secondary.wait_for_call("MeterValues"))[0]["transactionId"] == 9
+    finally:
+        await secondary.stop()
+
+
+async def test_backend_commands_get_an_error_while_the_charger_is_offline(primary, secondary, start_proxy, caplog):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})
+    await charger.close()
+    with caplog.at_level(logging.INFO):
+        await eventually(lambda: any(r.getMessage() == f"{CHARGER_ID} session closed" for r in caplog.records))
+
+    reply = await secondary.call("GetConfiguration", {"key": ["HeartbeatInterval"]})
+    assert reply[0] == 4
+    assert reply[2] == "GenericError"
+    assert "charger is disconnected" in reply[3]
 
 
 async def test_slow_backend_still_gets_its_stop_after_the_fast_one_stopped(primary, start_proxy):
