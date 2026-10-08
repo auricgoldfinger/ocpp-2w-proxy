@@ -172,10 +172,11 @@ class SecondaryChannel:
             logger.error("%s queue full (%d); dropped queued %s", self.name, self._config.max_queue, victim.call.action)
 
     def _sacrifice(self) -> _QueuedCall | None:
-        """The first droppable item: meter data first, oldest otherwise. Never the
+        """The first droppable durable item: meter data first, oldest otherwise. Never the
         head currently being sent - removing it would make the sender pop the next
-        item, which was never sent, losing it silently."""
-        candidates = [i for i in self._queue if i is not self._in_flight]
+        item, which was never sent, losing it silently. Transient items do not count
+        toward the limit, so dropping one would not relieve it."""
+        candidates = [i for i in self._queue if i.durable and i is not self._in_flight]
         if not candidates:
             return None
         return next((i for i in candidates if i.call.action == EXPENDABLE_ACTION), candidates[0])

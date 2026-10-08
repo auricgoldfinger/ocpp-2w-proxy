@@ -85,6 +85,20 @@ async def test_queue_limit_drops_meter_values_first(tmp_path):
     assert actions == [("StartTransaction", None), ("MeterValues", [2]), ("StopTransaction", None)]
 
 
+def test_overflow_evicts_durable_items_not_transient_ones(tmp_path):
+    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 1})
+    store = StateStore(tmp_path / "CH1.json")
+    channel = make_channel(config, "tap", store)
+    heartbeat = _QueuedCall(Call("h", "Heartbeat", {}), durable=False)
+    stop1 = _QueuedCall(Call("s1", "StopTransaction", {"transactionId": 1}), durable=True)
+    stop2 = _QueuedCall(Call("s2", "StopTransaction", {"transactionId": 2}), durable=True)
+    channel._queue.extend([heartbeat, stop1, stop2])
+
+    channel._enforce_queue_limit()
+
+    assert list(channel._queue) == [heartbeat, stop2]  # the oldest billing item went, the heartbeat stayed
+
+
 async def test_queue_restored_from_disk(tmp_path):
     config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
     store = StateStore(tmp_path / "CH1.json")
