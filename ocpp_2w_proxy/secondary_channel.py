@@ -89,6 +89,8 @@ class SecondaryChannel:
         )
         self._queue_changed = asyncio.Event()
         self._worker: asyncio.Task | None = None
+        self._heartbeater: asyncio.Task | None = None
+        self._heartbeat_interval: int | None = None
         self._closed = False
         if self._queue:
             logger.info("%s: %d queued call(s) restored from disk", self.name, len(self._queue))
@@ -223,9 +225,12 @@ class SecondaryChannel:
                     logger.error("%s sender failed: %r", self.name, exc)
         finally:
             self._link = None
-            for task in (reader, sender):
+            heartbeat = self._heartbeater
+            self._heartbeater = None
+            tasks = [reader, sender] + ([heartbeat] if heartbeat is not None else [])
+            for task in tasks:
                 task.cancel()
-            await asyncio.gather(reader, sender, return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
             # Shielded: closing the worker (server shutdown) must still close the link.
             await asyncio.shield(link.close())
             self._drop_transient()
@@ -245,12 +250,39 @@ class SecondaryChannel:
     async def _sync_and_drain(self, link: BackendLink, booted: asyncio.Event) -> None:
         await self._boot(link)
         booted.set()
+        self._start_heartbeats(link)
         await self._send_statuses(link)
         while True:
             while not self._queue:
                 self._queue_changed.clear()
                 await self._queue_changed.wait()
             await self._send_head(link)
+
+    def _start_heartbeats(self, link: BackendLink) -> None:
+        """Keep the backend's idle timeout alive with synthetic heartbeats when the
+        charger's own ones are not forwarded to it; it stated its interval at boot."""
+        if self._heartbeat_interval is None or self._heartbeater is not None:
+            return
+        self._heartbeater = asyncio.create_task(self._heartbeat_loop(link), name=f"secondary-heartbeat-{self.name}")
+
+    async def _heartbeat_loop(self, link: BackendLink) -> None:
+        while True:
+            await asyncio.sleep(self._heartbeat_interval or DEFAULT_BOOT_RETRY_INTERVAL)
+            try:
+                await link.call(Call(new_message_id(), "Heartbeat", {}), self._timeout)
+            except TimeoutError:
+                continue  # no answer: try again at the next interval
+            except BackendUnavailable:
+                return  # the link is gone; _serve tears everything down
+
+    def _note_heartbeat_interval(self, reply: CallResult) -> None:
+        """Remember the interval this backend asked for in its BootNotification.conf."""
+        if self.forwards("Heartbeat"):
+            return  # the charger's own heartbeats reach this backend already
+        interval = reply.payload.get("interval")
+        if isinstance(interval, int) and interval > 0:
+            self._heartbeat_interval = interval
+            self._start_heartbeats(self._link)  # the charger's boot may teach us the interval mid-connection
 
     async def _boot(self, link: BackendLink) -> None:
         if not self.forwards("BootNotification"):
@@ -267,6 +299,7 @@ class SecondaryChannel:
                 await self._sleep(DEFAULT_BOOT_RETRY_INTERVAL)
                 continue
             if isinstance(reply, CallResult) and reply.payload.get("status") == "Accepted":
+                self._note_heartbeat_interval(reply)
                 return
             interval = DEFAULT_BOOT_RETRY_INTERVAL
             if isinstance(reply, CallResult):
@@ -350,10 +383,12 @@ class SecondaryChannel:
         _warn_if_not_accepted(reply, "Authorize")
 
     def _boot_notification_result(self, item: _QueuedCall, reply: CallResult) -> None:
-        if reply.payload.get("status") != "Accepted":
-            logger.warning(
-                "secondary backend answered the charger's BootNotification with %r", reply.payload.get("status")
-            )
+        if reply.payload.get("status") == "Accepted":
+            self._note_heartbeat_interval(reply)  # its answer to the charger's own boot counts too
+            return
+        logger.warning(
+            "secondary backend answered the charger's BootNotification with %r", reply.payload.get("status")
+        )
 
 
 def _warn_if_not_accepted(reply: CallResult, action: str) -> None:

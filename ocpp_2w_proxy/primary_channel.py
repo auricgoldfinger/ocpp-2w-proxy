@@ -15,7 +15,7 @@ from .backend_link import BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
-from .ocpp import Call, CallError, CallResult, Reply, new_message_id, to_dict
+from .ocpp import Call, CallError, CallResult, Reply, new_message_id, now_iso, to_dict
 from .state import StateStore, restore_outbox
 from .traffic_log import TrafficLog
 
@@ -135,6 +135,11 @@ class PrimaryChannel:
         await self._discard(self._link)
 
     def _unavailable(self, call: Call) -> Reply:
+        if call.action == "Heartbeat":
+            # The charger only asks to sync its clock; answer it locally instead of an
+            # error, so an outage does not make the charger treat it as a protocol fault.
+            logger.warning("%s answered Heartbeat locally while the primary backend is unavailable", self._charger.id)
+            return CallResult(call.id, {"currentTime": now_iso()})
         if call.action in QUEUED_ACTIONS:
             self._queue.append(call)
             self._enforce_queue_limit()

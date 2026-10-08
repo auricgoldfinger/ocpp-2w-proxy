@@ -253,7 +253,8 @@ async def test_primary_disconnect_queues_selected_calls_and_recovers(primary, se
 
     assert (await charger.call("StatusNotification", {"connectorId": 1, "status": "Charging"}))[2] == {}
     assert (await charger.call("MeterValues", {"connectorId": 1, "meterValue": []}))[2] == {}
-    assert (await charger.call("Heartbeat", {}))[0] == 4
+    heartbeat = await charger.call("Heartbeat", {})
+    assert heartbeat[0] == 3 and heartbeat[2]["currentTime"]  # answered locally, not an error
     assert (await charger.call("StartTransaction", START))[0] == 4
     assert charger.ws.close_code is None
     # The secondary handoff is independent of the primary's answer (UC-003 step 3).

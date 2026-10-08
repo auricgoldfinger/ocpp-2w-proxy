@@ -1,3 +1,7 @@
+import asyncio
+
+from fakes import FakeCsms
+
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError
@@ -138,6 +142,30 @@ def test_overflow_never_removes_the_item_being_sent(tmp_path):
     assert channel._queue[0] is items[0]  # the in-flight head survives
     assert items[1] not in channel._queue  # the oldest droppable meter went instead
     assert len(channel._queue) == 2
+
+
+async def test_synthetic_heartbeats_at_the_requested_interval(tmp_path):
+    """A backend that is not forwarded the charger's heartbeats asked for an interval
+    in its BootNotification.conf: the proxy keeps it alive with synthetic ones."""
+    csms = await FakeCsms(
+        lambda action, payload: {"status": "Accepted", "currentTime": "2026-01-01T00:00:00Z", "interval": 1}
+    ).start()
+    try:
+        config = make_config({"name": "tap", "url": csms.url, "forward_actions": ["BootNotification"]})
+        store = StateStore(tmp_path / "CH1.json")
+        store.state.boot = {"chargePointVendor": "v"}
+        store.save()
+        channel = SecondaryChannel(
+            config.secondaries[0], config.chargers["CH1"], store, TransactionMap(store), TrafficLog("CH1", False)
+        )
+        channel.start_background()
+        try:
+            await csms.wait_for_call("BootNotification")  # the cached boot is replayed
+            await asyncio.wait_for(csms.wait_for_call("Heartbeat"), 5)  # within its requested 1s interval
+        finally:
+            await channel.close()
+    finally:
+        await csms.stop()
 
 
 class _SilentLink:

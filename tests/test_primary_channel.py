@@ -106,6 +106,24 @@ async def test_overflow_never_removes_the_call_being_sent(tmp_path):
         await channel.close()
 
 
+async def test_heartbeat_is_answered_locally_while_the_primary_is_down(tmp_path):
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    channel = PrimaryChannel(
+        config.primary,
+        charger,
+        StateStore.for_charger(config.proxy.state_dir, CHARGER_ID),
+        TrafficLog(CHARGER_ID, False),
+    )
+    try:
+        reply = channel._unavailable(Call("hb", "Heartbeat", {}))
+
+        assert isinstance(reply, CallResult)
+        assert "currentTime" in reply.payload  # no CallError: the charger keeps its clock in sync
+    finally:
+        await channel.close()
+
+
 async def test_unreadable_queued_entries_are_skipped_at_startup(tmp_path):
     """One malformed outbox entry must not crash startup: the rest of the queue
     (billing data) still gets restored and delivered."""

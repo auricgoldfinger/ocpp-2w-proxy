@@ -5,10 +5,16 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import IntEnum
 from typing import Any
 
 MAX_MESSAGE_ID_LENGTH = 36
+
+
+def now_iso() -> str:
+    """Current UTC time in the OCPP 1.6 DateTime format (e.g. 2026-10-08T12:34:56Z)."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class MessageType(IntEnum):
