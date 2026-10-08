@@ -26,6 +26,6 @@ EXPOSE 8321
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s \
-    CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8321), 3).close()"
+    CMD ["python", "-m", "ocpp_2w_proxy", "--config", "/config/config.toml", "--healthcheck"]
 
 CMD ["python", "-m", "ocpp_2w_proxy", "--config", "/config/config.toml"]
