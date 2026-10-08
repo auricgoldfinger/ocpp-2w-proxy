@@ -124,6 +124,7 @@ class SecondaryChannel:
         if worker is not None:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
+        self._store.flush()
 
     def _ensure_worker(self) -> None:
         if not self._closed and (self._worker is None or self._worker.done()):
@@ -159,10 +160,10 @@ class SecondaryChannel:
     def _remember(self, call: Call) -> None:
         if call.action == "BootNotification":
             self._state.boot = call.payload
-            self._store.save()
+            self._store.save_soon()
         elif call.action == "StatusNotification":
             self._state.statuses[str(call.payload.get("connectorId"))] = call.payload
-            self._store.save()
+            self._store.save_soon()
 
     def _enforce_queue_limit(self) -> None:
         while sum(item.durable for item in self._queue) > self._config.max_queue:
@@ -185,7 +186,7 @@ class SecondaryChannel:
         self._state.outboxes[self._config.name] = [
             {"call": to_dict(item.call), "start_ref": item.start_ref} for item in self._queue if item.durable
         ]
-        self._store.save()
+        self._store.save_soon()
 
     # --- secondary -> charger replies -----------------------------------------------------
 

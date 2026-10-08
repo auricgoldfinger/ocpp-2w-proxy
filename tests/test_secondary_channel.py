@@ -33,7 +33,7 @@ def make_channel(config, backend_name, store):
     return channel
 
 
-def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):
+async def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):
     config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
     store = StateStore(tmp_path / "CH1.json")
     channel = make_channel(config, "tap", store)
@@ -42,6 +42,7 @@ def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):
     channel.submit(Call("3", "Heartbeat", {}))
     channel.submit(Call("4", "DataTransfer", {"vendorId": "x"}))
     channel.submit(Call("5", "StartTransaction", {"connectorId": 1}), start_ref="ref")
+    store.flush()  # the coalesced queue write lands now, not in FLUSH_DELAY
 
     state = StateStore(tmp_path / "CH1.json").state
     assert [item["call"]["action"] for item in state.outboxes["tap"]] == ["StartTransaction"]
@@ -51,7 +52,7 @@ def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):
     assert state.statuses["1"]["status"] == "Available"
 
 
-def test_each_backend_has_its_own_queue(tmp_path):
+async def test_each_backend_has_its_own_queue(tmp_path):
     config = make_config({"name": "tap", "url": "ws://s"}, {"name": "stats", "url": "ws://s"})
     store = StateStore(tmp_path / "CH1.json")
     tap = make_channel(config, "tap", store)
@@ -67,7 +68,7 @@ def test_each_backend_has_its_own_queue(tmp_path):
     assert len(store.state.outboxes["stats"]) == 1  # the other backend's queue is untouched
 
 
-def test_queue_limit_drops_meter_values_first(tmp_path):
+async def test_queue_limit_drops_meter_values_first(tmp_path):
     config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
     store = StateStore(tmp_path / "CH1.json")
     channel = make_channel(config, "tap", store)
@@ -82,17 +83,18 @@ def test_queue_limit_drops_meter_values_first(tmp_path):
     assert actions == [("StartTransaction", None), ("MeterValues", [2]), ("StopTransaction", None)]
 
 
-def test_queue_restored_from_disk(tmp_path):
+async def test_queue_restored_from_disk(tmp_path):
     config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
     store = StateStore(tmp_path / "CH1.json")
     channel = make_channel(config, "tap", store)
     channel.submit(Call("1", "StartTransaction", {"connectorId": 1}), start_ref="r")
+    store.flush()  # the coalesced queue write lands now, not in FLUSH_DELAY
     restored = make_channel(config, "tap", StateStore(tmp_path / "CH1.json"))
     assert [item.call.action for item in restored._queue] == ["StartTransaction"]
     assert restored._queue[0].start_ref == "r"
 
 
-def test_boot_and_status_replay_only_for_backends_that_forward_them(tmp_path):
+async def test_boot_and_status_replay_only_for_backends_that_forward_them(tmp_path):
     config = make_config(
         {"name": "tap", "url": "ws://s"},
         {"name": "stats", "url": "ws://s", "forward_actions": ["MeterValues"]},

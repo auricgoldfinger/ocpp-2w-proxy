@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -15,6 +16,8 @@ from .ocpp import Call, from_dict
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
+# How long save_soon() waits for more changes before writing once (crash window).
+FLUSH_DELAY = 0.25
 
 
 def restore_outbox(items: Sequence[dict[str, Any]]) -> list[tuple[Call, str | None]]:
@@ -57,6 +60,8 @@ class StateStore:
     def __init__(self, path: Path):
         self.path = path
         self.state = self._load()
+        self._dirty = False
+        self._flusher: asyncio.Task | None = None
 
     @classmethod
     def for_charger(cls, state_dir: Path, charger_id: str) -> StateStore:
@@ -88,6 +93,34 @@ class StateStore:
         return backup
 
     def save(self) -> None:
+        """Write the state out now: for rare, transaction-critical changes."""
+        self._dirty = False
+        self._write()
+
+    def save_soon(self) -> None:
+        """Schedule a write shortly: bursts of changes (one per backend, per message)
+        coalesce into one write instead of one fsync each. Requires a running loop."""
+        self._dirty = True
+        if self._flusher is None or self._flusher.done():
+            self._flusher = asyncio.create_task(self._flush_later())
+
+    def flush(self) -> None:
+        """Write out anything still pending; the channels call this when they close."""
+        flusher = self._flusher
+        self._flusher = None
+        if flusher is not None:
+            flusher.cancel()  # it would find nothing left to write
+        if self._dirty:
+            self._dirty = False
+            self._write()
+
+    async def _flush_later(self) -> None:
+        await asyncio.sleep(FLUSH_DELAY)
+        if self._dirty:
+            self._dirty = False
+            self._write()
+
+    def _write(self) -> None:
         payload = json.dumps({"version": SCHEMA_VERSION, **asdict(self.state)}, separators=(",", ":"))
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,7 @@
+import asyncio
 import os
 
-from ocpp_2w_proxy.state import StateStore, restore_outbox
+from ocpp_2w_proxy.state import FLUSH_DELAY, StateStore, restore_outbox
 
 
 def test_restore_outbox_skips_unreadable_entries(tmp_path):
@@ -47,6 +48,39 @@ def test_v1_state_file_is_parked_for_inspection(tmp_path):
     store = StateStore(path)
     assert store.state.transactions == {}
     assert (tmp_path / "c.corrupt").exists()  # undelivered billing data is kept, never silently discarded
+
+
+async def test_save_soon_coalesces_a_burst_into_one_write(tmp_path, monkeypatch):
+    """Every message used to rewrite and fsync the whole state file, once per backend
+    per message: a burst must collapse into one write."""
+    store = StateStore(tmp_path / "c.json")
+    writes = 0
+    real_write = store._write
+
+    def counting_write():
+        nonlocal writes
+        writes += 1
+        real_write()
+
+    monkeypatch.setattr(store, "_write", counting_write)
+    for _ in range(5):
+        store.save_soon()
+        await asyncio.sleep(0)
+
+    await asyncio.sleep(FLUSH_DELAY + 0.1)
+    assert writes == 1
+    assert store.path.exists()  # the coalesced write happened
+
+
+async def test_flush_writes_pending_changes_at_once(tmp_path):
+    store = StateStore(tmp_path / "c.json")
+    store.state.transactions["1"] = {"tap": 2}
+    store.save_soon()
+
+    store.flush()  # a channel closing does not wait out the delay
+
+    assert StateStore(tmp_path / "c.json").state.transactions == {"1": {"tap": 2}}
+    assert store._flusher is None
 
 
 def test_disk_write_errors_are_logged_not_raised(tmp_path, monkeypatch):

@@ -141,6 +141,7 @@ class PrimaryChannel:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
         await self._discard(self._link)
+        self._store.flush()
 
     def _unavailable(self, call: Call) -> Reply:
         if call.action == "Heartbeat":
@@ -178,7 +179,7 @@ class PrimaryChannel:
 
     def _persist_queue(self) -> None:
         self._store.state.primary_outbox = [to_dict(call) for call in self._queue]
-        self._store.save()
+        self._store.save_soon()
 
     def _ensure_worker(self) -> None:
         if not self._closed and (self._worker is None or self._worker.done()):
