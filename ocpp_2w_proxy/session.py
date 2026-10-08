@@ -203,17 +203,25 @@ class ChargerSession:
                 )
                 decision = _rejection(call)
             else:
-                await self._send_to_charger(self._router.outbound(origin, translated))
-                return
+                outbound = self._router.outbound(origin, translated)
+                if await self._send_to_charger(outbound):
+                    return
+                # The charger's socket closed under us: tell the backend now rather than
+                # leaving it to wait out its own timeout.
+                self._router.discard(outbound.id)
+                decision = CallError(call.id, "GenericError", "charger is disconnected")
         logger.info("%s %s from %s answered by proxy (policy)", self.charger_id, call.action, origin.name)
         await origin.reply(decision)
 
-    async def _send_to_charger(self, message: Message) -> None:
+    async def _send_to_charger(self, message: Message) -> bool:
+        """True if the message was handed to the charger's socket."""
         self._traffic.frame("-> charger", message)
         try:
             await self._ws.send(serialize(message))
         except ConnectionClosed:
             logger.warning("%s charger gone; message %s dropped", self.charger_id, message.id)
+            return False
+        return True
 
 
 def _unchanged(call: Call) -> Call:

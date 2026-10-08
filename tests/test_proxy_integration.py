@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from ocpp_2w_proxy import server as server_module
 from ocpp_2w_proxy.config import parse
+from ocpp_2w_proxy.ocpp import Call
 from ocpp_2w_proxy.primary_channel import PrimaryChannel
 from ocpp_2w_proxy.server import ProxyServer
 from ocpp_2w_proxy.session import ChargerSession
@@ -350,6 +351,29 @@ async def test_a_charger_reusing_message_ids_does_not_collide_start_records(prim
         assert "1" not in state["pending_primary_starts"]
     finally:
         await charger.close()
+
+
+async def test_command_for_a_charger_whose_socket_just_closed_is_answered_with_an_error(
+    primary, secondary, start_proxy, monkeypatch
+):
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})
+    real_send = ChargerSession._send_to_charger
+
+    async def socket_closed_for_commands(self, message):
+        if isinstance(message, Call):
+            return False  # as if the charger's socket closed right now
+        return await real_send(self, message)
+
+    monkeypatch.setattr(ChargerSession, "_send_to_charger", socket_closed_for_commands)
+
+    reply = await secondary.call("GetConfiguration", {"key": ["HeartbeatInterval"]})
+
+    assert reply[0] == 4
+    assert reply[2] == "GenericError"
+    assert "charger is disconnected" in reply[3]
+    await charger.close()
 
 
 async def test_a_failing_relay_is_logged(primary, secondary, start_proxy, monkeypatch, caplog):

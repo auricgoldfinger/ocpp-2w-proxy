@@ -58,6 +58,10 @@ class CommandRouter:
             return None
         return RoutedReply(route.target, reply.with_id(route.original_id), route.action)
 
+    def discard(self, proxy_id: str) -> None:
+        """Forget a command that never reached the charger."""
+        self._routes.pop(proxy_id, None)
+
     def _expire(self) -> None:
         deadline = self._clock() - self._ttl
         for proxy_id in [pid for pid, route in self._routes.items() if route.created < deadline]:
