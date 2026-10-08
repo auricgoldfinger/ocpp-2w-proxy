@@ -43,6 +43,9 @@ class ProxyServer:
         # Weak: a handshake can still fail after process_request (e.g. subprotocol mismatch).
         self._identities: weakref.WeakKeyDictionary[ServerConnection, ChargerIdentity] = weakref.WeakKeyDictionary()
         self._sessions: dict[str, _ActiveSession] = {}
+        # Serializes session registration per charger: two simultaneous handshakes must
+        # not both see "no existing session" and both start one.
+        self._locks: dict[str, asyncio.Lock] = {charger_id: asyncio.Lock() for charger_id in config.chargers}
 
     async def start(self) -> Server:
         proxy = self._config.proxy
@@ -124,9 +127,10 @@ class ProxyServer:
     async def _handle(self, ws: ServerConnection) -> None:
         identity = self._identities.pop(ws)
         charger_id = identity.charger.id
-        await self._replace_existing(charger_id)
-        active = _ActiveSession(ws)
-        self._sessions[charger_id] = active
+        async with self._locks[charger_id]:
+            await self._replace_existing(charger_id)
+            active = _ActiveSession(ws)
+            self._sessions[charger_id] = active
         logger.info("%s connected (subprotocol %s)", charger_id, ws.subprotocol)
         try:
             await ChargerSession(ws, identity, self._config, self._chargers[charger_id]).run()

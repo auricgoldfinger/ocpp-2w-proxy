@@ -353,6 +353,23 @@ async def test_reconnecting_charger_replaces_old_session(primary, secondary, sta
     await new.close()
 
 
+async def test_simultaneous_handshakes_end_in_exactly_one_session(primary, secondary, start_proxy):
+    """Two chargers connecting at the same moment must not both start a session:
+    one registration would overwrite the other, leaving an untracked session
+    nobody ever closes or replaces."""
+    url = await start_proxy(primary.url, secondary.url)
+    first, second = await asyncio.gather(
+        FakeCharger.connect(url, CHARGER_ID),
+        FakeCharger.connect(url, CHARGER_ID),
+    )
+    third = await FakeCharger.connect(url, CHARGER_ID)
+
+    assert (await third.call("Heartbeat", {}))[0] == 3  # the surviving session answers
+    for replaced in (first, second):
+        await asyncio.wait_for(replaced.ws.wait_closed(), 5)  # both are closed
+    await third.close()
+
+
 async def test_two_secondaries_get_independent_transaction_ids(primary, start_proxy):
     tap = await FakeCsms(responder_with_transaction(9)).start()
     stats = await FakeCsms(responder_with_transaction(77)).start()
