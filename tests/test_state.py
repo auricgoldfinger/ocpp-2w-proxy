@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 
 from ocpp_2w_proxy.state import FLUSH_DELAY, StateStore, restore_outbox
@@ -48,6 +49,33 @@ def test_v1_state_file_is_parked_for_inspection(tmp_path):
     store = StateStore(path)
     assert store.state.transactions == {}
     assert (tmp_path / "c.corrupt").exists()  # undelivered billing data is kept, never silently discarded
+
+
+def test_v2_state_file_is_migrated_to_outbox_and_latest_slots(tmp_path):
+    path = tmp_path / "c.json"
+
+    def entry(call_id, action, payload):
+        return {"id": call_id, "action": action, "payload": payload}
+
+    path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "primary_outbox": [
+                    entry("s1", "StatusNotification", {"connectorId": 1, "status": "Charging"}),
+                    entry("m1", "MeterValues", {"connectorId": 1, "transactionId": 5}),
+                    entry("m2", "MeterValues", {"connectorId": 1}),  # no transaction: stale
+                    entry("s2", "StatusNotification", {"connectorId": 1, "status": "Available"}),
+                    entry("st", "StopTransaction", {"transactionId": 5}),
+                ],
+            }
+        )
+    )
+    state = StateStore(path).state
+
+    assert [item["id"] for item in state.primary_outbox] == ["m1", "st"]
+    assert [item["id"] for item in state.primary_latest.values()] == ["s2"]  # the newest status wins
+    assert not (tmp_path / "c.corrupt").exists()
 
 
 async def test_save_soon_coalesces_a_burst_into_one_write(tmp_path, monkeypatch):

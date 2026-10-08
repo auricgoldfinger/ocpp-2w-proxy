@@ -11,11 +11,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .ocpp import Call, from_dict
+from .message_classes import MessageClass, classify, latest_key
+from .ocpp import Call, from_dict, to_dict
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # How long save_soon() waits for more changes before writing once (crash window).
 FLUSH_DELAY = 0.25
 
@@ -37,6 +38,26 @@ def restore_outbox(items: Sequence[dict[str, Any]]) -> list[tuple[Call, str | No
     return restored
 
 
+def _migrate_v2(data: dict[str, Any]) -> None:
+    """v2 queued every status and meter reading in the primary outbox. Keep the billing
+    data there; state reports collapse to the newest per subject; stale readings go."""
+    outbox: list[dict[str, Any]] = []
+    latest: dict[str, dict[str, Any]] = {}
+    for item in data.get("primary_outbox", []):
+        try:
+            call = from_dict(item.get("call", item))
+        except AttributeError, KeyError, TypeError:
+            outbox.append(item)  # left for restore_outbox to report and skip
+            continue
+        match classify(call):
+            case MessageClass.DURABLE:
+                outbox.append(item)
+            case MessageClass.LATEST:
+                latest[latest_key(call)] = to_dict(call)
+    data["primary_outbox"] = outbox
+    data["primary_latest"] = latest
+
+
 @dataclass
 class ChargerState:
     # primary transactionId (as str) -> {backend name: that backend's transactionId}
@@ -47,6 +68,9 @@ class ChargerState:
     pending_secondary_starts: dict[str, dict[str, int]] = field(default_factory=dict)
     # Primary calls acknowledged locally while the primary backend was unavailable
     primary_outbox: list[dict[str, Any]] = field(default_factory=list)
+    # Newest state report (Status/Firmware/Diagnostics) per subject the primary has not
+    # confirmed yet: latest_key -> call; sent after the outbox has drained.
+    primary_latest: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Backend name -> durable calls not yet confirmed by that backend, oldest first
     outboxes: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     # Last BootNotification payload and last StatusNotification payload per connector
@@ -72,9 +96,11 @@ class StateStore:
             return ChargerState()
         try:
             data = json.loads(self.path.read_text())
-            if data.get("version") != SCHEMA_VERSION:
-                raise ValueError(f"unsupported state version {data.get('version')!r}")
-            data.pop("version")
+            version = data.pop("version", None)
+            if version == 2:
+                _migrate_v2(data)
+            elif version != SCHEMA_VERSION:
+                raise ValueError(f"unsupported state version {version!r}")
             return ChargerState(**data)
         except (OSError, ValueError, TypeError) as exc:
             # Never silently discard billing data: keep the unreadable file for inspection.
