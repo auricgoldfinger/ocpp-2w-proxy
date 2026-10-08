@@ -3,15 +3,17 @@
 A two-way OCPP **1.6J** proxy. One charger connects to the proxy; the proxy connects to two
 backends (CSMSes) at the same time:
 
-- **primary**: the *control* backend, e.g. **SolarEdge** ("charge on solar", "do not use battery").
-  It is in charge: its answers are what the charger sees, and it may send any command.
-- **secondary**: the *billing* backend, e.g. **Tap Electric**. It sees every session and meter
-  reading, may start/stop sessions, but cannot change anything the primary relies on.
+- **primary**: the backend *in charge*, e.g. **Tap Electric** (billing). Card authorization,
+  transaction numbers and remote starts come from it; its answers are what the charger sees,
+  and by default it may send any command.
+- **secondary**: the *control* backend, e.g. **SolarEdge** ("charge on solar"). It sees every
+  session and meter reading and may lower/pause/resume charging via charging profiles, but
+  cannot change anything the primary relies on.
 
 ```
-                         ┌──────────── primary (SolarEdge) ── control, card authorisation
+                          ┌──────────── primary (Tap) ────── billing, card authorisation, remote start
 charger ── wss ── proxy ─┤
-                         └──────────── secondary (Tap) ────── billing
+                          └──────────── secondary (SolarEdge) ─ solar charging profiles
 ```
 
 ## How messages are routed
@@ -33,9 +35,9 @@ Details that make this work in practice:
   secondary). The mapping is stored on disk.
 - **Message ids.** Every backend command is given a fresh unique id on its way to the charger,
   so both backends using the same id (e.g. counters) cannot get each other's replies.
-- **Card authorisation** is decided by the primary (register your RFID card in SolarEdge *and*
-  Tap). If the secondary rejects a card the primary accepted, a warning is logged: that session
-  may not be billed.
+- **Card authorisation** is decided by the primary (register your RFID card in Tap). If the
+  secondary rejects a card the primary accepted, a warning is logged: that session may not
+  be billed.
 - **The secondary can never break charging.** If it is down or slow the charger doesn't notice.
   `StartTransaction`, `MeterValues` and `StopTransaction` are queued on disk and replayed in
   order (with their original timestamps) when it is back, after re-sending the last
@@ -50,13 +52,13 @@ Details that make this work in practice:
   a proxy restart cannot replay queued calls until a new charger handshake supplies credentials.
 - Vendor `DataTransfer` and firmware/diagnostics notifications go to the primary only.
 
-### Secondary (Tap) command policy
+### Secondary command policy
 
 | Command from secondary | Default |
 |---|---|
-| RemoteStartTransaction | forwarded, with any `chargingProfile` removed (it would override solar charging) |
 | RemoteStopTransaction | forwarded with the transaction id translated; unknown id → `Rejected` |
 | TriggerMessage, GetConfiguration, UnlockConnector, GetCompositeSchedule | forwarded |
+| RemoteStartTransaction | answered: `Rejected` (Authorization Commands stay with the primary) |
 | GetLocalListVersion | answered by proxy: `listVersion: -1` (so it won't push a card list) |
 | SendLocalList | answered: `NotSupported` |
 | ChangeConfiguration | answered: `Rejected`, unless the key is in `change_configuration_allow_keys` |
@@ -67,6 +69,19 @@ Details that make this work in practice:
 
 Override per action in `[secondary.policy] actions = { Reset = "forward" }`
 (`forward` | `answer` | `error`). The primary has the same mechanism (`[primary.policy]`).
+
+The proxy **refuses to start** on configurations that would send conflicting commands
+(checked at startup, naming the command and the backends):
+
+- an **Exclusive Command** (charging profiles, configuration, availability, reset, firmware,
+  local list, cache, reservations, data transfer, remote start) forwarded by more than one
+  backend — to hand one to a secondary, first take it away from the primary, e.g.
+  `[primary.policy] actions = { SetChargingProfile = "answer" }` +
+  `[secondary.policy] actions = { SetChargingProfile = "forward" }`;
+- an **Authorization Command** (remote start, local list, reservations) or an authorization
+  configuration key (e.g. `LocalAuthListEnabled`) forwarded by a secondary backend;
+- a configuration key permitted for two backends, or any key permitted for one backend while
+  another forwards all configuration changes.
 
 ## Security
 
@@ -87,23 +102,23 @@ Override per action in `[secondary.policy] actions = { Reset = "forward" }`
 
 ## Before you rely on it: Phase 0 checks
 
-1. **Find the SolarEdge OCPP endpoint.** Pointing the charger straight at Tap disables the solar
-   features, so SolarEdge controls the charger over this OCPP link and the proxy needs its URL.
-   - Ask SolarEdge support / your installer for the full URL (`wss://host/path`); the charger
-     appends its id.
-   - Or look at your router's / Pi-hole's DNS log while the charger is on its default setting to
-     find the hostname (the path still has to be confirmed).
+1. **Find the backend OCPP endpoints.** Pointing the charger straight at only one backend
+   loses the other's features, so both connect through the proxy and each needs its URL.
+    - Ask each backend's support / your installer for the full URL (`wss://host/path`); the
+      charger appends its id.
+    - Or look at your router's / Pi-hole's DNS log while the charger is on its default setting
+      to find the hostname (the path still has to be confirmed).
 2. **See what the charger sends.** Point the charger at the proxy. Every handshake is logged,
-   including rejected ones: path, charger id, whether a password is present (never its value)
-   and the offered subprotocol:
-   ```
-   handshake from 192.168.1.50:51234 path='/ocpp/SE123' username='SE123' password=present (16 chars) subprotocols='ocpp1.6'
-   ```
-   - If SolarEdge expects the charger's built-in password, use `auth = "forward"` for the
-     primary (only works if the charger still sends it with a custom URL).
-   - If SolarEdge uses client certificates (Security Profile 3), no proxy can sit in between.
-3. **Start 1-way.** First run with only `[primary]` (remove `[secondary]`) and confirm solar
-   charging still works through the proxy. Then add Tap.
+    including rejected ones: path, charger id, whether a password is present (never its value)
+    and the offered subprotocol:
+    ```
+    handshake from 192.168.1.50:51234 path='/ocpp/SE123' username='SE123' password=present (16 chars) subprotocols='ocpp1.6'
+    ```
+    - If the primary expects the charger's built-in password, use `auth = "forward"` for the
+      primary (only works if the charger still sends it with a custom URL).
+    - If a backend uses client certificates (Security Profile 3), no proxy can sit in between.
+3. **Start 1-way.** First run with only `[primary]` (remove `[secondary]`) and confirm charging
+    and card authorization work through the proxy. Then add the secondary.
 
 ## TLS (the charger requires `wss://`) without owning a domain
 
@@ -138,14 +153,20 @@ state_dir = "/data"
 [[chargers]]
 id = "SE123456"
 
-[primary]                       # SolarEdge
-url = "wss://<solaredge-endpoint>"
-auth = "forward"
-
-[secondary]                     # Tap Electric
+[primary]                       # Tap Electric
 url = "wss://<tap-endpoint>"
 auth = "basic"
-password_env = "SECONDARY_PASSWORD"
+password_env = "PRIMARY_PASSWORD"
+
+[primary.policy]                # hand the solar charging profiles to the secondary
+actions = { SetChargingProfile = "answer", ClearChargingProfile = "answer" }
+
+[secondary]                     # SolarEdge
+url = "wss://<solaredge-endpoint>"
+auth = "none"
+
+[secondary.policy]
+actions = { SetChargingProfile = "forward", ClearChargingProfile = "forward" }
 ```
 
 ## Run locally

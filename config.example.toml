@@ -4,7 +4,7 @@
 [proxy]
 listen = "0.0.0.0"
 port = 8321
-# Transaction id mapping and the offline queue for the secondary backend live here.
+# Transaction id mapping and the offline queues live here.
 # Must be persistent (a Docker volume / TrueNAS dataset).
 state_dir = "/data"
 # Optional: let the proxy terminate TLS itself. Leave empty when a reverse proxy
@@ -15,7 +15,7 @@ ping_interval = 30
 ping_timeout = 60
 
 [logging]
-level = "INFO"          # DEBUG, INFO, WARNING, ERROR
+level = "INFO"          # DEBUG, INFO, WARNING, ERROR, CRITICAL
 # At DEBUG, also log (redacted) payloads. RFID tags are masked; credentials never logged.
 log_payloads = false
 
@@ -29,22 +29,35 @@ id = "CHANGE-ME"
 # primary_id = "CHANGE-ME"
 # secondary_id = "CHANGE-ME"
 
-# Primary = control backend (SolarEdge). Its replies are what the charger sees.
-# It must be reachable to start a session; during later outages the proxy keeps the charger
-# connected, queues StatusNotification/MeterValues/StopTransaction, and retries in the background.
+# Primary = the backend in charge (Tap Electric): card authorization, transaction
+# numbers and remote starts come from here. Its replies are what the charger sees.
+# It must be reachable to start a session; during later outages the proxy keeps the
+# charger connected, queues StatusNotification/MeterValues/StopTransaction, and
+# retries in the background.
 [primary]
 url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 # none    : no credentials
-# forward : pass the charger's own Authorization header (only if SolarEdge needs the charger's password)
+# forward : pass the charger's own Authorization header (only if the backend needs the charger's password)
 # basic   : primary_id + password from password_env
 auth = "none"
 # password_env = "PRIMARY_PASSWORD"
 call_timeout = 30
 
-# [primary.policy]                 # everything is forwarded by default
-# actions = { Reset = "answer" }   # forward | answer | error
+[primary.policy]
+# Everything is forwarded by default. An Exclusive Command (charging profile,
+# configuration, availability, reset, firmware, local list, reservations, data
+# transfer, remote start) may be forwarded by at most ONE backend: to hand one to
+# the secondary, take it away from the primary here, and the proxy checks at
+# startup that exactly one backend has it.
+actions = { SetChargingProfile = "answer", ClearChargingProfile = "answer" }
+# Optional: remove chargingProfile from RemoteStartTransaction before forwarding,
+# so a remote start cannot override the charging schedule the secondary backend sets.
+# strip_charging_profile = true
 
-# Secondary = billing backend (Tap Electric). Optional: remove this section for a 1-way proxy.
+# Secondary = solar/control backend (SolarEdge). Optional: remove this section for
+# a 1-way proxy. It sees the messages below, may stop sessions and - once assigned
+# above - set charging profiles, but may never change authorization, configuration,
+# availability or firmware, and never starts sessions.
 [secondary]
 url = "wss://CHANGE-ME"   # <url>/<secondary_id>
 auth = "basic"            # none | basic   ('forward' is refused: it would leak charger credentials)
@@ -71,9 +84,9 @@ max_queue = 10000
 #            SetChargingProfile, ClearChargingProfile, ChangeAvailability, Reset, ClearCache,
 #            ReserveNow, CancelReservation, DataTransfer, UpdateFirmware, GetDiagnostics
 #   anything else: error (NotSupported)
-# actions = { Reset = "forward" }
-# ChangeConfiguration keys the secondary may still set (empty: none).
+# Remote start, local list and reservations are Authorization Commands: the proxy
+# refuses to start if a secondary backend is configured to forward one.
+actions = { SetChargingProfile = "forward", ClearChargingProfile = "forward" }
+# ChangeConfiguration keys the secondary may still set (empty: none). Keys that change
+# the charger's authorization behavior (e.g. LocalAuthListEnabled) are refused.
 change_configuration_allow_keys = []
-# Remove chargingProfile from a RemoteStartTransaction before forwarding it, so a remote
-# start cannot override another backend's charging schedule (off by default).
-strip_charging_profile = false
