@@ -15,6 +15,7 @@ from .policy import (
     AUTHORIZATION_ACTIONS,
     AUTHORIZATION_CONFIG_KEYS,
     EXCLUSIVE_ACTIONS,
+    OCPP_ACTIONS,
     PRIMARY_DEFAULT_RULE,
     PRIMARY_DEFAULT_RULES,
     SECONDARY_DEFAULT_RULE,
@@ -25,7 +26,7 @@ from .policy import (
 
 CHARGER_ID_PATTERN = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 
-DEFAULT_SECONDARY_FORWARD_ACTIONS = (
+DEFAULT_SECONDARY_FORWARD_ACTIONS = [
     "BootNotification",
     "Heartbeat",
     "StatusNotification",
@@ -33,7 +34,16 @@ DEFAULT_SECONDARY_FORWARD_ACTIONS = (
     "StartTransaction",
     "StopTransaction",
     "MeterValues",
-)
+]
+
+# Known keys per configuration section: a typo must fail loudly, not silently never match.
+TOP_LEVEL_KEYS = frozenset({"proxy", "logging", "chargers", "primary", "secondary"})
+PROXY_KEYS = frozenset({"listen", "port", "state_dir", "tls_cert", "tls_key", "ping_interval", "ping_timeout"})
+LOGGING_KEYS = frozenset({"level", "log_payloads"})
+CHARGER_KEYS = frozenset({"id", "password_env", "primary_id", "secondary_ids"})
+BACKEND_KEYS = frozenset({"url", "auth", "password_env", "call_timeout", "max_queue", "policy"})
+SECONDARY_KEYS = BACKEND_KEYS | {"name", "forward_actions"}
+POLICY_KEYS = frozenset({"actions", "default", "change_configuration_allow_keys", "strip_charging_profile"})
 
 
 class ConfigError(ValueError):
@@ -101,12 +111,29 @@ def load(path: Path, environ: Mapping[str, str] = os.environ) -> Config:
     return parse(raw, environ)
 
 
+def _reject_unknown_keys(section: Mapping[str, Any], known: frozenset[str], where: str) -> None:
+    unknown = set(section) - known
+    if unknown:
+        raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
+
+
+def _number(section: Mapping[str, Any], key: str, default: Any, where: str, cast: type) -> Any:
+    value = section.get(key, default)
+    try:
+        return cast(value)
+    except TypeError, ValueError:
+        raise ConfigError(f"{where}: {key} must be a number, not {value!r}") from None
+
+
 def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Config:
+    _reject_unknown_keys(raw, TOP_LEVEL_KEYS, "configuration")
     secrets = _Secrets(environ)
     chargers = _parse_chargers(raw.get("chargers", []), secrets)
     if "primary" not in raw:
         raise ConfigError("[primary] backend is required")
-    primary = _parse_backend("primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE)
+    primary = _parse_backend(
+        "primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, BACKEND_KEYS
+    )
     secondaries = _parse_secondaries(raw.get("secondary"), secrets)
     _validate_charger_backend_ids(chargers, secondaries)
     _validate_command_assignments(primary, secondaries)
@@ -225,6 +252,8 @@ LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
 def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any]) -> ProxyConfig:
+    _reject_unknown_keys(section, PROXY_KEYS, "[proxy]")
+    _reject_unknown_keys(logging_section, LOGGING_KEYS, "[logging]")
     tls_cert, tls_key = section.get("tls_cert") or None, section.get("tls_key") or None
     if bool(tls_cert) != bool(tls_key):
         raise ConfigError("[proxy] tls_cert and tls_key must be set together")
@@ -233,12 +262,12 @@ def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any])
         raise ConfigError(f"[logging] level must be one of {', '.join(LOG_LEVELS)}, not {log_level!r}")
     return ProxyConfig(
         listen=str(section.get("listen", "0.0.0.0")),
-        port=int(section.get("port", 8321)),
+        port=_number(section, "port", 8321, "[proxy]", int),
         state_dir=Path(section.get("state_dir", "./state")),
         tls_cert=Path(tls_cert) if tls_cert else None,
         tls_key=Path(tls_key) if tls_key else None,
-        ping_interval=float(section.get("ping_interval", 30)),
-        ping_timeout=float(section.get("ping_timeout", 60)),
+        ping_interval=_number(section, "ping_interval", 30, "[proxy]", float),
+        ping_timeout=_number(section, "ping_timeout", 60, "[proxy]", float),
         log_level=log_level,
         log_payloads=bool(logging_section.get("log_payloads", False)),
     )
@@ -249,7 +278,9 @@ def _reject_inline_password(section: Mapping[str, Any], where: str) -> None:
         raise ConfigError(f"{where}: passwords are never stored in the configuration file; use password_env")
 
 
-def _parse_chargers(entries: list[Mapping[str, Any]], secrets: _Secrets) -> dict[str, ChargerConfig]:
+def _parse_chargers(entries: Any, secrets: _Secrets) -> dict[str, ChargerConfig]:
+    if isinstance(entries, Mapping):
+        raise ConfigError("[chargers] entries are [[chargers]] array-of-tables, not a table")
     if not entries:
         raise ConfigError("at least one [[chargers]] entry is required (allowlist)")
     chargers: dict[str, ChargerConfig] = {}
@@ -258,6 +289,7 @@ def _parse_chargers(entries: list[Mapping[str, Any]], secrets: _Secrets) -> dict
         if charger_id in chargers:
             raise ConfigError(f"duplicate charger id {charger_id!r}")
         _reject_inline_password(entry, f"charger {charger_id!r}")
+        _reject_unknown_keys(entry, CHARGER_KEYS, f"charger {charger_id!r}")
         chargers[charger_id] = ChargerConfig(
             id=charger_id,
             password=secrets.get(entry, f"charger {charger_id}"),
@@ -289,11 +321,13 @@ def _parse_backend(
     secrets: _Secrets,
     default_rules: Mapping[str, Rule],
     default_rule: Rule,
+    known_keys: frozenset[str],
 ) -> BackendConfig:
+    _reject_inline_password(section, f"[{name}]")
+    _reject_unknown_keys(section, known_keys, f"[{name}]")
     url = section.get("url")
     if not isinstance(url, str) or not url.startswith(("ws://", "wss://")):
         raise ConfigError(f"[{name}] url must start with ws:// or wss://")
-    _reject_inline_password(section, f"[{name}]")
     try:
         auth = AuthMode(section.get("auth", AuthMode.NONE))
     except ValueError as exc:
@@ -307,8 +341,8 @@ def _parse_backend(
         auth=auth,
         password=password,
         policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule),
-        call_timeout=float(section.get("call_timeout", 30)),
-        max_queue=int(section.get("max_queue", 10_000)),
+        call_timeout=_number(section, "call_timeout", 30, f"[{name}]", float),
+        max_queue=_number(section, "max_queue", 10_000, f"[{name}]", int),
     )
 
 
@@ -318,9 +352,20 @@ def _parse_policy(
     default_rules: Mapping[str, Rule],
     default_rule: Rule,
 ) -> CommandPolicy:
+    if not isinstance(section, Mapping):
+        raise ConfigError(f"[{name}] policy must be a table")
+    _reject_unknown_keys(section, POLICY_KEYS, f"[{name}.policy]")
     allow_keys = _lowercase_keys(section.get("change_configuration_allow_keys", []), name)
+    actions = section.get("actions", {})
+    if not isinstance(actions, Mapping):
+        raise ConfigError(f"[{name}.policy] actions must be a table of action -> rule")
+    unknown_actions = set(actions) - OCPP_ACTIONS
+    if unknown_actions:
+        raise ConfigError(
+            f"[{name}.policy] unknown action(s) {sorted(unknown_actions)}; each must be an OCPP 1.6 action"
+        )
     try:
-        overrides = {action: Rule(rule) for action, rule in section.get("actions", {}).items()}
+        overrides = {action: Rule(rule) for action, rule in actions.items()}
         rules = {**default_rules, **overrides}
         return CommandPolicy(
             rules=rules,
@@ -341,10 +386,22 @@ def _lowercase_keys(keys: Any, backend_name: str) -> frozenset[str]:
 
 
 def _parse_secondary(name: str, section: Mapping[str, Any], secrets: _Secrets) -> SecondaryConfig:
-    base = _parse_backend(name, section, secrets, SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE)
+    base = _parse_backend(name, section, secrets, SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE, SECONDARY_KEYS)
     if base.auth is AuthMode.FORWARD:
         raise ConfigError(f"[{name}] auth = 'forward' would leak the charger's credentials; use 'basic' or 'none'")
     return SecondaryConfig(
         **vars(base),
-        forward_actions=frozenset(section.get("forward_actions", DEFAULT_SECONDARY_FORWARD_ACTIONS)),
+        forward_actions=_forward_actions(section, name),
     )
+
+
+def _forward_actions(section: Mapping[str, Any], name: str) -> frozenset[str]:
+    actions = section.get("forward_actions", DEFAULT_SECONDARY_FORWARD_ACTIONS)
+    if not isinstance(actions, list) or not all(isinstance(action, str) for action in actions):
+        raise ConfigError(f"[{name}] forward_actions must be a list of action names")
+    unknown = set(actions) - OCPP_ACTIONS
+    if unknown:
+        raise ConfigError(
+            f"[{name}] forward_actions has unknown action(s) {sorted(unknown)}; each must be an OCPP 1.6 action"
+        )
+    return frozenset(actions)

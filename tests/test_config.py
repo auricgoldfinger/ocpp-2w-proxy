@@ -204,6 +204,55 @@ def test_invalid_configs(bad):
         parse(raw(**bad), {"TAP": "pw"})
 
 
+def test_chargers_as_a_table_is_rejected():
+    with pytest.raises(ConfigError, match="array-of-tables"):
+        parse(raw(chargers={"id": "CH1"}), {"TAP": "pw"})
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        {"proxy": {"unknown_key": 1}},
+        {"logging": {"unknown_key": True}},
+        {"chargers": [{"id": "CH1", "unknown_key": 1}]},
+        {"primary": {"url": "wss://p", "unknown_key": 1}},
+        {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "unknown_key": 1}]},
+        {
+            "secondary": [
+                {"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "policy": {"unknown_key": 1}}
+            ]
+        },
+    ],
+)
+def test_unknown_keys_are_rejected(where):
+    with pytest.raises(ConfigError, match="unknown key"):
+        parse(raw(**where), {"TAP": "pw"})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"proxy": {"port": "not a number"}},
+        {"proxy": {"ping_interval": "soon"}},
+        {"primary": {"url": "wss://p", "call_timeout": "soon"}},
+        {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "max_queue": "lots"}]},
+    ],
+)
+def test_bad_numbers_are_config_errors(bad):
+    with pytest.raises(ConfigError, match="must be a number"):
+        parse(raw(**bad), {"TAP": "pw"})
+
+
+def test_misspelled_policy_action_is_rejected():
+    with pytest.raises(ConfigError, match="unknown action"):
+        parse(raw(secondary=[{"name": "tap", "url": "wss://x", "policy": {"actions": {"Resett": "answer"}}}]), {})
+
+
+def test_misspelled_forward_action_is_rejected():
+    with pytest.raises(ConfigError, match="unknown action"):
+        parse(raw(secondary=[{"name": "tap", "url": "wss://x", "forward_actions": ["MeterValuess"]}]), {})
+
+
 def test_secondary_is_optional():
     config = raw()
     del config["secondary"]

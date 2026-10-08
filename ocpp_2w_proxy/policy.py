@@ -47,6 +47,43 @@ CANNED_ANSWERS: Mapping[str, dict[str, Any]] = {
     "UpdateFirmware": {},
 }
 
+# Every OCPP 1.6 action in either direction; configuration entries are validated
+# against this so a misspelled action fails loudly instead of silently never matching.
+OCPP_ACTIONS: frozenset[str] = frozenset(
+    {
+        # charger -> backend
+        "Authorize",
+        "BootNotification",
+        "DataTransfer",
+        "DiagnosticsStatusNotification",
+        "FirmwareStatusNotification",
+        "Heartbeat",
+        "MeterValues",
+        "StartTransaction",
+        "StatusNotification",
+        "StopTransaction",
+        # backend -> charger
+        "CancelReservation",
+        "ChangeAvailability",
+        "ChangeConfiguration",
+        "ClearCache",
+        "ClearChargingProfile",
+        "GetCompositeSchedule",
+        "GetConfiguration",
+        "GetDiagnostics",
+        "GetLocalListVersion",
+        "RemoteStartTransaction",
+        "RemoteStopTransaction",
+        "ReserveNow",
+        "Reset",
+        "SendLocalList",
+        "SetChargingProfile",
+        "TriggerMessage",
+        "UnlockConnector",
+        "UpdateFirmware",
+    }
+)
+
 # UC-001 BR-007: commands that change the charger's behavior, settings or authorization.
 # Each may be forwarded by at most one backend.
 EXCLUSIVE_ACTIONS: frozenset[str] = frozenset(
