@@ -39,6 +39,9 @@ DURABLE_ACTIONS = frozenset({"StartTransaction", "StopTransaction", "MeterValues
 EXPENDABLE_ACTION = "MeterValues"
 
 DEFAULT_BOOT_RETRY_INTERVAL = 60
+# Transient calls (heartbeats, authorizations, ...) wait only while connected, but a backend
+# that keeps refusing the boot would let them pile up: the oldest are dropped past this.
+MAX_TRANSIENT_QUEUE = 1000
 
 OnCall = Callable[[Call], Awaitable[None]]
 
@@ -153,6 +156,8 @@ class SecondaryChannel:
         if durable:
             self._enforce_queue_limit()
             self._persist_queue()
+        else:
+            self._enforce_transient_limit()
         self._queue_changed.set()
 
     def _remember(self, call: Call) -> None:
@@ -170,6 +175,12 @@ class SecondaryChannel:
                 break  # only the in-flight head is over the limit; its confirmation pops it
             self._queue.remove(victim)
             logger.error("%s queue full (%d); dropped queued %s", self.name, self._config.max_queue, victim.call.action)
+
+    def _enforce_transient_limit(self) -> None:
+        while sum(not item.durable for item in self._queue) > MAX_TRANSIENT_QUEUE:
+            victim = next(i for i in self._queue if not i.durable and i is not self._in_flight)
+            self._queue.remove(victim)
+            logger.warning("%s dropped stale %s: too many waiting calls", self.name, victim.call.action)
 
     def _sacrifice(self) -> _QueuedCall | None:
         """The first droppable durable item: meter data first, oldest otherwise. Never the

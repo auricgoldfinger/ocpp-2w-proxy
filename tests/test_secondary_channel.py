@@ -7,7 +7,7 @@ from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError
 from ocpp_2w_proxy.backend_link import BackendUnavailable
-from ocpp_2w_proxy.secondary_channel import SecondaryChannel, _QueuedCall
+from ocpp_2w_proxy.secondary_channel import MAX_TRANSIENT_QUEUE, SecondaryChannel, _QueuedCall
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
 from ocpp_2w_proxy.transactions import TransactionMap
@@ -97,6 +97,19 @@ def test_overflow_evicts_durable_items_not_transient_ones(tmp_path):
     channel._enforce_queue_limit()
 
     assert list(channel._queue) == [heartbeat, stop2]  # the oldest billing item went, the heartbeat stayed
+
+
+async def test_transient_calls_are_capped_while_the_backend_refuses_them(tmp_path, monkeypatch):
+    config = make_config({"name": "tap", "url": "ws://s"})
+    channel = make_channel(config, "tap", StateStore(tmp_path / "CH1.json"))
+    monkeypatch.setattr(SecondaryChannel, "connected", property(lambda self: True))
+
+    for i in range(MAX_TRANSIENT_QUEUE + 5):
+        channel.submit(Call(str(i), "Heartbeat", {}))
+    channel.submit(Call("stop", "StopTransaction", {"transactionId": 1}))
+
+    assert sum(not item.durable for item in channel._queue) == MAX_TRANSIENT_QUEUE
+    assert sum(item.durable for item in channel._queue) == 1  # billing data is untouched
 
 
 async def test_queue_restored_from_disk(tmp_path):
