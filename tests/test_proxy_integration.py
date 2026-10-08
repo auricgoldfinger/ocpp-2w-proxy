@@ -143,12 +143,19 @@ async def test_colliding_message_ids_are_routed_to_the_right_backend(primary, se
     await charger.close()
 
 
-async def test_remote_start_from_secondary_loses_charging_profile(primary, secondary, start_proxy):
+async def test_remote_start_from_secondary_is_refused(primary, secondary, start_proxy):
     url = await start_proxy(primary.url, secondary.url)
     charger = await FakeCharger.connect(url, CHARGER_ID)
     await secondary.connected.wait()
-    await secondary.call("RemoteStartTransaction", {"idTag": "ABC", "chargingProfile": {"chargingProfileId": 1}})
-    assert charger.received_calls[0][3] == {"idTag": "ABC"}
+    reply = await secondary.call(
+        "RemoteStartTransaction", {"idTag": "ABC", "chargingProfile": {"chargingProfileId": 1}}
+    )
+    assert reply[2] == {"status": "Rejected"}
+    assert charger.received_calls == []
+
+    # The primary may still start the same transaction remotely.
+    await primary.call("RemoteStartTransaction", {"connectorId": 1, "idTag": "ABC"})
+    assert charger.received_calls[0][2] == "RemoteStartTransaction"
     await charger.close()
 
 

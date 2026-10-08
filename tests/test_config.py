@@ -20,7 +20,8 @@ def test_parses_defaults_and_secrets():
     assert config.primary.auth is AuthMode.NONE
     assert config.secondary.password == "pw"
     assert config.secondary.policy.rule_for("Reset") is Rule.ANSWER
-    assert config.secondary.policy.strip_charging_profile
+    assert config.secondary.policy.rule_for("RemoteStartTransaction") is Rule.ANSWER
+    assert not config.secondary.policy.strip_charging_profile
     assert "MeterValues" in config.secondary.forward_actions
 
 

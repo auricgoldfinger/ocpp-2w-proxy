@@ -102,9 +102,7 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     chargers = _parse_chargers(raw.get("chargers", []), secrets)
     if "primary" not in raw:
         raise ConfigError("[primary] backend is required")
-    primary = _parse_backend(
-        "primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, strip_profile_default=False
-    )
+    primary = _parse_backend("primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE)
     secondary = _parse_secondary(raw["secondary"], secrets) if "secondary" in raw else None
     return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondary)
 
@@ -169,7 +167,6 @@ def _parse_backend(
     secrets: _Secrets,
     default_rules: Mapping[str, Rule],
     default_rule: Rule,
-    strip_profile_default: bool,
 ) -> BackendConfig:
     url = section.get("url")
     if not isinstance(url, str) or not url.startswith(("ws://", "wss://")):
@@ -186,7 +183,7 @@ def _parse_backend(
         url=url.rstrip("/"),
         auth=auth,
         password=password,
-        policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule, strip_profile_default),
+        policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule),
         call_timeout=float(section.get("call_timeout", 30)),
     )
 
@@ -196,7 +193,6 @@ def _parse_policy(
     section: Mapping[str, Any],
     default_rules: Mapping[str, Rule],
     default_rule: Rule,
-    strip_profile_default: bool,
 ) -> CommandPolicy:
     try:
         overrides = {action: Rule(rule) for action, rule in section.get("actions", {}).items()}
@@ -205,16 +201,14 @@ def _parse_policy(
             rules=rules,
             default_rule=Rule(section.get("default", default_rule)),
             change_configuration_allow_keys=frozenset(section.get("change_configuration_allow_keys", [])),
-            strip_charging_profile=bool(section.get("strip_charging_profile", strip_profile_default)),
+            strip_charging_profile=bool(section.get("strip_charging_profile", False)),
         )
     except ValueError as exc:
         raise ConfigError(f"[{name}.policy] {exc}") from exc
 
 
 def _parse_secondary(section: Mapping[str, Any], secrets: _Secrets) -> SecondaryConfig:
-    base = _parse_backend(
-        "secondary", section, secrets, SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE, strip_profile_default=True
-    )
+    base = _parse_backend("secondary", section, secrets, SECONDARY_DEFAULT_RULES, SECONDARY_DEFAULT_RULE)
     if base.auth is AuthMode.FORWARD:
         raise ConfigError("[secondary] auth = 'forward' would leak the charger's credentials; use 'basic' or 'none'")
     return SecondaryConfig(

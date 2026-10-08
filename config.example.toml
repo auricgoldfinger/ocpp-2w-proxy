@@ -65,14 +65,15 @@ max_queue = 10000
 
 [secondary.policy]
 # Commands from the secondary to the charger. Defaults:
-#   forward: RemoteStartTransaction, RemoteStopTransaction, TriggerMessage, GetConfiguration,
-#            UnlockConnector, GetCompositeSchedule
-#   answer : GetLocalListVersion, SendLocalList, ChangeConfiguration, SetChargingProfile,
-#            ClearChargingProfile, ChangeAvailability, Reset, ClearCache, ReserveNow,
-#            CancelReservation, DataTransfer, UpdateFirmware, GetDiagnostics
+#   forward: RemoteStopTransaction, TriggerMessage, GetConfiguration, UnlockConnector,
+#            GetCompositeSchedule
+#   answer : RemoteStartTransaction, GetLocalListVersion, SendLocalList, ChangeConfiguration,
+#            SetChargingProfile, ClearChargingProfile, ChangeAvailability, Reset, ClearCache,
+#            ReserveNow, CancelReservation, DataTransfer, UpdateFirmware, GetDiagnostics
 #   anything else: error (NotSupported)
 # actions = { Reset = "forward" }
 # ChangeConfiguration keys the secondary may still set (empty: none).
 change_configuration_allow_keys = []
-# Remove chargingProfile from RemoteStartTransaction so it can't override solar charging.
-strip_charging_profile = true
+# Remove chargingProfile from a RemoteStartTransaction before forwarding it, so a remote
+# start cannot override another backend's charging schedule (off by default).
+strip_charging_profile = false

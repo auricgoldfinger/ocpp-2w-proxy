@@ -18,7 +18,7 @@ PRIMARY = CommandPolicy(PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE)
 
 @pytest.mark.parametrize(
     "action",
-    ["RemoteStartTransaction", "RemoteStopTransaction", "TriggerMessage", "GetConfiguration", "UnlockConnector"],
+    ["RemoteStopTransaction", "TriggerMessage", "GetConfiguration", "UnlockConnector", "GetCompositeSchedule"],
 )
 def test_secondary_forwards_harmless_commands(action):
     call = Call("1", action, {"connectorId": 1})
@@ -28,6 +28,7 @@ def test_secondary_forwards_harmless_commands(action):
 @pytest.mark.parametrize(
     ("action", "expected"),
     [
+        ("RemoteStartTransaction", {"status": "Rejected"}),
         ("SetChargingProfile", {"status": "Rejected"}),
         ("ClearChargingProfile", {"status": "Unknown"}),
         ("ChangeAvailability", {"status": "Rejected"}),
@@ -53,9 +54,10 @@ def test_change_configuration_allowlisted_key_is_forwarded():
     assert SECONDARY.decide(call) == call
 
 
-def test_remote_start_charging_profile_is_stripped():
+def test_remote_start_charging_profile_is_stripped_when_forwarded():
+    policy = CommandPolicy({"RemoteStartTransaction": Rule.FORWARD}, Rule.ERROR, strip_charging_profile=True)
     call = Call("1", "RemoteStartTransaction", {"idTag": "ABC", "chargingProfile": {"x": 1}})
-    assert SECONDARY.decide(call).payload == {"idTag": "ABC"}
+    assert policy.decide(call).payload == {"idTag": "ABC"}
 
 
 def test_primary_forwards_everything_by_default():
