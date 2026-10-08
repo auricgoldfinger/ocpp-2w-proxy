@@ -5,13 +5,16 @@ from __future__ import annotations
 import os
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from .policy import (
+    AUTHORIZATION_ACTIONS,
+    AUTHORIZATION_CONFIG_KEYS,
+    EXCLUSIVE_ACTIONS,
     PRIMARY_DEFAULT_RULE,
     PRIMARY_DEFAULT_RULES,
     SECONDARY_DEFAULT_RULE,
@@ -104,7 +107,72 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
         raise ConfigError("[primary] backend is required")
     primary = _parse_backend("primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE)
     secondary = _parse_secondary(raw["secondary"], secrets) if "secondary" in raw else None
+    _validate_command_assignments(primary, [secondary] if secondary else ())
     return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondary)
+
+
+def _validate_command_assignments(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
+    """UC-001 step 3: refuse configurations that would send conflicting commands to a charger."""
+    _validate_authorization_commands(secondaries)
+    _validate_exclusive_commands(primary, secondaries)
+    _validate_change_configuration_keys(primary, secondaries)
+
+
+def _validate_authorization_commands(secondaries: Sequence[SecondaryConfig]) -> None:
+    """BR-008/FR-019: Authorization Commands may only be forwarded by the primary backend."""
+    for backend in secondaries:
+        for action in sorted(AUTHORIZATION_ACTIONS):
+            if backend.policy.rule_for(action) is Rule.FORWARD:
+                raise ConfigError(
+                    f"authorization command {action} may only be forwarded by the primary backend, "
+                    f"but secondary backend {backend.name!r} forwards it"
+                )
+        if backend.policy.rule_for("ChangeConfiguration") is Rule.FORWARD:
+            raise ConfigError(
+                f"secondary backend {backend.name!r} may not forward all configuration changes; "
+                "changes to the charger's authorization settings are reserved for the primary backend"
+            )
+        forbidden = backend.policy.change_configuration_allow_keys & AUTHORIZATION_CONFIG_KEYS
+        if forbidden:
+            raise ConfigError(
+                f"secondary backend {backend.name!r} may not change authorization settings "
+                f"{sorted(forbidden)}; those stay with the primary backend"
+            )
+
+
+def _validate_exclusive_commands(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
+    """BR-007/FR-008: each Exclusive Command is forwarded by at most one backend."""
+    backends = [primary, *secondaries]
+    for action in sorted(EXCLUSIVE_ACTIONS):
+        forwarders = [backend for backend in backends if backend.policy.rule_for(action) is Rule.FORWARD]
+        if len(forwarders) > 1:
+            names = ", ".join(backend.name for backend in forwarders)
+            raise ConfigError(f"exclusive command {action} is forwarded by more than one backend: {names}")
+
+
+def _validate_change_configuration_keys(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
+    """BR-007: each configuration key is permitted for at most one backend, and for none
+    while another backend forwards all configuration changes."""
+    backends = [primary, *secondaries]
+    full_forwarders = [
+        backend for backend in backends if backend.policy.rule_for("ChangeConfiguration") is Rule.FORWARD
+    ]
+    owners: dict[str, str] = {}
+    for backend in backends:
+        keys = backend.policy.change_configuration_allow_keys
+        if not keys:
+            continue
+        forwarding_elsewhere = next((other for other in full_forwarders if other is not backend), None)
+        if forwarding_elsewhere is not None:
+            raise ConfigError(
+                f"{backend.name!r} permits configuration keys {sorted(keys)}, but "
+                f"{forwarding_elsewhere.name!r} forwards all configuration changes"
+            )
+        for key in sorted(keys):
+            owner = owners.get(key)
+            if owner is not None:
+                raise ConfigError(f"configuration key {key!r} is permitted for both {owner!r} and {backend.name!r}")
+            owners[key] = backend.name
 
 
 class _Secrets:
@@ -121,10 +189,16 @@ class _Secrets:
         return value
 
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
 def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any]) -> ProxyConfig:
     tls_cert, tls_key = section.get("tls_cert") or None, section.get("tls_key") or None
     if bool(tls_cert) != bool(tls_key):
         raise ConfigError("[proxy] tls_cert and tls_key must be set together")
+    log_level = str(logging_section.get("level", "INFO")).upper()
+    if log_level not in LOG_LEVELS:
+        raise ConfigError(f"[logging] level must be one of {', '.join(LOG_LEVELS)}, not {log_level!r}")
     return ProxyConfig(
         listen=str(section.get("listen", "0.0.0.0")),
         port=int(section.get("port", 8321)),
@@ -133,9 +207,14 @@ def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any])
         tls_key=Path(tls_key) if tls_key else None,
         ping_interval=float(section.get("ping_interval", 30)),
         ping_timeout=float(section.get("ping_timeout", 60)),
-        log_level=str(logging_section.get("level", "INFO")).upper(),
+        log_level=log_level,
         log_payloads=bool(logging_section.get("log_payloads", False)),
     )
+
+
+def _reject_inline_password(section: Mapping[str, Any], where: str) -> None:
+    if "password" in section:
+        raise ConfigError(f"{where}: passwords are never stored in the configuration file; use password_env")
 
 
 def _parse_chargers(entries: list[Mapping[str, Any]], secrets: _Secrets) -> dict[str, ChargerConfig]:
@@ -146,6 +225,7 @@ def _parse_chargers(entries: list[Mapping[str, Any]], secrets: _Secrets) -> dict
         charger_id = _charger_id(entry.get("id"), "[[chargers]] id")
         if charger_id in chargers:
             raise ConfigError(f"duplicate charger id {charger_id!r}")
+        _reject_inline_password(entry, f"charger {charger_id!r}")
         chargers[charger_id] = ChargerConfig(
             id=charger_id,
             password=secrets.get(entry, f"charger {charger_id}"),
@@ -171,6 +251,7 @@ def _parse_backend(
     url = section.get("url")
     if not isinstance(url, str) or not url.startswith(("ws://", "wss://")):
         raise ConfigError(f"[{name}] url must start with ws:// or wss://")
+    _reject_inline_password(section, f"[{name}]")
     try:
         auth = AuthMode(section.get("auth", AuthMode.NONE))
     except ValueError as exc:

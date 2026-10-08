@@ -35,13 +35,86 @@ def test_secondary_forward_auth_refused():
         parse(raw(secondary={"url": "wss://x", "auth": "forward"}), {})
 
 
-def test_policy_overrides_and_validation():
-    config = parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"Reset": "forward"}}}), {})
-    assert config.secondary.policy.rule_for("Reset") is Rule.FORWARD
+def test_policy_overrides_are_validated():
     with pytest.raises(ConfigError):
         parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"Foo": "answer"}}}), {})
     with pytest.raises(ConfigError):
         parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"Reset": "maybe"}}}), {})
+
+
+def test_exclusive_command_moved_to_secondary():
+    config = parse(
+        raw(
+            primary={"url": "wss://p", "policy": {"actions": {"Reset": "answer"}}},
+            secondary={"url": "wss://x", "policy": {"actions": {"Reset": "forward"}}},
+        ),
+        {},
+    )
+    assert config.primary.policy.rule_for("Reset") is Rule.ANSWER
+    assert config.secondary.policy.rule_for("Reset") is Rule.FORWARD
+
+
+def test_conflicting_exclusive_command_is_rejected():
+    with pytest.raises(ConfigError, match="exclusive command Reset is forwarded by more than one backend: primary"):
+        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"Reset": "forward"}}}), {})
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["RemoteStartTransaction", "SendLocalList", "ReserveNow", "CancelReservation"],
+)
+def test_authorization_command_stays_with_primary(action):
+    with pytest.raises(ConfigError, match=f"authorization command {action}"):
+        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {action: "forward"}}}), {})
+
+
+def test_secondary_forwarding_all_configuration_changes_is_rejected():
+    with pytest.raises(ConfigError, match="may not forward all configuration changes"):
+        parse(raw(secondary={"url": "wss://x", "policy": {"actions": {"ChangeConfiguration": "forward"}}}), {})
+
+
+def test_secondary_authorization_settings_key_is_rejected():
+    bad = raw(
+        primary={"url": "wss://p", "policy": {"actions": {"ChangeConfiguration": "answer"}}},
+        secondary={"url": "wss://x", "policy": {"change_configuration_allow_keys": ["LocalAuthListEnabled"]}},
+    )
+    with pytest.raises(ConfigError, match="LocalAuthListEnabled"):
+        parse(bad, {})
+
+
+def test_configuration_key_blocked_while_primary_forwards_all_changes():
+    bad = raw(secondary={"url": "wss://x", "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]}})
+    with pytest.raises(ConfigError, match="MeterValueSampleInterval.*forwards all configuration changes"):
+        parse(bad, {})
+
+
+def test_configuration_key_permitted_for_one_backend():
+    config = parse(
+        raw(
+            primary={"url": "wss://p", "policy": {"actions": {"ChangeConfiguration": "answer"}}},
+            secondary={"url": "wss://x", "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]}},
+        ),
+        {},
+    )
+    assert config.secondary.policy.change_configuration_allow_keys == frozenset({"MeterValueSampleInterval"})
+
+
+def test_invalid_log_level_is_rejected():
+    with pytest.raises(ConfigError, match="BOGUS"):
+        parse(raw(logging={"level": "BOGUS"}), {"TAP": "pw"})
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        {"chargers": [{"id": "CH1", "password": "secret"}]},
+        {"primary": {"url": "wss://p", "password": "secret"}},
+        {"secondary": {"url": "wss://x", "auth": "basic", "password": "secret"}},
+    ],
+)
+def test_password_in_config_file_is_rejected(where):
+    with pytest.raises(ConfigError, match="password_env"):
+        parse(raw(**where), {"TAP": "pw"})
 
 
 @pytest.mark.parametrize(
