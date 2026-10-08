@@ -348,3 +348,23 @@ async def test_the_chargers_identical_boot_is_not_sent_twice(primary, tmp_path):
         assert primary.actions().count("BootNotification") == 2  # a later boot is a real one
     finally:
         await channel.close()
+
+
+async def test_a_stale_wake_up_does_not_cut_the_next_retry_delay_short(tmp_path):
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    channel = PrimaryChannel(
+        config.primary,
+        charger,
+        StateStore.for_charger(config.proxy.state_dir, CHARGER_ID),
+        TrafficLog(CHARGER_ID, False),
+    )
+    try:
+        channel._wake.set()  # an attach happened while the worker was not sleeping
+        started = asyncio.get_running_loop().time()
+
+        await channel._backoff_sleep(0.3)
+
+        assert asyncio.get_running_loop().time() - started >= 0.25
+    finally:
+        await channel.close()

@@ -359,9 +359,9 @@ class PrimaryChannel:
 
     async def _backoff_sleep(self, delay: float) -> None:
         """Wait out a retry delay, but continue at once when a new session attaches."""
+        self._wake.clear()  # a wake-up from before this sleep began has been dealt with already
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._wake.wait(), delay)
-        self._wake.clear()
 
     async def _pump(self, link: BackendLink) -> bool:
         """Watch one registered link until it drops or the outbox parks it.
