@@ -37,6 +37,7 @@ from .ocpp import (
     parse,
     protocol_error_reply,
     serialize,
+    substitute_reply,
 )
 from .policy import CANNED_ANSWERS, CommandPolicy
 from .secondary_channel import SecondaryChannel
@@ -109,7 +110,11 @@ class ChargerSession:
                     # Answer the malformed frame with a ProtocolError CallError so the
                     # charger stops waiting for an answer it will never get.
                     logger.warning("%s charger sent a malformed frame (%s)", self.charger_id, exc)
-                    await self._send_to_charger(protocol_error_reply(exc))
+                    if (error := protocol_error_reply(exc)) is not None:
+                        await self._send_to_charger(error)
+                    elif (substitute := substitute_reply(exc)) is not None:
+                        # The backend that issued the command must not wait for it forever.
+                        await self._route_charger_reply(substitute)
                     continue
                 self._traffic.frame("charger ->", message)
                 if isinstance(message, Call):

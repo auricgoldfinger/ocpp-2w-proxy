@@ -30,9 +30,15 @@ class ProtocolError(ValueError):
     caller can correlate its error reply; None when not even that was readable.
     """
 
-    def __init__(self, reason: str, message_id: str | None = None):
+    def __init__(self, reason: str, message_id: str | None = None, message_type: int | None = None):
         super().__init__(reason)
         self.message_id = message_id
+        self.message_type = message_type
+
+    @property
+    def was_reply(self) -> bool:
+        """The broken frame claimed to be a CallResult / CallError."""
+        return self.message_type in (MessageType.CALL_RESULT, MessageType.CALL_ERROR)
 
 
 @dataclass(frozen=True)
@@ -102,12 +108,27 @@ def parse(text: str | bytes) -> Message:
                 raise ProtocolError(f"unknown message type {message_type!r}")
     except ProtocolError as exc:
         exc.message_id = message_id  # salvage the id: the sender can correlate our reply
+        exc.message_type = message_type
         raise
 
 
-def protocol_error_reply(error: ProtocolError) -> CallError:
-    """The reply for a malformed frame, so its sender stops waiting for an answer."""
+def protocol_error_reply(error: ProtocolError) -> CallError | None:
+    """The reply for a malformed frame, so its sender stops waiting for an answer.
+
+    None for a malformed reply: a CallResult / CallError is never answered. Its sender is
+    not waiting for anything; whoever waits for it needs substitute_reply() instead.
+    """
+    if error.was_reply:
+        return None
     return CallError(error.message_id or new_message_id(), "ProtocolError", str(error))
+
+
+def substitute_reply(error: ProtocolError) -> CallError | None:
+    """What to treat as received when a reply to our Call arrived malformed, so the Call
+    ends now with an error instead of waiting out its timeout."""
+    if not error.was_reply or error.message_id is None:
+        return None
+    return CallError(error.message_id, "GenericError", f"malformed reply: {error}")
 
 
 def _parse_call(frame: list, message_id: str) -> Call:

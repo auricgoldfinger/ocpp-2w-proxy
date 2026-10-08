@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
-from .ocpp import Call, Message, ProtocolError, Reply, parse, protocol_error_reply, serialize
+from .ocpp import Call, Message, ProtocolError, Reply, parse, protocol_error_reply, serialize, substitute_reply
 from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,10 @@ class BackendLink:
                     # Answer the malformed frame with a ProtocolError CallError so the
                     # backend stops waiting for an answer it will never get.
                     logger.warning("%s backend sent a malformed frame (%s)", self.name, exc)
-                    await self.send(protocol_error_reply(exc))
+                    if (error := protocol_error_reply(exc)) is not None:
+                        await self.send(error)
+                    elif (substitute := substitute_reply(exc)) is not None:
+                        self._resolve(substitute)  # our Call ends now instead of timing out
                     continue
                 self._traffic.frame(f"<- {self.name}", message)
                 if isinstance(message, Call):

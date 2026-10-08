@@ -330,6 +330,21 @@ async def test_malformed_backend_frame_gets_a_protocol_error_reply(primary, seco
     await charger.close()
 
 
+async def test_malformed_charger_reply_ends_the_backends_command_with_an_error(primary, secondary, start_proxy):
+    """A broken CallResult is not answered (it is not a Call), but the backend that issued
+    the command must not wait out its timeout: it gets an error right away."""
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID, responder=lambda action, payload: ["not", "an", "object"])
+    await charger.call("Heartbeat", {})
+
+    reply = await secondary.call("GetConfiguration", {"key": ["HeartbeatInterval"]})
+
+    assert reply[0] == 4
+    assert reply[2] == "GenericError"
+    assert not any(frame[0] == 4 for frame in charger.frames)  # nothing was sent back to the charger
+    await charger.close()
+
+
 @pytest.mark.parametrize(
     ("charger_id", "password", "status"),
     [("UNKNOWN", None, 404), (CHARGER_ID, "wrong", 401), (CHARGER_ID, None, 401)],

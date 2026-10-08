@@ -2,7 +2,16 @@ import json
 
 import pytest
 
-from ocpp_2w_proxy.ocpp import Call, CallError, CallResult, ProtocolError, parse, protocol_error_reply, serialize
+from ocpp_2w_proxy.ocpp import (
+    Call,
+    CallError,
+    CallResult,
+    ProtocolError,
+    parse,
+    protocol_error_reply,
+    serialize,
+    substitute_reply,
+)
 
 
 def test_round_trip_all_message_types():
@@ -50,3 +59,21 @@ def test_protocol_error_reply_uses_the_salvaged_id():
     anonymous = ProtocolError("not valid JSON: ...")
     reply = protocol_error_reply(anonymous)
     assert isinstance(reply, CallError) and reply.id != "x"
+
+
+def test_a_malformed_reply_is_not_answered_but_ends_the_waiting_call():
+    with pytest.raises(ProtocolError) as exc:
+        parse('[3, "id-1", ["not", "an", "object"]]')
+
+    assert protocol_error_reply(exc.value) is None  # a CallResult is never answered
+    substitute = substitute_reply(exc.value)
+    assert substitute.id == "id-1"
+    assert substitute.code == "GenericError"
+
+
+def test_a_malformed_call_is_answered_and_needs_no_substitute():
+    with pytest.raises(ProtocolError) as exc:
+        parse('[2, "id-2", "Heartbeat"]')
+
+    assert protocol_error_reply(exc.value).code == "ProtocolError"
+    assert substitute_reply(exc.value) is None
