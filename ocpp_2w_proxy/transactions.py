@@ -53,14 +53,22 @@ class TransactionMap:
             logger.warning("secondary transactions for start %s have no primary counterpart", start_ref)
             self._store.save()
 
-    def forget(self, primary_tx: int) -> None:
-        """The transaction ended: drop the mapping and the pending start records for it."""
-        changed = self._state.transactions.pop(str(primary_tx), None) is not None
-        stale = [start_ref for start_ref, tx in self._state.pending_primary_starts.items() if tx == primary_tx]
-        for start_ref in stale:
-            del self._state.pending_primary_starts[start_ref]
-        if changed or stale:
-            self._store.save()
+    def forget(self, primary_tx: int, backend_name: str) -> None:
+        """One backend confirmed its StopTransaction: drop that backend's link only.
+
+        Other backends may still owe their Start/Stop answers, so the transaction
+        record and the pending start stay until the last link ends. The pending
+        starts are capped (_put_capped), so slow backends cannot grow them unbounded.
+        """
+        links = self._state.transactions.get(str(primary_tx))
+        if links is None:
+            return
+        links.pop(backend_name, None)
+        if not links:
+            # No backend still holds a link; a late Start answer may recreate the
+            # record through the pending start, which is kept for exactly that.
+            del self._state.transactions[str(primary_tx)]
+        self._store.save()
 
     def _link(self, primary_tx: int, links: Mapping[str, int]) -> None:
         logger.info("transaction %s (primary) <-> %s", primary_tx, links)

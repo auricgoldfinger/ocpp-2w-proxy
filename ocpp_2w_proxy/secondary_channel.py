@@ -260,7 +260,8 @@ class SecondaryChannel:
     def _stop_transaction_result(self, item: _QueuedCall, reply: CallResult) -> None:
         primary_tx = item.call.payload.get("transactionId")
         if isinstance(primary_tx, int):
-            self._transactions.forget(primary_tx)
+            # This backend's session ended; other backends keep their links.
+            self._transactions.forget(primary_tx, self.name)
 
     def _authorize_result(self, item: _QueuedCall, reply: CallResult) -> None:
         _warn_if_not_accepted(reply, "Authorize")

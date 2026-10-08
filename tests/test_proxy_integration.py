@@ -410,6 +410,38 @@ async def test_offline_secondary_does_not_delay_the_other(primary, start_proxy):
         await tap.stop()
 
 
+async def test_slow_backend_still_gets_its_stop_after_the_fast_one_stopped(primary, start_proxy):
+    """The fast backend confirming its StopTransaction must not delete the slow
+    backend's transaction mapping: that one still owes its own Stop."""
+    stats = await FakeCsms(responder_with_transaction(77)).start()
+    stats_port = stats.port
+    await stats.stop()
+    tap = await FakeCsms(responder_with_transaction(9)).start()
+    try:
+        primary.responder = responder_with_transaction(100)
+        url = await start_proxy(primary.url, [tap.url, f"ws://127.0.0.1:{stats_port}/ocpp"])
+        charger = await FakeCharger.connect(url, CHARGER_ID)
+        await tap.connected.wait()
+        await charger.call("StartTransaction", START)
+        await tap.wait_for_call("StartTransaction")
+        await asyncio.sleep(0.05)  # let tap's StartTransaction.conf be processed
+        await charger.call("MeterValues", {"connectorId": 1, "transactionId": 100, "meterValue": []})
+        await charger.call("StopTransaction", {"transactionId": 100, "meterStop": 7, "timestamp": "t"})
+        await tap.wait_for_call("StopTransaction")
+        await asyncio.sleep(0.05)  # let tap's StopTransaction.conf drop its own link
+
+        stats = await FakeCsms(responder_with_transaction(77)).start(stats_port)
+        try:
+            await stats.wait_for_call("StartTransaction")
+            assert (await stats.wait_for_call("MeterValues"))[0]["transactionId"] == 77
+            assert (await stats.wait_for_call("StopTransaction"))[0]["transactionId"] == 77
+        finally:
+            await stats.stop()
+        await charger.close()
+    finally:
+        await tap.stop()
+
+
 async def test_five_secondary_backends_per_session(primary, start_proxy):
     backends = [await FakeCsms().start() for _ in range(5)]
     try:

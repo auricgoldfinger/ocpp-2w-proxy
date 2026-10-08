@@ -68,23 +68,54 @@ def test_rewrite_remote_stop_for_charger(tmp_path):
     assert txmap.rewrite_for_charger(Call("1", "RemoteStopTransaction", {"transactionId": 9}), "stats") is None
 
 
-def test_forget(tmp_path):
+def test_forget_drops_one_backend_and_keeps_the_rest(tmp_path):
     txmap = make(tmp_path)
     txmap.primary_started("a", 100)
     txmap.secondary_started("tap", "a", 9)
     txmap.secondary_started("stats", "a", 10)
-    txmap.forget(100)
+    txmap.forget(100, "tap")  # the fast backend confirmed its StopTransaction first
     assert txmap.to_secondary(100, "tap") is None
-    assert txmap.to_secondary(100, "stats") is None
+    assert txmap.to_secondary(100, "stats") == 10
+    assert txmap.to_primary(10, "stats") == 100
 
 
-def test_forget_prevents_late_secondary_conf_from_resurrecting_the_mapping(tmp_path):
+def test_forget_drops_the_transaction_when_its_last_link_ends(tmp_path):
     txmap = make(tmp_path)
     txmap.primary_started("a", 100)
-    txmap.forget(100)
-    txmap.secondary_started("tap", "a", 9)  # the slow backend answers after the transaction ended
+    txmap.secondary_started("tap", "a", 9)
+    txmap.secondary_started("stats", "a", 10)
+    txmap.forget(100, "tap")
+    txmap.forget(100, "stats")
     assert txmap.to_secondary(100, "tap") is None
-    assert make(tmp_path)._state.pending_primary_starts == {}
+    assert txmap.to_secondary(100, "stats") is None
+    assert txmap.to_primary(10, "stats") is None
+
+
+def test_forget_keeps_the_pending_start_for_a_slow_backend(tmp_path):
+    """A slow backend answers its StartTransaction long after the fast one stopped.
+
+    The pending start must survive the fast backend's forget() so the slow
+    backend's transaction id can still be linked for its own StopTransaction.
+    """
+    txmap = make(tmp_path)
+    txmap.primary_started("a", 100)
+    txmap.secondary_started("tap", "a", 9)
+    txmap.forget(100, "tap")
+    txmap.secondary_started("stats", "a", 10)  # answers much later
+    assert txmap.to_secondary(100, "stats") == 10
+    assert txmap.to_primary(10, "stats") == 100
+
+
+def test_a_late_start_answer_recreates_what_it_needs(tmp_path):
+    """No backend ever linked yet when the fast one stops: the record is recreated
+    by the slow backend's late answer, through the pending start."""
+    txmap = make(tmp_path)
+    txmap.primary_started("a", 100)
+    txmap.secondary_started("tap", "a", 9)
+    txmap.forget(100, "tap")  # drops the transaction: no links remain
+    txmap.secondary_started("stats", "a", 10)
+    assert txmap.to_secondary(100, "stats") == 10
+    assert txmap.to_secondary(100, "tap") is None
 
 
 def test_late_secondary_links_through_the_pending_primary_record(tmp_path):
