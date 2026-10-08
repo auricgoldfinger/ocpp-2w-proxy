@@ -15,8 +15,8 @@ from .backend_link import BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
-from .ocpp import Call, CallError, CallResult, Reply, from_dict, new_message_id, to_dict
-from .state import StateStore
+from .ocpp import Call, CallError, CallResult, Reply, new_message_id, to_dict
+from .state import StateStore, restore_outbox
 from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class PrimaryChannel:
         self._generation = 0
         self._link: BackendLink | None = None
         self._reader: asyncio.Task | None = None
-        self._queue = deque(from_dict(item) for item in store.state.primary_outbox)
+        self._queue: deque[Call] = deque(call for call, _ in restore_outbox(store.state.primary_outbox))
         self._in_flight: Call | None = None  # the queued head whose reply the drain awaits
         self._queue_changed = asyncio.Event()
         self._wake = asyncio.Event()

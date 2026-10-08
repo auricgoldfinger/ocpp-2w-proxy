@@ -1,4 +1,22 @@
-from ocpp_2w_proxy.state import StateStore
+from ocpp_2w_proxy.state import StateStore, restore_outbox
+
+
+def test_restore_outbox_skips_unreadable_entries(tmp_path):
+    store = StateStore(tmp_path / "c.json")
+    store.state.primary_outbox = [
+        {"id": "ok", "action": "MeterValues", "payload": {"connectorId": 1}},
+        {"action": "missing id"},  # unreadable
+        "not even a dict",  # unreadable
+    ]
+    store.state.outboxes["tap"] = [
+        {"call": {"id": "st", "action": "StartTransaction", "payload": {}}, "start_ref": "r"},
+        {"call": {"id": "bad"}, "start_ref": None},  # unreadable call
+    ]
+    store.save()
+    restored = StateStore(tmp_path / "c.json").state
+
+    assert [(call.id, ref) for call, ref in restore_outbox(restored.primary_outbox)] == [("ok", None)]
+    assert [(call.id, ref) for call, ref in restore_outbox(restored.outboxes["tap"])] == [("st", "r")]
 
 
 def test_state_store_round_trip_and_corruption(tmp_path):

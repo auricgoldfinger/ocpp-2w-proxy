@@ -106,6 +106,24 @@ async def test_overflow_never_removes_the_call_being_sent(tmp_path):
         await channel.close()
 
 
+async def test_unreadable_queued_entries_are_skipped_at_startup(tmp_path):
+    """One malformed outbox entry must not crash startup: the rest of the queue
+    (billing data) still gets restored and delivered."""
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
+    store.state.primary_outbox = [
+        {"id": "broken"},  # no action / payload
+        {"id": "ok", "action": "MeterValues", "payload": {"connectorId": 1}},
+    ]
+    store.save()
+    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    try:
+        assert [call.id for call in channel._queue] == ["ok"]
+    finally:
+        await channel.close()
+
+
 async def test_stale_detach_cannot_unhook_the_newer_session(primary, tmp_path):
     """UC-002 BR-004: a replaced session that outlives the replacement grace still runs
     detach() during its cleanup; that must not unhook the newer session's routing."""

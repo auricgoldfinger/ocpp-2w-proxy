@@ -5,13 +5,33 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .ocpp import Call, from_dict
+
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
+
+
+def restore_outbox(items: Sequence[dict[str, Any]]) -> list[tuple[Call, str | None]]:
+    """Restore persisted queued calls as (call, start_ref), skipping unreadable entries.
+
+    One malformed entry must not keep the whole queue - billing data - from being
+    restored; that entry alone is dropped, loudly.
+    """
+    restored: list[tuple[Call, str | None]] = []
+    for item in items:
+        try:
+            call = from_dict(item.get("call", item))
+        except AttributeError, KeyError, TypeError:
+            logger.error("skipping unreadable queued entry %r in the state file", item)
+            continue
+        restored.append((call, item.get("start_ref")))
+    return restored
 
 
 @dataclass

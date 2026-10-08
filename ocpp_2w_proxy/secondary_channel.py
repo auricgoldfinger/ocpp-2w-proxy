@@ -18,9 +18,9 @@ from websockets.exceptions import InvalidHandshake, InvalidURI
 from .backend_link import BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .config import SecondaryConfig
-from .ocpp import Call, CallError, CallResult, Reply, from_dict, new_message_id, to_dict
+from .ocpp import Call, CallError, CallResult, Reply, new_message_id, to_dict
 from .policy import CommandPolicy
-from .state import StateStore
+from .state import StateStore, restore_outbox
 from .traffic_log import TrafficLog
 from .transactions import TransactionMap
 
@@ -71,8 +71,8 @@ class SecondaryChannel:
         self._link: BackendLink | None = None
         self._in_flight: _QueuedCall | None = None  # the queued head whose reply the sender awaits
         self._queue: deque[_QueuedCall] = deque(
-            _QueuedCall(from_dict(item["call"]), durable=True, start_ref=item.get("start_ref"))
-            for item in self._state.outboxes.get(config.name, [])
+            _QueuedCall(call, durable=True, start_ref=start_ref)
+            for call, start_ref in restore_outbox(self._state.outboxes.get(config.name, []))
         )
         self._queue_changed = asyncio.Event()
         if self._queue:
