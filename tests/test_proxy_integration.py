@@ -330,6 +330,27 @@ async def test_malformed_backend_frame_gets_a_protocol_error_reply(primary, seco
     await charger.close()
 
 
+async def test_a_charger_reusing_message_ids_does_not_collide_start_records(primary, secondary, start_proxy, tmp_path):
+    """Chargers restart their message ids after a reboot. Each start is correlated under
+    a proxy-made reference, so two starts with the same charger id keep separate records."""
+    primary.responder = responder_with_transaction(100)
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})
+    try:
+        for expected_calls, transaction_id in ((1, 100), (2, 101)):
+            primary.responder = responder_with_transaction(transaction_id)
+            await charger.send_raw(json.dumps([2, "1", "StartTransaction", START]))  # the same id both times
+            await primary.wait_for_call("StartTransaction", count=expected_calls)
+            await secondary.wait_for_call("StartTransaction", count=expected_calls)
+
+        state = json.loads((tmp_path / f"{CHARGER_ID}.json").read_text())
+        assert sorted(state["pending_primary_starts"].values()) == [100, 101]
+        assert "1" not in state["pending_primary_starts"]
+    finally:
+        await charger.close()
+
+
 async def test_malformed_charger_reply_ends_the_backends_command_with_an_error(primary, secondary, start_proxy):
     """A broken CallResult is not answered (it is not a Call), but the backend that issued
     the command must not wait out its timeout: it gets an error right away."""

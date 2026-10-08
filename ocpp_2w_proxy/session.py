@@ -34,6 +34,7 @@ from .ocpp import (
     Message,
     ProtocolError,
     Reply,
+    new_message_id,
     parse,
     protocol_error_reply,
     serialize,
@@ -151,14 +152,17 @@ class ChargerSession:
         """
         reply = await self._primary.call(call, self._config.primary.call_timeout)
         transaction_id = reply.payload.get("transactionId") if isinstance(reply, CallResult) else None
+        # Not the charger's message id: chargers restart their ids after a reboot, and the
+        # records kept under this reference outlive the session.
+        start_ref = new_message_id()
         if isinstance(transaction_id, int):
             # Record the primary's answer first: each secondary's own answer links
             # through it, however long it takes to arrive.
-            self._transactions.primary_started(call.id, transaction_id)
+            self._transactions.primary_started(start_ref, transaction_id)
             for channel in self._secondaries.values():
-                channel.submit(call, start_ref=call.id)
+                channel.submit(call, start_ref=start_ref)
         else:
-            self._transactions.primary_start_failed(call.id)
+            self._transactions.primary_start_failed(start_ref)
         await self._send_to_charger(reply)
 
     async def _route_charger_reply(self, reply: Reply) -> None:
