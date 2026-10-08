@@ -514,6 +514,27 @@ async def test_case_insensitive_configuration_key_from_secondary(primary, second
     await charger.close()
 
 
+async def test_primary_forwarding_all_keys_cannot_touch_a_secondary_owned_key(primary, secondary, start_proxy):
+    """The primary keeps ChangeConfiguration for every other key; the keys the secondary
+    owns (e.g. a power limit) stay out of its reach."""
+    url = await start_proxy(
+        primary.url,
+        secondary.url,
+        secondary={"policy": {"change_configuration_allow_keys": ["MaxCurrent"]}},
+    )
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await charger.call("Heartbeat", {})
+
+    owned = await primary.call("ChangeConfiguration", {"key": "MaxCurrent", "value": "32"})
+    assert owned[2] == {"status": "Rejected"}
+    assert charger.received_calls == []
+
+    other = await primary.call("ChangeConfiguration", {"key": "HeartbeatInterval", "value": "60"})
+    assert other[2] == {"status": "Accepted"}
+    assert charger.received_calls[-1][2:] == ["ChangeConfiguration", {"key": "HeartbeatInterval", "value": "60"}]
+    await charger.close()
+
+
 async def test_secondaries_deliver_while_the_charger_is_offline(primary, start_proxy):
     """The secondary channels belong to the server, not the session: queued billing
     data is delivered even while no charger is connected."""

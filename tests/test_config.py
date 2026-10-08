@@ -128,18 +128,21 @@ def test_authorization_and_security_keys_stay_with_primary(key):
         parse(bad, {})
 
 
-def test_configuration_key_blocked_while_primary_forwards_all_changes():
-    bad = raw(
-        secondary=[
-            {
-                "name": "tap",
-                "url": "wss://x",
-                "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]},
-            }
-        ]
+def test_secondary_owned_key_is_withheld_from_a_primary_that_forwards_all_changes():
+    config = parse(
+        raw(
+            secondary=[
+                {
+                    "name": "tap",
+                    "url": "wss://x",
+                    "policy": {"change_configuration_allow_keys": ["MeterValueSampleInterval"]},
+                }
+            ]
+        ),
+        {},
     )
-    with pytest.raises(ConfigError, match="metervaluesampleinterval.*forwards all configuration changes"):
-        parse(bad, {})
+    assert config.primary.policy.withheld_configuration_keys == frozenset({"metervaluesampleinterval"})
+    assert config.primary.policy.rule_for("ChangeConfiguration") is Rule.FORWARD
 
 
 def test_configuration_key_permitted_for_one_backend_only():

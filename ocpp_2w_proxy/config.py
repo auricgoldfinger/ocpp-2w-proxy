@@ -6,7 +6,7 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -137,6 +137,7 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     secondaries = _parse_secondaries(raw.get("secondary"), secrets)
     _validate_charger_backend_ids(chargers, secondaries)
     _validate_command_assignments(primary, secondaries)
+    primary = _withhold_secondary_keys(primary, secondaries)
     return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondaries)
 
 
@@ -210,28 +211,23 @@ def _validate_exclusive_commands(primary: BackendConfig, secondaries: Sequence[S
 
 
 def _validate_change_configuration_keys(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
-    """BR-007: each configuration key is permitted for at most one backend, and for none
-    while another backend forwards all configuration changes."""
-    backends = [primary, *secondaries]
-    full_forwarders = [
-        backend for backend in backends if backend.policy.rule_for("ChangeConfiguration") is Rule.FORWARD
-    ]
+    """BR-007: each configuration key is permitted for at most one backend. A backend that
+    forwards all configuration changes (the primary) keeps every key nobody else owns."""
     owners: dict[str, str] = {}
-    for backend in backends:
-        keys = backend.policy.change_configuration_allow_keys
-        if not keys:
-            continue
-        forwarding_elsewhere = next((other for other in full_forwarders if other is not backend), None)
-        if forwarding_elsewhere is not None:
-            raise ConfigError(
-                f"{backend.name!r} permits configuration keys {sorted(keys)}, but "
-                f"{forwarding_elsewhere.name!r} forwards all configuration changes"
-            )
-        for key in sorted(keys):
+    for backend in [primary, *secondaries]:
+        for key in sorted(backend.policy.change_configuration_allow_keys):
             owner = owners.get(key)
             if owner is not None:
                 raise ConfigError(f"configuration key {key!r} is permitted for both {owner!r} and {backend.name!r}")
             owners[key] = backend.name
+
+
+def _withhold_secondary_keys(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> BackendConfig:
+    """Keys a secondary owns are no longer the primary's to change: it answers them itself."""
+    owned = frozenset().union(*(backend.policy.change_configuration_allow_keys for backend in secondaries))
+    if not owned:
+        return primary
+    return replace(primary, policy=replace(primary.policy, withheld_configuration_keys=owned))
 
 
 class _Secrets:

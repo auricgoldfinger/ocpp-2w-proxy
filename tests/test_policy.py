@@ -77,3 +77,13 @@ def test_primary_forwards_everything_by_default():
 def test_answer_rule_requires_a_canned_answer():
     with pytest.raises(ValueError):
         CommandPolicy({"Foo": Rule.ANSWER}, Rule.ERROR)
+
+
+def test_primary_cannot_change_a_key_owned_by_a_secondary():
+    primary = CommandPolicy(
+        PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, withheld_configuration_keys=frozenset({"maxcurrent"})
+    )
+    owned = Call("1", "ChangeConfiguration", {"key": "MaxCurrent", "value": "0"})
+    other = Call("2", "ChangeConfiguration", {"key": "HeartbeatInterval", "value": "60"})
+    assert primary.decide(owned) == CallResult("1", {"status": "Rejected"})
+    assert primary.decide(other) == other

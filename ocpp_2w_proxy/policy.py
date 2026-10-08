@@ -173,6 +173,9 @@ class CommandPolicy:
     # Lowercase OCPP configuration keys: CiString comparison is case-insensitive.
     change_configuration_allow_keys: frozenset[str] = frozenset()
     strip_charging_profile: bool = False
+    # Lowercase keys owned by another backend: ChangeConfiguration for them is answered
+    # "Rejected" here even though this policy otherwise forwards ChangeConfiguration.
+    withheld_configuration_keys: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         for action, rule in self.rules.items():
@@ -190,6 +193,8 @@ class CommandPolicy:
             key = call.payload.get("key")
             if isinstance(key, str) and key.lower() in self.change_configuration_allow_keys:
                 return Rule.FORWARD
+            if isinstance(key, str) and key.lower() in self.withheld_configuration_keys:
+                return Rule.ANSWER
         return self.rule_for(call.action)
 
     def decide(self, call: Call) -> Call | Reply:
