@@ -1,6 +1,6 @@
 from ocpp_2w_proxy.config import parse
-from ocpp_2w_proxy.ocpp import Call
-from ocpp_2w_proxy.secondary_channel import SecondaryChannel
+from ocpp_2w_proxy.ocpp import Call, CallError
+from ocpp_2w_proxy.secondary_channel import MAX_ATTEMPTS_PER_CALL, SecondaryChannel, _QueuedCall
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
 from ocpp_2w_proxy.transactions import TransactionMap
@@ -105,3 +105,39 @@ def test_boot_and_status_replay_only_for_backends_that_forward_them(tmp_path):
     # The boot/status cache is shared charger data; stats simply does not replay it.
     assert store.state.boot is not None
     assert store.state.statuses == {}
+
+
+def test_rejected_stop_transaction_frees_the_transaction_link(tmp_path):
+    config = make_config({"name": "tap", "url": "ws://s"})
+    store = StateStore(tmp_path / "CH1.json")
+    channel = make_channel(config, "tap", store)
+    channel._transactions.primary_started("a", 100)
+    channel._transactions.secondary_started("tap", "a", 9)
+    stop = _QueuedCall(Call("m", "StopTransaction", {"transactionId": 100, "meterStop": 1}), durable=True)
+
+    channel._handle_result(stop, CallError("m", "GenericError", "no such transaction"))
+
+    assert channel._transactions.to_secondary(100, "tap") is None
+
+
+class _SilentLink:
+    """A link whose Call never gets an answer."""
+
+    async def call(self, call, timeout):
+        raise TimeoutError
+
+
+async def test_dropped_stop_transaction_frees_the_transaction_link(tmp_path):
+    config = make_config({"name": "tap", "url": "ws://s"})
+    store = StateStore(tmp_path / "CH1.json")
+    channel = make_channel(config, "tap", store)
+    channel._transactions.primary_started("a", 100)
+    channel._transactions.secondary_started("tap", "a", 9)
+    stop = _QueuedCall(Call("m", "StopTransaction", {"transactionId": 100, "meterStop": 1}), durable=True)
+    channel._queue.append(stop)
+    stop.attempts = MAX_ATTEMPTS_PER_CALL - 1  # the next timeout drops it
+
+    await channel._send_head(_SilentLink())
+
+    assert channel._transactions.to_secondary(100, "tap") is None
+    assert stop not in channel._queue

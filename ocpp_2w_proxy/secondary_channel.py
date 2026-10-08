@@ -226,10 +226,18 @@ class SecondaryChannel:
                 logger.warning("%s did not answer %s (attempt %d)", self.name, item.call.action, item.attempts)
                 return
             logger.error("%s never answered %s; dropped", self.name, item.call.action)
+            self._forget_stopped_transaction(item)
             self._complete(item)
             return
         self._complete(item)
         self._handle_result(item, reply)
+
+    def _forget_stopped_transaction(self, item: _QueuedCall) -> None:
+        """This backend will never confirm the stop: end its transaction link so
+        later messages are not translated against a transaction it gave up on."""
+        primary_tx = item.call.payload.get("transactionId")
+        if item.call.action == "StopTransaction" and isinstance(primary_tx, int):
+            self._transactions.forget(primary_tx, self.name)
 
     def _complete(self, item: _QueuedCall) -> None:
         if self._queue and self._queue[0] is item:
@@ -246,6 +254,7 @@ class SecondaryChannel:
     def _handle_result(self, item: _QueuedCall, reply: Reply) -> None:
         if isinstance(reply, CallError):
             logger.warning("%s rejected %s: %s %s", self.name, item.call.action, reply.code, reply.description)
+            self._forget_stopped_transaction(item)
             return
         handler = _RESULT_HANDLERS.get(item.call.action)
         if handler:
