@@ -69,6 +69,7 @@ class SecondaryChannel:
         self._on_call = on_call
         self._sleep = sleep
         self._link: BackendLink | None = None
+        self._in_flight: _QueuedCall | None = None  # the queued head whose reply the sender awaits
         self._queue: deque[_QueuedCall] = deque(
             _QueuedCall(from_dict(item["call"]), durable=True, start_ref=item.get("start_ref"))
             for item in self._state.outboxes.get(config.name, [])
@@ -114,9 +115,20 @@ class SecondaryChannel:
 
     def _enforce_queue_limit(self) -> None:
         while sum(item.durable for item in self._queue) > self._config.max_queue:
-            victim = next((i for i in self._queue if i.call.action == EXPENDABLE_ACTION), self._queue[0])
+            victim = self._sacrifice()
+            if victim is None:
+                break  # only the in-flight head is over the limit; its confirmation pops it
             self._queue.remove(victim)
             logger.error("%s queue full (%d); dropped queued %s", self.name, self._config.max_queue, victim.call.action)
+
+    def _sacrifice(self) -> _QueuedCall | None:
+        """The first droppable item: meter data first, oldest otherwise. Never the
+        head currently being sent - removing it would make the sender pop the next
+        item, which was never sent, losing it silently."""
+        candidates = [i for i in self._queue if i is not self._in_flight]
+        if not candidates:
+            return None
+        return next((i for i in candidates if i.call.action == EXPENDABLE_ACTION), candidates[0])
 
     def _persist_queue(self) -> None:
         self._state.outboxes[self._config.name] = [
@@ -218,6 +230,7 @@ class SecondaryChannel:
         if outgoing is None:
             self._complete(item)
             return
+        self._in_flight = item
         try:
             reply = await link.call(outgoing, self._timeout)
         except TimeoutError:
@@ -229,6 +242,8 @@ class SecondaryChannel:
             self._forget_stopped_transaction(item)
             self._complete(item)
             return
+        finally:
+            self._in_flight = None
         self._complete(item)
         self._handle_result(item, reply)
 

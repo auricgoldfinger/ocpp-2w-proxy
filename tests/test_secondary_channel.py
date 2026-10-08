@@ -120,6 +120,24 @@ def test_rejected_stop_transaction_frees_the_transaction_link(tmp_path):
     assert channel._transactions.to_secondary(100, "tap") is None
 
 
+def test_overflow_never_removes_the_item_being_sent(tmp_path):
+    """The sender holds the queue head while awaiting the backend's reply; an
+    overflow then must drop another item, or the sender's pop afterwards would
+    discard an unsent message."""
+    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 2})
+    store = StateStore(tmp_path / "CH1.json")
+    channel = make_channel(config, "tap", store)
+    items = [_QueuedCall(Call(i, "MeterValues", {"connectorId": 1}), durable=True) for i in ("a", "b", "c")]
+    channel._queue.extend(items)
+    channel._in_flight = items[0]  # the sender is waiting for its reply right now
+
+    channel._enforce_queue_limit()
+
+    assert channel._queue[0] is items[0]  # the in-flight head survives
+    assert items[1] not in channel._queue  # the oldest droppable meter went instead
+    assert len(channel._queue) == 2
+
+
 class _SilentLink:
     """A link whose Call never gets an answer."""
 

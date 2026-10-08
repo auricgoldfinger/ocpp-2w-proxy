@@ -84,6 +84,28 @@ async def test_live_queued_actions_wait_behind_the_outbox(primary, tmp_path):
         await channel.close()
 
 
+async def test_overflow_never_removes_the_call_being_sent(tmp_path):
+    """The drain holds the queue head while awaiting the primary's reply; an
+    overflow then must drop another call, or the drain's popleft() afterwards
+    would discard an unsent message."""
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none", "max_queue": 2}), {})
+    charger = config.chargers[CHARGER_ID]
+    store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
+    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    try:
+        calls = [Call(i, "MeterValues", {"connectorId": 1}) for i in ("a", "b", "c")]
+        channel._queue.extend(calls)
+        channel._in_flight = calls[0]  # the drain is waiting for its reply right now
+
+        channel._enforce_queue_limit()
+
+        assert channel._queue[0] is calls[0]  # the in-flight head survives
+        assert calls[1] not in channel._queue  # the oldest droppable meter went instead
+        assert len(channel._queue) == 2
+    finally:
+        await channel.close()
+
+
 async def test_stale_detach_cannot_unhook_the_newer_session(primary, tmp_path):
     """UC-002 BR-004: a replaced session that outlives the replacement grace still runs
     detach() during its cleanup; that must not unhook the newer session's routing."""

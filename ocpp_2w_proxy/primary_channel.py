@@ -57,6 +57,7 @@ class PrimaryChannel:
         self._link: BackendLink | None = None
         self._reader: asyncio.Task | None = None
         self._queue = deque(from_dict(item) for item in store.state.primary_outbox)
+        self._in_flight: Call | None = None  # the queued head whose reply the drain awaits
         self._queue_changed = asyncio.Event()
         self._wake = asyncio.Event()
         self._connect_lock = asyncio.Lock()
@@ -147,9 +148,20 @@ class PrimaryChannel:
 
     def _enforce_queue_limit(self) -> None:
         while len(self._queue) > self._max_queue:
-            victim = next((c for c in self._queue if c.action == EXPENDABLE_ACTION), self._queue[0])
+            victim = self._sacrifice()
+            if victim is None:
+                break  # only the in-flight head is over the limit; its confirmation pops it
             self._queue.remove(victim)
             logger.error("primary queue full (%d); dropped queued %s", self._max_queue, victim.action)
+
+    def _sacrifice(self) -> Call | None:
+        """The first droppable call: meter data first, oldest otherwise. Never the
+        head currently being sent - removing it would make the drain pop the next
+        call, which was never sent, losing it silently."""
+        candidates = [c for c in self._queue if c is not self._in_flight]
+        if not candidates:
+            return None
+        return next((c for c in candidates if c.action == EXPENDABLE_ACTION), candidates[0])
 
     def _persist_queue(self) -> None:
         self._store.state.primary_outbox = [to_dict(call) for call in self._queue]
@@ -275,11 +287,14 @@ class PrimaryChannel:
                 continue
             call = self._queue[0]
             outgoing = call.with_id(new_message_id())
+            self._in_flight = call
             try:
                 reply = await link.call(outgoing, self._backend.call_timeout)
             except (BackendUnavailable, TimeoutError) as exc:
                 logger.warning("%s primary did not confirm queued %s; will retry", self._charger.id, call.action)
                 raise BackendUnavailable(f"primary did not confirm queued {call.action}") from exc
+            finally:
+                self._in_flight = None
             if isinstance(reply, CallError):
                 logger.warning(
                     "%s primary rejected queued %s: %s %s",
