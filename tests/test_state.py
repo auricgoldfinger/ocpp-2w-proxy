@@ -1,3 +1,5 @@
+import os
+
 from ocpp_2w_proxy.state import StateStore, restore_outbox
 
 
@@ -47,7 +49,20 @@ def test_v1_state_file_is_parked_for_inspection(tmp_path):
     assert (tmp_path / "c.corrupt").exists()  # undelivered billing data is kept, never silently discarded
 
 
-def test_corrupt_backups_are_numbered_not_overwritten(tmp_path):
+def test_disk_write_errors_are_logged_not_raised(tmp_path, monkeypatch):
+    """A full or read-only disk must not crash the relay tasks that persist queues."""
+
+    def no_space(file_descriptor):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fsync", no_space)
+    store = StateStore(tmp_path / "c.json")
+    store.state.transactions["1"] = {"tap": 2}
+    store.save()  # logged, not raised
+
+    monkeypatch.undo()  # the disk has space again
+    store.save()
+    assert StateStore(tmp_path / "c.json").state.transactions == {"1": {"tap": 2}}
     path = tmp_path / "c.json"
     for text in ("{first", "{second", "{third"):
         path.write_text(text)

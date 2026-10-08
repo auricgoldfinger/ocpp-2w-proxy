@@ -88,11 +88,16 @@ class StateStore:
         return backup
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
         payload = json.dumps({"version": SCHEMA_VERSION, **asdict(self.state)}, separators=(",", ":"))
-        with tmp.open("w") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        tmp.replace(self.path)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            with tmp.open("w") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+            tmp.replace(self.path)
+        except OSError as exc:
+            # A failing disk (full, read-only volume) must not take the message relay
+            # down with it: the state stays in memory and retries on the next save.
+            logger.error("cannot persist state to %s (%s); continuing in memory", self.path, exc)
