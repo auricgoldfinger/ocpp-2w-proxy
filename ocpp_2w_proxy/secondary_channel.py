@@ -27,6 +27,7 @@ from .config import ChargerConfig, SecondaryConfig
 from .message_classes import is_secondary_durable
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id
 from .policy import CommandPolicy
+from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
 from .transactions import TransactionMap
@@ -45,8 +46,6 @@ MAX_CALL_ERROR_ATTEMPTS = 5
 # Transient calls (heartbeats, authorizations, ...) wait only while connected, but a backend
 # that keeps refusing the boot would let them pile up: the oldest are dropped past this.
 MAX_TRANSIENT_QUEUE = 1000
-
-OnCall = Callable[[Call], Awaitable[None]]
 
 
 @dataclass
@@ -82,10 +81,7 @@ class SecondaryChannel:
         self._transactions = transactions
         self._traffic = traffic
         self._sleep = sleep
-        # A session is attached exactly while _on_call is set; the generation guards
-        # that routing so a replaced session cannot unhook its successor (UC-002 BR-004).
-        self._on_call: OnCall | None = None
-        self._generation = 0
+        self._routing = SessionRouting()
         self._user_agent: str | None = None
         self._link: BackendLink | None = None
         self._in_flight: _QueuedCall | None = None  # the queued head whose reply the sender awaits
@@ -114,17 +110,14 @@ class SecondaryChannel:
         connection itself is owned by the background worker and never waits for a session.
         """
         self._user_agent = identity.user_agent
-        self._on_call = on_call
-        self._generation += 1
+        token = self._routing.attach(on_call)
         self._queue_changed.set()  # wakes an idle worker: it connects now
-        return self._generation
+        return token
 
     def detach(self, token: int) -> None:
         """End charger-facing command routing; the durable outbox keeps draining."""
-        if token != self._generation:
-            return  # a newer session owns the channel now
-        self._on_call = None
-        self._queue_changed.set()  # wakes the sender: with nothing left to deliver it disconnects
+        if self._routing.detach(token):
+            self._queue_changed.set()  # wakes the sender: with nothing left to deliver it disconnects
 
     def start_background(self) -> None:
         """Start the worker at server startup; it connects once there is something to do."""
@@ -132,7 +125,7 @@ class SecondaryChannel:
 
     def _wanted(self) -> bool:
         """A connection is needed: a session is attached or billing data is waiting."""
-        return self._on_call is not None or any(item.durable for item in self._queue)
+        return self._routing.attached or any(item.durable for item in self._queue)
 
     async def close(self) -> None:
         self._closed = True
@@ -277,12 +270,7 @@ class SecondaryChannel:
         return booted.is_set()
 
     async def _dispatch_call(self, call: Call) -> None:
-        if self._on_call is None:
-            link = self._link
-            if link is not None:
-                await link.reply(CallError(call.id, "GenericError", "charger is disconnected"))
-            return
-        await self._on_call(call)
+        await self._routing.dispatch(call, self._link)
 
     def _drop_transient(self) -> None:
         self._queue = deque(item for item in self._queue if item.durable)
