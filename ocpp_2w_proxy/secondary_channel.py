@@ -1,4 +1,4 @@
-"""Resilient, store-and-forward connection to the secondary (billing) backend.
+"""Resilient, store-and-forward connection to one secondary backend.
 
 The charger must never notice the secondary backend: it can be slow, down or rejecting,
 and charging (driven by the primary) carries on. Transaction-related calls are queued on

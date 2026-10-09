@@ -68,9 +68,9 @@ def _migrate_v2(data: dict[str, Any]) -> None:
 class ChargerState:
     # primary transactionId (as str) -> {backend name: that backend's transactionId}
     transactions: dict[str, dict[str, int]] = field(default_factory=dict)
-    # StartTransaction message id -> transactionId, while waiting for the backends' answers
+    # StartTransaction start_ref -> transactionId, while waiting for the backends' answers
     pending_primary_starts: dict[str, int] = field(default_factory=dict)
-    # Backend name -> {StartTransaction message id: that backend's transactionId}
+    # Backend name -> {StartTransaction start_ref: that backend's transactionId}
     pending_secondary_starts: dict[str, dict[str, int]] = field(default_factory=dict)
     # Primary calls acknowledged locally while the primary backend was unavailable
     primary_outbox: list[dict[str, Any]] = field(default_factory=list)

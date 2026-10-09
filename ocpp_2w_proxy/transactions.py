@@ -26,7 +26,7 @@ class TransactionMap:
     # --- recording -------------------------------------------------------------------------
 
     def primary_started(self, start_ref: str, primary_tx: int) -> None:
-        """The primary answered StartTransaction (start_ref = the charger's message id)."""
+        """The primary answered StartTransaction (start_ref = the proxy's own reference for that start)."""
         links = {
             name: pending.pop(start_ref)
             for name, pending in self._state.pending_secondary_starts.items()

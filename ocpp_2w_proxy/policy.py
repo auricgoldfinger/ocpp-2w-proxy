@@ -136,8 +136,8 @@ AUTHORIZATION_CONFIG_KEYS: frozenset[str] = frozenset(
 )
 
 
-# A secondary backend (e.g. the HomeAssistant control backend): may stop sessions and read state,
-# but by default must not touch what the primary backend (Tap, which authorizes and bills)
+# A secondary backend (e.g. a control or billing-mirror backend): may stop sessions and read
+# state, but by default must not touch what the primary backend (which authorizes and bills)
 # relies on: charging profiles, configuration, availability, firmware, the local
 # authorization list, or card authorization (remote start). Config can hand it some of these.
 SECONDARY_DEFAULT_RULES: Mapping[str, Rule] = {
