@@ -97,7 +97,7 @@ class SecondaryChannel:
         self._queue_changed = asyncio.Event()
         self._worker: asyncio.Task | None = None
         self._heartbeater: asyncio.Task | None = None
-        self._heartbeat_interval: int | None = None
+        self._heartbeat_interval = 0  # seconds; 0 until the backend has stated one
         # UC-006 BR-004: message retries back off on their own schedule, reset only by a
         # delivered message, so a message that keeps failing is not retried every few seconds.
         self._retry_backoff = Backoff()
@@ -305,13 +305,13 @@ class SecondaryChannel:
     def _start_heartbeats(self, link: BackendLink) -> None:
         """Keep the backend's idle timeout alive with synthetic heartbeats when the
         charger's own ones are not forwarded to it; it stated its interval at boot."""
-        if self._heartbeat_interval is None or self._heartbeater is not None:
+        if not self._heartbeat_interval or self._heartbeater is not None:
             return
         self._heartbeater = asyncio.create_task(self._heartbeat_loop(link), name=f"secondary-heartbeat-{self.name}")
 
     async def _heartbeat_loop(self, link: BackendLink) -> None:
         while True:
-            await asyncio.sleep(self._heartbeat_interval or DEFAULT_BOOT_RETRY_INTERVAL)
+            await asyncio.sleep(self._heartbeat_interval)
             try:
                 await link.call(Call(new_message_id(), "Heartbeat", {}), self._timeout)
             except TimeoutError:
