@@ -20,9 +20,11 @@
 #   SKIP_TESTS     set to 1 to skip pytest on `build`/`all`
 #
 # The image is tagged fully qualified (docker.io/library/ocpp-2w-proxy) so
-# `docker load` on the NAS yields exactly ocpp-2w-proxy:<tag>, which is what
-# compose.yaml's `image: ocpp-2w-proxy:latest` resolves to; podman's implicit
-# localhost/ prefix would not match after loading.
+# `docker load` on the NAS yields exactly ocpp-2w-proxy:<tag>; podman's implicit
+# localhost/ prefix would not match after loading. TrueNAS custom apps, however,
+# rewrite the unqualified compose `image: ocpp-2w-proxy:latest` to
+# localhost/ocpp-2w-proxy:latest, so `ship` also tags the loaded image under
+# that name; the app finds it whichever way TrueNAS resolves it.
 #
 # On a linux/amd64 host (the NAS's architecture) the build runs natively.
 # On Apple Silicon, podman builds linux/amd64 via the podman-machine VM + QEMU;
@@ -160,12 +162,15 @@ cmd_ship() {
   # ends up being driven by the heredoc instead of your real terminal, and
   # the password gets echoed in cleartext / consumed as heredoc data).
   #
-  # The first `sudo docker load` prompts once; the second `sudo docker image
-  # ls` reuses the cached sudo ticket (same PTY, within sudo's default grace
-  # window). `&&` chaining aborts the rest if any step fails.
+  # The first `sudo docker load` prompts once; the later `sudo` calls reuse the
+  # cached sudo ticket (same PTY, within sudo's default grace window). `&&`
+  # chaining aborts the rest if any step fails. The `docker tag` runs before
+  # the prune so the image it superseded turns dangling and is removed too.
   ssh -t "$NAS_SSH_HOST" "\
     echo '[+] docker load' && \
     sudo docker load -i '${NAS_TMP_DIR}/${TARBALL}' && \
+    echo '[+] tagging localhost/${IMAGE_NAME}:latest (TrueNAS custom apps reference it that way)' && \
+    sudo docker tag '${IMAGE_NAME}:latest' 'localhost/${IMAGE_NAME}:latest' && \
     echo '[+] pruning old tags / dangling images / tarball' && \
     { for t in \$(sudo docker image ls '${IMAGE_NAME}' --format '{{.Tag}}'); do \
         case \"\$t\" in latest|'${VERSION}'|'<none>') continue;; esac; \
@@ -176,7 +181,7 @@ cmd_ship() {
       sudo docker image prune -f >/dev/null 2>&1 || true; \
       rm -f '${NAS_TMP_DIR}/${TARBALL}'; } && \
     echo '[+] docker image ls' && \
-    sudo docker image ls '${IMAGE_NAME}' --format '  {{.Repository}}:{{.Tag}}  {{.CreatedSince}}  {{.Size}}'"
+    sudo docker image ls --format '  {{.Repository}}:{{.Tag}}  {{.CreatedSince}}  {{.Size}}' | grep '${IMAGE_NAME}'"
 
   ok "Shipped ${IMAGE_NAME}:${VERSION} (+ :latest) to ${NAS_SSH_HOST}"
   cat <<EOF
