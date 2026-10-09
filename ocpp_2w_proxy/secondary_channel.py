@@ -32,6 +32,7 @@ from .queue_overflow import pick_victim
 from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
+from .synthetic_heartbeat import SyntheticHeartbeat
 from .traffic_log import TrafficLog
 from .transactions import TransactionMap
 
@@ -91,8 +92,7 @@ class SecondaryChannel:
         )
         self._queue_changed = asyncio.Event()
         self._worker = RestartableWorker(self._run, name=f"secondary-{config.name}-{charger.id}")
-        self._heartbeater: asyncio.Task | None = None
-        self._heartbeat_interval = 0  # seconds; 0 until the backend has stated one
+        self._heartbeat = SyntheticHeartbeat(config.name, config.call_timeout)
         # UC-006 BR-004: message retries back off on their own schedule, reset only by a
         # delivered message, so a message that keeps failing is not retried every few seconds.
         self._retry_backoff = Backoff()
@@ -246,12 +246,9 @@ class SecondaryChannel:
                     logger.error("%s sender failed: %r", self.name, exc)
         finally:
             self._link = None
-            heartbeat = self._heartbeater
-            self._heartbeater = None
-            tasks = [reader, sender] + ([heartbeat] if heartbeat is not None else [])
-            for task in tasks:
+            for task in (reader, sender):
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(reader, sender, self._heartbeat.stop(), return_exceptions=True)
             # Shielded: closing the worker (server shutdown) must still close the link.
             await asyncio.shield(link.close())
             self._drop_transient()
@@ -267,7 +264,7 @@ class SecondaryChannel:
         if not await self._boot(link):
             return  # nobody needs this connection any more
         booted.set()
-        self._start_heartbeats(link)
+        self._heartbeat.start(link)
         await self._send_statuses(link)
         while True:
             while not self._queue:
@@ -277,31 +274,14 @@ class SecondaryChannel:
                 await self._queue_changed.wait()
             await self._send_head(link)
 
-    def _start_heartbeats(self, link: BackendLink) -> None:
-        """Keep the backend's idle timeout alive with synthetic heartbeats when the
-        charger's own ones are not forwarded to it; it stated its interval at boot."""
-        if not self._heartbeat_interval or self._heartbeater is not None:
-            return
-        self._heartbeater = asyncio.create_task(self._heartbeat_loop(link), name=f"secondary-heartbeat-{self.name}")
-
-    async def _heartbeat_loop(self, link: BackendLink) -> None:
-        while True:
-            await asyncio.sleep(self._heartbeat_interval)
-            try:
-                await link.call(Call(new_message_id(), "Heartbeat", {}), self._timeout)
-            except TimeoutError:
-                continue  # no answer: try again at the next interval
-            except BackendUnavailable:
-                return  # the link is gone; _serve tears everything down
-
     def _note_heartbeat_interval(self, reply: CallResult) -> None:
         """Remember the interval this backend asked for in its BootNotification.conf."""
         if self.forwards("Heartbeat"):
             return  # the charger's own heartbeats reach this backend already
         interval = reply.payload.get("interval")
         if isinstance(interval, int) and interval > 0:
-            self._heartbeat_interval = interval
-            self._start_heartbeats(self._link)  # the charger's boot may teach us the interval mid-connection
+            self._heartbeat.interval = interval
+            self._heartbeat.start(self._link)  # the charger's boot may teach us the interval mid-connection
 
     async def _boot(self, link: BackendLink) -> bool:
         """Get the backend to accept the boot. False: it never did and nobody needs it now."""
