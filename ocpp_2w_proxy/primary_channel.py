@@ -145,21 +145,32 @@ class PrimaryChannel:
             return self._unavailable(call)
         if not await self._await_boot_replay(max(deadline - loop.time(), 0)):
             return self._unavailable(call)
-        if call.action == "BootNotification":
-            consumed = self._boot.consume(call)
-            if consumed is not None:
-                return consumed
-            self._boot.remember(call)
+        if call.action == "BootNotification" and (answer := self._answer_boot(call)) is not None:
+            return answer
         if call.action == "StartTransaction" and not await self._wait_drained(timeout):
-            # The previous transaction's stop is still queued: the primary must see it
-            # first. Failing now makes the charger retry instead of overtaking it.
-            logger.warning("%s primary still has queued messages; refusing StartTransaction", self._charger.id)
-            return CallError(call.id, "GenericError", "primary backend still catching up")
+            return self._refuse_start(call)
+        return await self._send_live(call, deadline)
+
+    def _answer_boot(self, call: Call) -> Reply | None:
+        """The earlier replayed boot's answer if the charger's boot is the same; else cache
+        this boot for the next replay and let it go to the primary."""
+        consumed = self._boot.consume(call)
+        if consumed is None:
+            self._boot.remember(call)
+        return consumed
+
+    def _refuse_start(self, call: Call) -> Reply:
+        """The previous transaction's stop is still queued: the primary must see it first.
+        Failing now makes the charger retry instead of overtaking it."""
+        logger.warning("%s primary still has queued messages; refusing StartTransaction", self._charger.id)
+        return CallError(call.id, "GenericError", "primary backend still catching up")
+
+    async def _send_live(self, call: Call, deadline: float) -> Reply:
         link = self._link
         if link is None:
             return self._unavailable(call)
         try:
-            return await link.call(call, max(deadline - loop.time(), 0.1))
+            return await link.call(call, max(deadline - asyncio.get_running_loop().time(), 0.1))
         except BackendUnavailable:
             return self._unavailable(call)
         except TimeoutError:
