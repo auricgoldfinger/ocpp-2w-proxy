@@ -11,6 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from .config_error import ConfigError
 from .ocpp import OCPP_ACTIONS
 from .policy import (
     AUTHORIZATION_ACTIONS,
@@ -51,10 +52,6 @@ BACKEND_KEYS = frozenset({"url", "auth", "password_env", "call_timeout", "max_qu
 PRIMARY_KEYS = BACKEND_KEYS | {"outage_grace"}
 SECONDARY_KEYS = BACKEND_KEYS | {"name", "forward_actions"}
 POLICY_KEYS = frozenset({"actions", "default", "change_configuration_allow_keys", "strip_charging_profile"})
-
-
-class ConfigError(ValueError):
-    pass
 
 
 class AuthMode(StrEnum):
