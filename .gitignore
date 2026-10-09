@@ -6,5 +6,7 @@ __pycache__/
 config.toml
 state/
 .env
+.env.build
+*.tar
 *.tar.gz
 docs/OCPP_1.6_documentation

@@ -208,16 +208,12 @@ uv run pytest            # tests, with fake charger and backends
 
 ## Deploy on TrueNAS SCALE
 
-The image is built on your PC and loaded on the NAS manually.
+The image is built on your PC and shipped to the NAS by `build-and-deploy.sh`
+(tests, build, `podman save`, scp, `docker load` and tag cleanup in one go):
 
 ```sh
-# on your PC (build for the NAS architecture)
-docker build --platform linux/amd64 -t ocpp-2w-proxy:0.3.0 .
-docker save ocpp-2w-proxy:0.3.0 | gzip > ocpp-2w-proxy-0.3.0.tar.gz
-scp ocpp-2w-proxy-0.3.0.tar.gz admin@truenas:/tmp/
-
-# on the NAS (shell)
-sudo docker load -i /tmp/ocpp-2w-proxy-0.3.0.tar.gz
+cp .env.build.example .env.build    # set NAS_SSH_HOST and NAS_TMP_DIR
+./build-and-deploy.sh all
 ```
 
 1. Create datasets, e.g. `tank/apps/ocpp-2w-proxy/config` and `tank/apps/ocpp-2w-proxy/data`.
@@ -228,4 +224,5 @@ sudo docker load -i /tmp/ocpp-2w-proxy-0.3.0.tar.gz
 3. Check the logs in the app's page. Back up the `data` dataset: it holds the transaction
    mapping and any not-yet-delivered Primary or Secondary Backend messages.
 
-To upgrade: bump the tag, build/save/load again, change `image:` in the app's YAML.
+To upgrade: run `./build-and-deploy.sh all` again, then Stop and Start the app
+(the app runs `ocpp-2w-proxy:latest`, which the script refreshed on the NAS).

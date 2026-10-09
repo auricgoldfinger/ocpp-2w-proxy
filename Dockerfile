@@ -2,6 +2,16 @@ FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /bin/
 
+# Image metadata, fed by build-and-deploy.sh via --build-arg.
+ARG IMAGE_VERSION
+ARG IMAGE_REVISION
+ARG IMAGE_CREATED
+LABEL org.opencontainers.image.title="ocpp-2w-proxy" \
+      org.opencontainers.image.description="Two-way OCPP 1.6J proxy" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+      org.opencontainers.image.created="${IMAGE_CREATED}"
+
 WORKDIR /app
 
 # Use the image's Python; compile bytecode at build time.

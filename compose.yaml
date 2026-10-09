@@ -2,8 +2,8 @@
 # or run it with `docker compose up -d`. Adjust the host paths and the LAN IP.
 services:
   ocpp-2w-proxy:
-    image: ocpp-2w-proxy:0.3.0
-    pull_policy: never          # image is loaded manually with `docker load`
+    image: ocpp-2w-proxy:latest
+    pull_policy: never          # image is shipped and loaded with build-and-deploy.sh
     container_name: ocpp-2w-proxy
     restart: unless-stopped
     user: "568:568"
@@ -11,13 +11,13 @@ services:
       # Bind to the NAS's LAN IP only; never forward this port on your router.
       - "192.168.1.10:8321:8321"
     environment:
-      - TZ=Europe/Amsterdam
+      - TZ=Europe/Brussels
       # - PRIMARY_PASSWORD=change-me      # Tap (primary): if [primary] uses auth = "basic"
       - SECONDARY_PASSWORD=change-me     # SolarEdge (secondary): [[secondary]] password_env
       # - CHARGER_PASSWORD=change-me     # if [[chargers]] password_env is set
     volumes:
-      - /mnt/tank/apps/ocpp-2w-proxy/config:/config:ro
-      - /mnt/tank/apps/ocpp-2w-proxy/data:/data
+      - /mnt/volume/apps/ocpp-2w-proxy/config:/config:ro
+      - /mnt/volume/apps/ocpp-2w-proxy/data:/data
     read_only: true
     security_opt:
       - no-new-privileges:true
