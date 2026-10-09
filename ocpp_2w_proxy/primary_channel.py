@@ -14,8 +14,8 @@ from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
 from .message_classes import MessageClass, classify, latest_key
-from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso, to_dict
-from .state import StateStore, restore_outbox
+from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso
+from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)

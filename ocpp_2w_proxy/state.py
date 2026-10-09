@@ -12,13 +12,22 @@ from pathlib import Path
 from typing import Any
 
 from .message_classes import MessageClass, classify, latest_key
-from .ocpp import Call, from_dict, to_dict
+from .ocpp import Call
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 3
 # How long save_soon() waits for more changes before writing once (crash window).
 FLUSH_DELAY = 0.25
+
+
+def to_dict(call: Call) -> dict[str, Any]:
+    """Representation used for persisting queued calls."""
+    return {"id": call.id, "action": call.action, "payload": call.payload}
+
+
+def from_dict(data: dict[str, Any]) -> Call:
+    return Call(data["id"], data["action"], data["payload"])
 
 
 def _call_of_entry(item: dict[str, Any]) -> Call | None:

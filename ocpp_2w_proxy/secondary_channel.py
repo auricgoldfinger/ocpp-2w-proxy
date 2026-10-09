@@ -25,9 +25,9 @@ from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import ChargerConfig, SecondaryConfig
 from .message_classes import is_secondary_durable
-from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, to_dict
+from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id
 from .policy import CommandPolicy
-from .state import StateStore, restore_outbox
+from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
 from .transactions import TransactionMap
 

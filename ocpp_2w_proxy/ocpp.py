@@ -208,12 +208,3 @@ def serialize(message: Message) -> str:
         case CallError(id=message_id, code=code, description=description, details=details):
             frame = [MessageType.CALL_ERROR, message_id, code, description, details]
     return json.dumps(frame, separators=(",", ":"))
-
-
-def to_dict(call: Call) -> dict[str, Any]:
-    """Representation used for persisting queued calls."""
-    return {"id": call.id, "action": call.action, "payload": call.payload}
-
-
-def from_dict(data: dict[str, Any]) -> Call:
-    return Call(data["id"], data["action"], data["payload"])
