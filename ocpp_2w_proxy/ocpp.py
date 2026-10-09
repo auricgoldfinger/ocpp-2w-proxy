@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import IntEnum
-from typing import Any
+from typing import Any, TypeIs
 
 MAX_MESSAGE_ID_LENGTH = 36
 
@@ -76,6 +76,11 @@ class CallError:
 
 Message = Call | CallResult | CallError
 Reply = CallResult | CallError
+
+
+def is_accepted(reply: Reply) -> TypeIs[CallResult]:
+    """The reply is a CallResult whose status is Accepted."""
+    return isinstance(reply, CallResult) and reply.payload.get("status") == "Accepted"
 
 
 def new_message_id() -> str:

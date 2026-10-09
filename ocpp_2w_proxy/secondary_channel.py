@@ -24,7 +24,7 @@ from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import ChargerConfig, SecondaryConfig
-from .ocpp import Call, CallError, CallResult, Reply, new_message_id, to_dict
+from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, to_dict
 from .policy import CommandPolicy
 from .state import StateStore, restore_outbox
 from .traffic_log import TrafficLog
@@ -349,7 +349,7 @@ class SecondaryChannel:
             except TimeoutError:
                 await self._sleep(DEFAULT_BOOT_RETRY_INTERVAL)
                 continue
-            if isinstance(reply, CallResult) and reply.payload.get("status") == "Accepted":
+            if is_accepted(reply):
                 self._note_heartbeat_interval(reply)
                 return True
             interval = DEFAULT_BOOT_RETRY_INTERVAL

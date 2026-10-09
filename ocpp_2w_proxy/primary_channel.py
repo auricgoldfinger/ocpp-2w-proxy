@@ -14,7 +14,7 @@ from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
 from .message_classes import MessageClass, classify, latest_key
-from .ocpp import Call, CallError, CallResult, Reply, new_message_id, now_iso, to_dict
+from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso, to_dict
 from .state import StateStore, restore_outbox
 from .traffic_log import TrafficLog
 
@@ -313,7 +313,7 @@ class PrimaryChannel:
             return
         finally:
             self._boot_replayed.set()
-        if isinstance(reply, CallResult) and reply.payload.get("status") == "Accepted":
+        if is_accepted(reply):
             self._replayed_boot = (boot, reply)
             return
         logger.warning("%s did not accept the replayed BootNotification: %s", self._charger.id, reply)
