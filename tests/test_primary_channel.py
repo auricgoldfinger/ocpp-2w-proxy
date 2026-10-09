@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 from conftest import CHARGER_ID, make_raw_config
 from fakes import FakeCsms
@@ -15,10 +16,11 @@ from ocpp_2w_proxy.traffic_log import TrafficLog
 
 
 async def test_primary_queue_overflow_drops_meter_values_first(tmp_path):
-    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none", "max_queue": 2}), {})
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
     charger = config.chargers[CHARGER_ID]
     store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
-    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    # Below the configurable minimum, so overflow is reached with a handful of calls.
+    channel = PrimaryChannel(replace(config.primary, max_queue=2), charger, store, TrafficLog(CHARGER_ID, False))
     try:
         channel._unavailable(Call("m0", "MeterValues", {"connectorId": 1, "transactionId": 1}))
         channel._unavailable(Call("st1", "StopTransaction", {"transactionId": 1}))
@@ -33,10 +35,11 @@ async def test_primary_queue_overflow_drops_meter_values_first(tmp_path):
 
 
 async def test_primary_queue_overflow_drops_oldest_when_no_meter_values(tmp_path):
-    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none", "max_queue": 2}), {})
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
     charger = config.chargers[CHARGER_ID]
     store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
-    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    # Below the configurable minimum, so overflow is reached with a handful of calls.
+    channel = PrimaryChannel(replace(config.primary, max_queue=2), charger, store, TrafficLog(CHARGER_ID, False))
     try:
         for message_id in ("one", "two", "three"):
             channel._unavailable(Call(message_id, "StopTransaction", {"transactionId": 1}))
@@ -121,10 +124,11 @@ async def test_overflow_never_removes_the_call_being_sent(tmp_path):
     """The drain holds the queue head while awaiting the primary's reply; an
     overflow then must drop another call, or the drain's popleft() afterwards
     would discard an unsent message."""
-    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none", "max_queue": 2}), {})
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
     charger = config.chargers[CHARGER_ID]
     store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
-    channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
+    # Below the configurable minimum, so overflow is reached with a handful of calls.
+    channel = PrimaryChannel(replace(config.primary, max_queue=2), charger, store, TrafficLog(CHARGER_ID, False))
     try:
         calls = [Call(i, "MeterValues", {"connectorId": 1, "transactionId": 1}) for i in ("a", "b", "c")]
         channel._queue.extend(calls)
@@ -302,7 +306,9 @@ async def test_start_transaction_waits_for_the_queued_stop_of_the_previous_one(p
 
 
 async def test_start_transaction_is_refused_while_the_queue_does_not_drain(primary, tmp_path):
-    primary.responder = lambda action, payload: None if action == "StopTransaction" else FakeCsms().responder(action, payload)
+    primary.responder = lambda action, payload: (
+        None if action == "StopTransaction" else FakeCsms().responder(action, payload)
+    )
     channel = await _attached_channel(primary, tmp_path)
     try:
         channel._unavailable(Call("old", "StopTransaction", {"transactionId": 1, "meterStop": 5}))
@@ -316,7 +322,9 @@ async def test_start_transaction_is_refused_while_the_queue_does_not_drain(prima
 
 
 async def test_nothing_reaches_the_primary_before_the_replayed_boot_is_answered(primary, tmp_path):
-    primary.responder = lambda action, payload: None if action == "BootNotification" else FakeCsms().responder(action, payload)
+    primary.responder = lambda action, payload: (
+        None if action == "BootNotification" else FakeCsms().responder(action, payload)
+    )
     store = StateStore.for_charger(tmp_path, CHARGER_ID)
     store.state.boot = {"chargePointVendor": "Grubby"}
     store.save()

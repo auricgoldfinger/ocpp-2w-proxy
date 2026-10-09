@@ -267,6 +267,7 @@ def test_bad_numbers_are_config_errors(bad):
         {"proxy": {"ping_interval": 0}},
         {"primary": {"url": "wss://p", "call_timeout": 0}},
         {"primary": {"url": "wss://p", "max_queue": 0}},
+        {"primary": {"url": "wss://p", "max_queue": 9_999}},
         {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "max_queue": -5}]},
     ],
 )
@@ -342,3 +343,14 @@ def test_example_config_is_valid():
     assert config.primary.policy.rule_for("SetChargingProfile") is Rule.ANSWER
     # ... and assigned to exactly one secondary backend.
     assert config.secondaries[0].policy.rule_for("SetChargingProfile") is Rule.FORWARD
+
+
+def test_secondary_may_not_take_the_primary_name():
+    with pytest.raises(ConfigError, match="reserved for the primary"):
+        parse(raw(secondary=[{"name": "primary", "url": "wss://x"}]), {})
+
+
+def test_queue_defaults_to_the_minimum_capacity():
+    config = parse(raw(), {"TAP": "pw"})
+    assert config.primary.max_queue == 10_000
+    assert config.secondaries[0].max_queue == 10_000

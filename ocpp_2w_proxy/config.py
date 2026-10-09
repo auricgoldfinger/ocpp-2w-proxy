@@ -26,6 +26,11 @@ from .policy import (
 
 CHARGER_ID_PATTERN = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 
+PRIMARY_NAME = "primary"
+# NFR-004: every durable queue holds at least this many messages, so a small value cannot
+# quietly turn an ordinary backend outage into lost billing data.
+MIN_QUEUE = 10_000
+
 DEFAULT_SECONDARY_FORWARD_ACTIONS = [
     "BootNotification",
     "Heartbeat",
@@ -86,7 +91,7 @@ class BackendConfig:
     password: str | None
     policy: CommandPolicy
     call_timeout: float
-    max_queue: int = 10_000
+    max_queue: int = MIN_QUEUE
 
 
 @dataclass(frozen=True)
@@ -153,7 +158,7 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     if "primary" not in raw:
         raise ConfigError("[primary] backend is required")
     primary = _parse_backend(
-        "primary", raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, BACKEND_KEYS
+        PRIMARY_NAME, raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, BACKEND_KEYS
     )
     secondaries = _parse_secondaries(raw.get("secondary"), secrets)
     _validate_charger_backend_ids(chargers, secondaries)
@@ -173,6 +178,8 @@ def _parse_secondaries(entries: Any, secrets: _Secrets) -> tuple[SecondaryConfig
         if not isinstance(section, Mapping):
             raise ConfigError("[[secondary]] entries must be tables")
         name = _charger_id(section.get("name"), "[[secondary]] name")
+        if name == PRIMARY_NAME:
+            raise ConfigError(f"secondary backend name {name!r} is reserved for the primary backend")
         if name in names:
             raise ConfigError(f"duplicate secondary backend name {name!r}")
         names.add(name)
@@ -361,7 +368,7 @@ def _parse_backend(
         password=password,
         policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule),
         call_timeout=_number(section, "call_timeout", 30, f"[{name}]", float, 1),
-        max_queue=_number(section, "max_queue", 10_000, f"[{name}]", int, 1),
+        max_queue=_number(section, "max_queue", MIN_QUEUE, f"[{name}]", int, MIN_QUEUE),
     )
 
 

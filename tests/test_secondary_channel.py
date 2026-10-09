@@ -1,12 +1,13 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 from fakes import FakeCsms
 
+from ocpp_2w_proxy.backend_link import BackendUnavailable
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError
-from ocpp_2w_proxy.backend_link import BackendUnavailable
 from ocpp_2w_proxy.secondary_channel import MAX_TRANSIENT_QUEUE, SecondaryChannel, _QueuedCall
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
@@ -14,14 +15,22 @@ from ocpp_2w_proxy.transactions import TransactionMap
 
 
 def make_config(*secondaries):
-    return parse(
+    """max_queue below the configurable minimum is applied after parsing, so overflow
+    is reached with a handful of calls."""
+    config = parse(
         {
             "chargers": [{"id": "CH1"}],
             "primary": {"url": "ws://p"},
-            "secondary": [dict(entry, call_timeout=1) for entry in secondaries],
+            "secondary": [
+                {key: value for key, value in entry.items() if key != "max_queue"} | {"call_timeout": 1}
+                for entry in secondaries
+            ],
         },
         {},
     )
+    queues = {entry["name"]: entry["max_queue"] for entry in secondaries if "max_queue" in entry}
+    backends = tuple(replace(b, max_queue=queues[b.name]) if b.name in queues else b for b in config.secondaries)
+    return replace(config, secondaries=backends)
 
 
 def make_channel(config, backend_name, store):
@@ -273,3 +282,4 @@ async def test_restored_queue_is_delivered_without_a_session_and_then_disconnect
             await channel.close()
     finally:
         await csms.stop()
+
