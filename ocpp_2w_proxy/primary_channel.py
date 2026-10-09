@@ -11,10 +11,11 @@ from operator import attrgetter
 from .backend_auth import backend_headers, backend_url
 from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
+from .boot_replay import BootReplay
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
 from .message_classes import MessageClass, classify, latest_key
-from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso
+from .ocpp import Call, CallError, CallResult, Reply, new_message_id, now_iso
 from .queue_overflow import pick_victim
 from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
@@ -56,14 +57,9 @@ class PrimaryChannel:
         self._disconnected = asyncio.Event()  # its inverse
         self._disconnected.set()
         self._reader: asyncio.Task | None = None
-        self._boot_resend: asyncio.Task | None = None
-        # Set once the cached boot has been replayed on the current link (or needs no replay):
-        # nothing else goes out before it, so a backend that wants a boot first gets one.
-        self._boot_replayed = asyncio.Event()
-        self._boot_replayed.set()
-        # (payload, reply) of the replayed boot until the charger's own identical boot
-        # consumes it: the primary should not see two boots on one connection.
-        self._replayed_boot: tuple[dict, CallResult] | None = None
+        # Nothing else goes out on a link before its boot replay is over, so a backend
+        # that wants a boot first gets one.
+        self._boot = BootReplay(store, charger.id, backend.call_timeout)
         # Billing data (stops, transaction meter readings), oldest first.
         self._queue: deque[Call] = deque(call for call, _ in restore_outbox(store.state.primary_outbox))
         # The newest unconfirmed state report per subject; sent once the queue is empty.
@@ -150,10 +146,10 @@ class PrimaryChannel:
         if not await self._await_boot_replay(max(deadline - loop.time(), 0)):
             return self._unavailable(call)
         if call.action == "BootNotification":
-            consumed = self._consume_replayed_boot(call)
+            consumed = self._boot.consume(call)
             if consumed is not None:
                 return consumed
-            self._remember_boot(call)
+            self._boot.remember(call)
         if call.action == "StartTransaction" and not await self._wait_drained(timeout):
             # The previous transaction's stop is still queued: the primary must see it
             # first. Failing now makes the charger retry instead of overtaking it.
@@ -172,27 +168,12 @@ class PrimaryChannel:
             return self._unavailable(call)
 
     async def _await_boot_replay(self, timeout: float) -> bool:
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._boot_replayed.wait(), timeout)
-        return self._boot_replayed.is_set() and self._link is not None
-
-    def _consume_replayed_boot(self, call: Call) -> Reply | None:
-        """The charger's boot matches the one just replayed on this connection: answer with
-        the primary's earlier reply (fresh clock) instead of booting twice."""
-        replayed, self._replayed_boot = self._replayed_boot, None
-        if replayed is None or replayed[0] != call.payload:
-            return None
-        return CallResult(call.id, {**replayed[1].payload, "currentTime": now_iso()})
+        return await self._boot.wait(timeout) and self._link is not None
 
     async def _wait_drained(self, timeout: float) -> bool:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._drained.wait(), timeout)
         return self._drained.is_set()
-
-    def _remember_boot(self, call: Call) -> None:
-        """Cache the charger's boot: the next reconnect replays it to the primary."""
-        self._store.state.boot = call.payload
-        self._store.save()
 
     async def reply(self, message: Reply) -> None:
         await send_reply(self._link, message, self.name)
@@ -266,33 +247,8 @@ class PrimaryChannel:
             self._link = link
             self._connected.set()
             self._disconnected.clear()
-            self._resend_boot(link)
+            self._boot.start(link)
             return link
-
-    def _resend_boot(self, link: BackendLink) -> None:
-        """Some backends only accept calls from a charger that booted on this very
-        connection: replay the cached boot next to the reader, never in the way of
-        attach() (a slow boot answer must not fail the charger's connection)."""
-        if self._store.state.boot is None:
-            self._boot_replayed.set()
-            return
-        self._boot_replayed = asyncio.Event()
-        self._replayed_boot = None
-        self._boot_resend = asyncio.create_task(self._send_boot(link), name="primary-boot-replay")
-
-    async def _send_boot(self, link: BackendLink) -> None:
-        boot = self._store.state.boot
-        try:
-            reply = await link.call(Call(new_message_id(), "BootNotification", boot), self._backend.call_timeout)
-        except TimeoutError, BackendUnavailable:
-            logger.warning("%s did not confirm the replayed BootNotification; continuing anyway", self._charger.id)
-            return
-        finally:
-            self._boot_replayed.set()
-        if is_accepted(reply):
-            self._replayed_boot = (boot, reply)
-            return
-        logger.warning("%s did not accept the replayed BootNotification: %s", self._charger.id, reply)
 
     async def _discard(self, link: BackendLink | None) -> None:
         """Deregister one link and stop its reader; its in-flight calls have failed (UC-003 A1)."""
@@ -301,16 +257,9 @@ class PrimaryChannel:
         self._link = None
         self._connected.clear()
         self._disconnected.set()
-        self._replayed_boot = None
-        resend = self._boot_resend
-        self._boot_resend = None
-        if resend is not None:
-            resend.cancel()
-        self._boot_replayed.set()  # releases anything waiting on a link that is gone
         reader = self._reader
         self._reader = None
-        if resend is not None:
-            await asyncio.gather(resend, return_exceptions=True)
+        await self._boot.stop()  # releases anything waiting on a link that is gone
         if reader is not None:
             reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
@@ -391,7 +340,7 @@ class PrimaryChannel:
         await self._routing.dispatch(call, self._link)
 
     async def _drain(self, link: BackendLink) -> None:
-        await self._boot_replayed.wait()
+        await self._boot.wait_unbounded()
         while True:
             if self._queue:
                 await self._send_queue_head(link)
