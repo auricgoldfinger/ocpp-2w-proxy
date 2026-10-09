@@ -16,6 +16,7 @@ from .config import AuthMode, BackendConfig, ChargerConfig
 from .message_classes import MessageClass, classify, latest_key
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso
 from .queue_overflow import pick_victim
+from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
@@ -77,8 +78,7 @@ class PrimaryChannel:
             self._drained.set()
         self._wake = asyncio.Event()
         self._connect_lock = asyncio.Lock()
-        self._worker: asyncio.Task | None = None
-        self._closed = False
+        self._worker = RestartableWorker(self._run, name=f"primary-{charger.id}")
 
     async def attach(self, identity: ChargerIdentity, on_call: OnCall) -> int:
         """Open the primary for a new session; fail this connection if the initial open fails.
@@ -91,7 +91,7 @@ class PrimaryChannel:
         token = self._routing.attach(on_call)
         self._queue_changed.set()
         self._wake.set()
-        self._ensure_worker()
+        self._worker.ensure_running()
         try:
             await self._connect()
         except CONNECT_ERRORS:
@@ -116,7 +116,7 @@ class PrimaryChannel:
     def start_background(self) -> None:
         """Drain restored messages at server startup when credentials are available."""
         if self._backlog:
-            self._ensure_worker()
+            self._worker.ensure_running()
 
     @property
     def _backlog(self) -> bool:
@@ -198,12 +198,8 @@ class PrimaryChannel:
         await send_reply(self._link, message, self.name)
 
     async def close(self) -> None:
-        self._closed = True
         self._queue_changed.set()
-        worker = self._worker
-        if worker is not None:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
+        await self._worker.close()
         await self._discard(self._link)
         self._store.flush()
 
@@ -235,7 +231,7 @@ class PrimaryChannel:
 
     def _queued_reply(self, call: Call) -> Reply:
         self._queue_changed.set()
-        self._ensure_worker()
+        self._worker.ensure_running()
         return CallResult(call.id, {})
 
     def _enforce_queue_limit(self) -> None:
@@ -254,10 +250,6 @@ class PrimaryChannel:
         self._store.state.primary_outbox = [to_dict(call) for call in self._queue]
         self._store.state.primary_latest = {key: to_dict(call) for key, call in self._latest.items()}
         self._store.save_soon()
-
-    def _ensure_worker(self) -> None:
-        if not self._closed and (self._worker is None or self._worker.done()):
-            self._worker = asyncio.create_task(self._run(), name=f"primary-{self._charger.id}")
 
     async def _connect(self) -> BackendLink:
         async with self._connect_lock:
@@ -327,7 +319,7 @@ class PrimaryChannel:
 
     async def _run(self) -> None:
         backoff = Backoff()
-        while not self._closed:
+        while not self._worker.closed:
             if self._link is None:
                 if not self._routing.attached and not self._backlog:
                     self._queue_changed.clear()

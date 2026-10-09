@@ -29,6 +29,7 @@ from .message_classes import is_secondary_durable
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id
 from .policy import CommandPolicy
 from .queue_overflow import pick_victim
+from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
@@ -89,14 +90,13 @@ class SecondaryChannel:
             for call, start_ref in restore_outbox(self._state.outboxes.get(config.name, []))
         )
         self._queue_changed = asyncio.Event()
-        self._worker: asyncio.Task | None = None
+        self._worker = RestartableWorker(self._run, name=f"secondary-{config.name}-{charger.id}")
         self._heartbeater: asyncio.Task | None = None
         self._heartbeat_interval = 0  # seconds; 0 until the backend has stated one
         # UC-006 BR-004: message retries back off on their own schedule, reset only by a
         # delivered message, so a message that keeps failing is not retried every few seconds.
         self._retry_backoff = Backoff()
         self._delivery_failed = False
-        self._closed = False
         if self._queue:
             logger.info("%s: %d queued call(s) restored from disk", self.name, len(self._queue))
 
@@ -120,23 +120,15 @@ class SecondaryChannel:
 
     def start_background(self) -> None:
         """Start the worker at server startup; it connects once there is something to do."""
-        self._ensure_worker()
+        self._worker.ensure_running()
 
     def _wanted(self) -> bool:
         """A connection is needed: a session is attached or billing data is waiting."""
         return self._routing.attached or any(item.durable for item in self._queue)
 
     async def close(self) -> None:
-        self._closed = True
-        worker = self._worker
-        if worker is not None:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
+        await self._worker.close()
         self._store.flush()
-
-    def _ensure_worker(self) -> None:
-        if not self._closed and (self._worker is None or self._worker.done()):
-            self._worker = asyncio.create_task(self._run(), name=f"secondary-{self.name}-{self._charger.id}")
 
     @property
     def connected(self) -> bool:
@@ -212,7 +204,7 @@ class SecondaryChannel:
     async def _run(self) -> None:
         """Connect, serve, reconnect: for as long as the server runs."""
         backoff = Backoff()
-        while not self._closed:
+        while not self._worker.closed:
             if not self._wanted():
                 self._queue_changed.clear()
                 await self._queue_changed.wait()
