@@ -24,6 +24,7 @@ from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import ChargerConfig, SecondaryConfig
+from .message_classes import is_secondary_durable
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, to_dict
 from .policy import CommandPolicy
 from .state import StateStore, restore_outbox
@@ -32,8 +33,6 @@ from .transactions import TransactionMap
 
 logger = logging.getLogger(__name__)
 
-# Calls that matter for billing survive outages and restarts.
-DURABLE_ACTIONS = frozenset({"StartTransaction", "StopTransaction", "MeterValues"})
 # Dropped first when the queue overflows.
 EXPENDABLE_ACTION = "MeterValues"
 
@@ -164,7 +163,7 @@ class SecondaryChannel:
         if not self.forwards(call.action):
             return
         self._remember(call)
-        durable = call.action in DURABLE_ACTIONS
+        durable = is_secondary_durable(call)
         if not durable and not self.connected:
             return  # stale when replayed later; boot/status are re-sent from the cache instead
         # Own message id: the charger's ids restart after a reboot and must not collide in the queue.

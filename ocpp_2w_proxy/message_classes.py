@@ -44,6 +44,17 @@ def classify(call: Call) -> MessageClass:
             return MessageClass.LIVE
 
 
+# A secondary queues every start, stop and meter reading across outages. This differs from
+# the primary's DURABLE class: there StartTransaction is LIVE (it needs the primary's own
+# answer) and a MeterValues outside a transaction is DROPPABLE.
+_SECONDARY_DURABLE_ACTIONS = frozenset({"StartTransaction", "StopTransaction", "MeterValues"})
+
+
+def is_secondary_durable(call: Call) -> bool:
+    """Whether a secondary backend queues this call on disk until it is confirmed."""
+    return call.action in _SECONDARY_DURABLE_ACTIONS
+
+
 def latest_key(call: Call) -> str:
     """Which earlier report a LATEST call replaces: the same action for the same connector."""
     return f"{call.action}:{call.payload.get('connectorId', 0)}"
