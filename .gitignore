@@ -7,3 +7,4 @@ config.toml
 state/
 .env
 *.tar.gz
+docs/OCPP_1.6_documentation
