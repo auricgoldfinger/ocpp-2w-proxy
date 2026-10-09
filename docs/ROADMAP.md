@@ -21,20 +21,28 @@ references below describe follow-up work, not completed support for those requir
 
 | Module | Responsibility |
 |---|---|
-| `ocpp.py` | OCPP-J frame model, parse/validate/serialize |
+| `ocpp.py` | OCPP-J frame model, parse/validate/serialize, the OCPP 1.6 action vocabulary |
 | `config.py` | TOML config → frozen dataclasses; secrets from env vars |
+| `config_error.py` | The error raised for any invalid configuration |
+| `command_assignments.py` | Cross-backend rules on who may command the charger (BR-007, BR-008) |
 | `policy.py` | Per-backend command policy (forward / answer / error) + canned answers |
 | `charger_auth.py` | Handshake auth: path → charger id, allowlist, Basic auth |
 | `backend_auth.py` | Upstream URL + Authorization header per backend auth mode |
 | `backend_link.py` | One WebSocket to a backend; `call()` with reply correlation, `serve()` read loop |
 | `message_classes.py` | How a charger message is kept while a backend is away (durable / latest / droppable / live) |
+| `queue_overflow.py` | Which queued item to drop when a durable queue is full |
 | `backoff.py` | Exponential backoff with jitter for reconnects and retries |
 | `charger_context.py` | Per-charger state and channels, which outlive individual charger sessions |
 | `primary_channel.py` | Reconnecting Primary Backend link and durable outbox for selected charger messages |
+| `boot_replay.py` | Replays the cached BootNotification to the primary on every reconnection |
+| `primary_outage.py` | Mirrors a primary outage to the charger once it outlasts the grace period |
 | `secondary_channel.py` | Reconnecting store-and-forward link to each secondary backend (boot replay, durable per-backend queue) |
+| `synthetic_heartbeat.py` | Heartbeats invented for a secondary that does not receive the charger's own |
+| `session_routing.py` | Which charger session a channel routes its backend's commands to |
+| `restartable_worker.py` | A channel's background task: start on demand, restart, stop on close |
 | `transactions.py` | primary ↔ secondary transactionId mapping and payload rewriting |
 | `command_router.py` | Proxy-unique ids for backend→charger commands; routes replies back |
-| `state.py` | Atomic JSON persistence per charger (`<state_dir>/<id>.json`) |
+| `state.py` | Atomic JSON persistence per charger (`<state_dir>/<id>.json`), queued-call serialisation |
 | `session.py` | One charger session wiring the primary and secondary channels |
 | `server.py` | WebSocket server, handshake hook, one session per charger id, persistent outbox workers |
 | `redact.py`, `traffic_log.py` | Safe logging |
