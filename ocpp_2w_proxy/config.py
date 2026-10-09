@@ -11,11 +11,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from .ocpp import OCPP_ACTIONS
 from .policy import (
     AUTHORIZATION_ACTIONS,
     AUTHORIZATION_CONFIG_KEYS,
     EXCLUSIVE_ACTIONS,
-    OCPP_ACTIONS,
     PRIMARY_DEFAULT_RULE,
     PRIMARY_DEFAULT_RULES,
     SECONDARY_DEFAULT_RULE,

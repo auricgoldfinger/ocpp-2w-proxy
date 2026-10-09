@@ -11,6 +11,43 @@ from typing import Any, TypeIs
 
 MAX_MESSAGE_ID_LENGTH = 36
 
+# Every OCPP 1.6 action in either direction; configuration entries are validated
+# against this so a misspelled action fails loudly instead of silently never matching.
+OCPP_ACTIONS: frozenset[str] = frozenset(
+    {
+        # charger -> backend
+        "Authorize",
+        "BootNotification",
+        "DataTransfer",
+        "DiagnosticsStatusNotification",
+        "FirmwareStatusNotification",
+        "Heartbeat",
+        "MeterValues",
+        "StartTransaction",
+        "StatusNotification",
+        "StopTransaction",
+        # backend -> charger
+        "CancelReservation",
+        "ChangeAvailability",
+        "ChangeConfiguration",
+        "ClearCache",
+        "ClearChargingProfile",
+        "GetCompositeSchedule",
+        "GetConfiguration",
+        "GetDiagnostics",
+        "GetLocalListVersion",
+        "RemoteStartTransaction",
+        "RemoteStopTransaction",
+        "ReserveNow",
+        "Reset",
+        "SendLocalList",
+        "SetChargingProfile",
+        "TriggerMessage",
+        "UnlockConnector",
+        "UpdateFirmware",
+    }
+)
+
 
 def now_iso() -> str:
     """Current UTC time in the OCPP 1.6 DateTime format (e.g. 2026-10-08T12:34:56Z)."""
