@@ -136,12 +136,13 @@ class StateStore:
         self._flusher = None
         if flusher is not None:
             flusher.cancel()  # it would find nothing left to write
-        if self._dirty:
-            self._dirty = False
-            self._write()
+        self._write_if_dirty()
 
     async def _flush_later(self) -> None:
         await asyncio.sleep(FLUSH_DELAY)
+        self._write_if_dirty()
+
+    def _write_if_dirty(self) -> None:
         if self._dirty:
             self._dirty = False
             self._write()
