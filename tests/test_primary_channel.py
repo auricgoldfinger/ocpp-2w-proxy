@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 
+import pytest
 from conftest import CHARGER_ID, make_raw_config
 from fakes import FakeCsms
 
@@ -10,7 +11,7 @@ from ocpp_2w_proxy import backoff
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
-from ocpp_2w_proxy.primary_channel import PrimaryChannel
+from ocpp_2w_proxy.primary_channel import PrimaryChannel, PrimaryUnavailable
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
 
@@ -68,14 +69,15 @@ async def test_outage_keeps_only_the_newest_status_and_drops_stale_readings(tmp_
         await channel.close()
 
 
-async def test_live_calls_fail_while_the_primary_is_down(tmp_path):
+async def test_live_calls_get_no_substitute_answer_while_the_primary_is_down(tmp_path):
     config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
     charger = config.chargers[CHARGER_ID]
     store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
     channel = PrimaryChannel(config.primary, charger, store, TrafficLog(CHARGER_ID, False))
     try:
         for action in ("Authorize", "StartTransaction", "DataTransfer"):
-            assert isinstance(channel._unavailable(Call("x", action, {})), CallError)
+            with pytest.raises(PrimaryUnavailable):
+                await channel.call(Call("x", action, {}), timeout=0.1)
         assert not channel._queue
         assert not channel._latest
     finally:
@@ -376,3 +378,30 @@ async def test_a_stale_wake_up_does_not_cut_the_next_retry_delay_short(tmp_path)
         assert asyncio.get_running_loop().time() - started >= 0.25
     finally:
         await channel.close()
+
+
+async def test_a_live_call_waits_for_the_primary_to_reconnect(primary, tmp_path):
+    channel = await _attached_channel(primary, tmp_path)
+    port = primary.port
+    recovered = None
+    try:
+        await primary.stop()
+        await _eventually(lambda: not channel.connected)
+        pending = asyncio.create_task(channel.call(Call("a", "Authorize", {"idTag": "04A2B3C4"}), timeout=5))
+        await asyncio.sleep(0.1)
+        assert not pending.done()
+
+        recovered = await FakeCsms().start(port)
+        assert await pending == CallResult("a", {"idTagInfo": {"status": "Accepted"}})
+    finally:
+        await channel.close()
+        if recovered is not None:
+            await recovered.stop()
+
+
+async def _eventually(predicate, timeout: float = 5) -> None:
+    async def poll():
+        while not predicate():
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(poll(), timeout)

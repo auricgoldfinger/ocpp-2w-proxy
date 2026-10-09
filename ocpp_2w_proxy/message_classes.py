@@ -7,8 +7,10 @@ How much a charger message matters while a backend cannot take it right away.
             replaces an older one instead of queueing behind it.
   DROPPABLE stale as soon as it is late: a Heartbeat, or a meter reading that belongs to
             no transaction. Dropped while the backend is away.
-  LIVE      needs the backend's own answer (Authorize, StartTransaction, ...): it fails
-            at once while the backend is away and is never queued.
+  LIVE      needs the backend's own answer (Authorize, StartTransaction, ...): it is never
+            queued or answered by the proxy. For the primary it waits for a reconnect within
+            its timeout; if that fails the charger connection is closed, so the charger
+            handles the message by its own offline rules.
 """
 
 from __future__ import annotations

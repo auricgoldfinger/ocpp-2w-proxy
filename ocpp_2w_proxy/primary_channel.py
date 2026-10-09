@@ -28,6 +28,11 @@ EXPENDABLE_ACTION = "MeterValues"
 OnCall = Callable[[Call], Awaitable[None]]
 
 
+class PrimaryUnavailable(Exception):
+    """A call that needs the primary's own answer cannot get one: the charger must not get
+    a substitute either, but go offline and handle the message by its own OCPP rules."""
+
+
 class PrimaryChannel:
     """Reconnects to one primary and delivers queued calls independently of a charger socket.
 
@@ -55,6 +60,7 @@ class PrimaryChannel:
         self._on_call: OnCall | None = None
         self._generation = 0
         self._link: BackendLink | None = None
+        self._connected = asyncio.Event()  # set exactly while _link is registered
         self._reader: asyncio.Task | None = None
         self._boot_resend: asyncio.Task | None = None
         # Set once the cached boot has been replayed on the current link (or needs no replay):
@@ -127,15 +133,29 @@ class PrimaryChannel:
     def _backlog(self) -> bool:
         return bool(self._queue or self._latest)
 
+    @property
+    def connected(self) -> bool:
+        return self._connected.is_set()
+
+    async def wait_connected(self, timeout: float) -> bool:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._connected.wait(), timeout)
+        return self.connected
+
     async def call(self, call: Call, timeout: float) -> Reply:
+        """Relay a charger call; raises PrimaryUnavailable for a LIVE call the primary cannot answer."""
         # While the backlog drains, billing data and state reports wait their turn: sent
         # live they would overtake older queued messages and the primary would see a new
         # status before the previous transaction's stop.
         kind = classify(call)
-        if self._link is None or (kind in (MessageClass.DURABLE, MessageClass.LATEST) and self._backlog):
+        if kind in (MessageClass.DURABLE, MessageClass.LATEST) and self._backlog:
             return self._unavailable(call)
-        deadline = asyncio.get_running_loop().time() + timeout
-        if not await self._await_boot_replay(timeout):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        # Only a call that needs the primary's own answer waits for a reconnect.
+        if self._link is None and (kind is not MessageClass.LIVE or not await self.wait_connected(timeout)):
+            return self._unavailable(call)
+        if not await self._await_boot_replay(max(deadline - loop.time(), 0)):
             return self._unavailable(call)
         if call.action == "BootNotification":
             consumed = self._consume_replayed_boot(call)
@@ -151,7 +171,7 @@ class PrimaryChannel:
         if link is None:
             return self._unavailable(call)
         try:
-            return await link.call(call, max(deadline - asyncio.get_running_loop().time(), 0.1))
+            return await link.call(call, max(deadline - loop.time(), 0.1))
         except BackendUnavailable:
             return self._unavailable(call)
         except TimeoutError:
@@ -219,8 +239,7 @@ class PrimaryChannel:
                 logger.info("%s dropped %s: primary unavailable", self._charger.id, call.action)
                 return CallResult(call.id, {})
             case MessageClass.LIVE:
-                logger.warning("%s primary unavailable; refusing %s", self._charger.id, call.action)
-                return CallError(call.id, "GenericError", "primary backend unavailable")
+                raise PrimaryUnavailable(f"primary backend cannot answer {call.action}")
 
     def _queued_reply(self, call: Call) -> Reply:
         self._queue_changed.set()
@@ -266,6 +285,7 @@ class PrimaryChannel:
             )
             self._reader = asyncio.create_task(link.serve(self._dispatch_call), name="primary-reader")
             self._link = link
+            self._connected.set()
             self._resend_boot(link)
             return link
 
@@ -299,6 +319,7 @@ class PrimaryChannel:
         if link is None or self._link is not link:
             return
         self._link = None
+        self._connected.clear()
         self._replayed_boot = None
         resend = self._boot_resend
         self._boot_resend = None

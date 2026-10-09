@@ -7,8 +7,10 @@ Routing rules (OCPP 1.6J):
   backend Call         -> policy -> charger with a proxy-unique id, or answered by the proxy
   charger CallResult/  -> the backend that issued the command, with its original id
            CallError
-The session lives as long as the charger is connected; the backends reconnect
-independently, and no backend outage ends the session.
+The session lives as long as the charger is connected. Secondary backends reconnect
+independently. The charger mirrors the primary's availability: a call that needs the
+primary's own answer and cannot get one closes the charger connection, so the charger
+goes offline and keeps and resends the message by its own OCPP offline rules.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from .ocpp import (
     substitute_reply,
 )
 from .policy import CANNED_ANSWERS, CommandPolicy
+from .primary_channel import PrimaryUnavailable
 from .secondary_channel import SecondaryChannel
 
 logger = logging.getLogger(__name__)
@@ -77,7 +80,7 @@ class ChargerSession:
             token = await self._primary.attach(self._identity, self._on_primary_call)
         except (OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials) as exc:
             logger.error("%s primary backend unavailable (%s); closing charger connection", self.charger_id, exc)
-            await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "primary backend unavailable")
+            await self._close_primary_unavailable()
             return
 
         # The secondary channels are owned by the charger context; this session only
@@ -138,13 +141,22 @@ class ChargerSession:
             logger.error("%s relaying a charger call failed", self.charger_id, exc_info=task.exception())
 
     async def _relay_charger_call(self, call: Call) -> None:
-        if call.action == "StartTransaction":
-            await self._relay_start_transaction(call)
-            return
-        for channel in self._secondaries.values():
-            channel.submit(call)
-        reply = await self._primary.call(call, self._config.primary.call_timeout)
-        await self._send_to_charger(reply)
+        try:
+            if call.action == "StartTransaction":
+                await self._relay_start_transaction(call)
+                return
+            for channel in self._secondaries.values():
+                channel.submit(call)
+            reply = await self._primary.call(call, self._config.primary.call_timeout)
+            await self._send_to_charger(reply)
+        except PrimaryUnavailable as exc:
+            # Unanswered, the charger keeps the message and resends it once back online
+            # (OCPP 1.6 section 3.7); a substitute answer would make it act on a guess.
+            logger.warning("%s %s; closing charger connection", self.charger_id, exc)
+            await self._close_primary_unavailable()
+
+    async def _close_primary_unavailable(self) -> None:
+        await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "primary backend unavailable")
 
     async def _relay_start_transaction(self, call: Call) -> None:
         """A start goes to the primary first and only then to the secondaries.

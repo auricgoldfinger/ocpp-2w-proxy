@@ -259,11 +259,7 @@ async def test_primary_disconnect_queues_selected_calls_and_recovers(primary, se
     assert (await charger.call("MeterValues", {"connectorId": 1, "meterValue": []}))[2] == {}
     heartbeat = await charger.call("Heartbeat", {})
     assert heartbeat[0] == 3 and heartbeat[2]["currentTime"]  # answered locally, not an error
-    assert (await charger.call("StartTransaction", START))[0] == 4
     assert charger.ws.close_code is None
-    # A start the primary never confirmed opens no session in the secondary: the
-    # charger's retry must not stack phantom sessions there (UC-003 step 3).
-    assert [action for action, _ in secondary.calls if action == "StartTransaction"] == []
 
     recovered = await FakeCsms().start(port)
     try:
@@ -274,6 +270,26 @@ async def test_primary_disconnect_queues_selected_calls_and_recovers(primary, se
     finally:
         await charger.close()
         await recovered.stop()
+
+
+async def test_a_start_the_primary_cannot_answer_goes_unanswered_and_closes_the_charger(
+    primary, secondary, start_proxy
+):
+    url = await start_proxy(primary.url, secondary.url, primary={"call_timeout": 1})
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await primary.connected.wait()
+    await secondary.connected.wait()
+    await primary.stop()
+
+    with pytest.raises((ConnectionClosed, TimeoutError)):
+        await charger.call("StartTransaction", START, timeout=3)
+    await asyncio.wait_for(charger.ws.wait_closed(), 5)
+
+    # No substitute answer: the charger keeps the start and resends it once back online.
+    assert charger.ws.close_code == 1011
+    assert not [frame for frame in charger.frames if frame[0] in (3, 4)]
+    # A start the primary never confirmed opens no session in the secondary (UC-003 step 3).
+    assert [action for action, _ in secondary.calls if action == "StartTransaction"] == []
 
 
 async def test_primary_outbox_survives_proxy_restart(primary, tmp_path):
