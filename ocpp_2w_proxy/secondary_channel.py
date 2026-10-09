@@ -436,8 +436,9 @@ class SecondaryChannel:
         return True
 
     def _forget_stopped_transaction(self, item: _QueuedCall) -> None:
-        """This backend will never confirm the stop: end its transaction link so
-        later messages are not translated against a transaction it gave up on."""
+        """This backend's session ended (or it will never confirm the stop): end its
+        transaction link so later messages are not translated against it. Other
+        backends keep their links."""
         primary_tx = item.call.payload.get("transactionId")
         if item.call.action == "StopTransaction" and isinstance(primary_tx, int):
             self._transactions.forget(primary_tx, self.name)
@@ -470,10 +471,7 @@ class SecondaryChannel:
             self._transactions.secondary_started(self.name, item.start_ref, transaction_id)
 
     def _stop_transaction_result(self, item: _QueuedCall, reply: CallResult) -> None:
-        primary_tx = item.call.payload.get("transactionId")
-        if isinstance(primary_tx, int):
-            # This backend's session ended; other backends keep their links.
-            self._transactions.forget(primary_tx, self.name)
+        self._forget_stopped_transaction(item)
 
     def _authorize_result(self, item: _QueuedCall, reply: CallResult) -> None:
         self._warn_if_not_accepted(reply, "Authorize")
