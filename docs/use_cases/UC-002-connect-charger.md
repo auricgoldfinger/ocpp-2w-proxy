@@ -61,10 +61,16 @@
 1. System keeps the Charger connection open and retries the Primary Backend with increasing,
    randomized delays.
 2. System queues eligible Charger messages for ordered delivery after reconnection (UC-003);
-   calls requiring an immediate Primary Backend decision receive an OCPP error.
-3. When the Charger disconnects, System ends the live session while retaining and delivering
-   queued messages in the background.
-4. Use case ends when the Charger disconnects.
+   a call requiring the Primary Backend's own answer waits for the reconnection within its
+   timeout and otherwise ends the session as in step 4.
+3. If the Primary Backend reconnects within the grace period (`outage_grace`, default 30
+   seconds), the session continues at step 7 of the main scenario.
+4. Otherwise, System closes the Charger connection and signals that the Primary Backend is
+   unavailable, so the Charger goes offline and applies its own OCPP offline behavior; its
+   reconnection attempts are handled as in A3 until the Primary Backend is reachable again.
+5. When the Charger connection ends, System ends the live session while retaining and
+   delivering queued messages in the background.
+6. Use case ends.
 
 ## Postconditions
 

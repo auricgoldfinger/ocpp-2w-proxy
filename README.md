@@ -47,18 +47,24 @@ Details that make this work in practice:
   the message is dropped and logged, so the messages behind it are not held up forever.
   A secondary that is not sent the charger's heartbeats gets its own heartbeats from the
   proxy, at the interval it asked for in its BootNotification reply.
-- **The primary is required to start a session.** If it is unreachable during connection setup,
-  the proxy closes the charger connection (code 1011). If it drops after the session starts,
-  the proxy keeps the charger connection open and retries with increasing delays (1–300 seconds,
-  ±50% jitter). Meanwhile the proxy answers the charger itself:
+- **The charger sees the primary's availability.** If the primary is unreachable during
+  connection setup, the proxy closes the charger connection (code 1011). If it drops after the
+  session starts, the proxy retries with increasing delays (1–300 seconds, ±50% jitter) and
+  hides the outage for `outage_grace` seconds (default 30). A longer outage closes the charger
+  connection (code 1011), so the charger goes offline and follows its own OCPP offline rules:
+  it authorizes cards locally and queues its transaction messages until it can reconnect, which
+  succeeds once the primary is back. During the grace period the proxy answers the charger itself:
     - `StopTransaction` and the `MeterValues` of a transaction are queued on disk and replayed
       in order.
     - Of `StatusNotification` and firmware/diagnostics status notifications only the newest per
       connector is kept; they are sent after the queue has been emptied.
     - `Heartbeat` is answered with the current time; `MeterValues` outside a transaction are
       dropped.
-    - Other calls that need a primary decision (`Authorize`, and `StartTransaction` until the
-      queue has been emptied) receive an OCPP error.
+    - A call that needs the primary's own answer (`Authorize`, `StartTransaction`,
+      `BootNotification`, `DataTransfer`) waits up to `call_timeout` for the primary to
+      reconnect. Without an answer it is never given a substitute: the charger connection is
+      closed, so the charger keeps the message and resends it once it is back online.
+    - A `StartTransaction` is refused with an OCPP error while the queue is not yet emptied.
 
   The queue holds up to 10,000 messages per charger (`max_queue`, at least 10,000); when it
   overflows, meter readings are dropped first, then the oldest message, and this is logged.

@@ -47,15 +47,18 @@
 3. A `Heartbeat` is answered locally with the current time, so the Charger keeps its clock in
    sync without treating the outage as a fault. A `MeterValues` outside a transaction gets an
    empty `CallResult` and is dropped.
-4. Otherwise, System returns an OCPP `GenericError`; it does not queue or replay calls whose
-   Primary Backend reply is needed, such as `Authorize`, `StartTransaction`, `BootNotification`,
-   or `DataTransfer`.
+4. Otherwise the Primary Backend's own reply is needed, such as for `Authorize`,
+   `StartTransaction`, `BootNotification`, or `DataTransfer`: System waits for the Primary
+   Backend to reconnect within the timeout and sends the message then. If that fails, System
+   neither queues nor answers the message but closes the Charger connection, so the Charger
+   keeps the message and resends it after reconnecting (UC-002 A4).
 5. Steps 1 and 2 also apply while the outbox still drains after a reconnection, so the Primary
    Backend never sees a newer message before an older queued one. A `StartTransaction` is
    refused with `GenericError` until the outbox has been emptied, so the Primary Backend always
    sees the previous transaction's stop before the next start.
-6. System keeps the established Charger session open and reconnects to the Primary Backend
-   with exponential backoff and jitter; queued messages are sent oldest first.
+6. System reconnects to the Primary Backend with exponential backoff and jitter; queued
+   messages are sent oldest first. The Charger session stays open for the grace period only
+   (UC-002 A4).
 7. Use case ends when the Charger disconnects.
 
 ### A2: Malformed message
