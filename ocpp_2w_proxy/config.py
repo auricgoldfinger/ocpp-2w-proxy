@@ -6,17 +6,15 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from .command_assignments import validate_command_assignments, withhold_secondary_keys
 from .config_error import ConfigError
 from .ocpp import OCPP_ACTIONS
 from .policy import (
-    AUTHORIZATION_ACTIONS,
-    AUTHORIZATION_CONFIG_KEYS,
-    EXCLUSIVE_ACTIONS,
     PRIMARY_DEFAULT_RULE,
     PRIMARY_DEFAULT_RULES,
     SECONDARY_DEFAULT_RULE,
@@ -172,8 +170,8 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     primary = _parse_primary(raw["primary"], secrets)
     secondaries = _parse_secondaries(raw.get("secondary"), secrets)
     _validate_charger_backend_ids(chargers, secondaries)
-    _validate_command_assignments(primary, secondaries)
-    primary = _withhold_secondary_keys(primary, secondaries)
+    validate_command_assignments(primary, secondaries)
+    primary = withhold_secondary_keys(primary, secondaries)
     return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondaries)
 
 
@@ -207,65 +205,6 @@ def _validate_charger_backend_ids(
             raise ConfigError(
                 f"charger {charger.id!r}: secondary_ids names backends that are not configured: {sorted(unknown)}"
             )
-
-
-def _validate_command_assignments(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
-    """UC-001 step 3: refuse configurations that would send conflicting commands to a charger."""
-    _validate_authorization_commands(secondaries)
-    _validate_exclusive_commands(primary, secondaries)
-    _validate_change_configuration_keys(primary, secondaries)
-
-
-def _validate_authorization_commands(secondaries: Sequence[SecondaryConfig]) -> None:
-    """BR-008/FR-019: Authorization Commands may only be forwarded by the primary backend."""
-    for backend in secondaries:
-        for action in sorted(AUTHORIZATION_ACTIONS):
-            if backend.policy.rule_for(action) is Rule.FORWARD:
-                raise ConfigError(
-                    f"authorization command {action} may only be forwarded by the primary backend, "
-                    f"but secondary backend {backend.name!r} forwards it"
-                )
-        if backend.policy.rule_for("ChangeConfiguration") is Rule.FORWARD:
-            raise ConfigError(
-                f"secondary backend {backend.name!r} may not forward all configuration changes; "
-                "changes to the charger's authorization settings are reserved for the primary backend"
-            )
-        forbidden = backend.policy.change_configuration_allow_keys & AUTHORIZATION_CONFIG_KEYS
-        if forbidden:
-            raise ConfigError(
-                f"secondary backend {backend.name!r} may not change authorization settings "
-                f"{sorted(forbidden)}; those stay with the primary backend"
-            )
-
-
-def _validate_exclusive_commands(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
-    """BR-007/FR-008: each Exclusive Command is forwarded by at most one backend."""
-    backends = [primary, *secondaries]
-    for action in sorted(EXCLUSIVE_ACTIONS):
-        forwarders = [backend for backend in backends if backend.policy.rule_for(action) is Rule.FORWARD]
-        if len(forwarders) > 1:
-            names = ", ".join(backend.name for backend in forwarders)
-            raise ConfigError(f"exclusive command {action} is forwarded by more than one backend: {names}")
-
-
-def _validate_change_configuration_keys(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> None:
-    """BR-007: each configuration key is permitted for at most one backend. A backend that
-    forwards all configuration changes (the primary) keeps every key nobody else owns."""
-    owners: dict[str, str] = {}
-    for backend in [primary, *secondaries]:
-        for key in sorted(backend.policy.change_configuration_allow_keys):
-            owner = owners.get(key)
-            if owner is not None:
-                raise ConfigError(f"configuration key {key!r} is permitted for both {owner!r} and {backend.name!r}")
-            owners[key] = backend.name
-
-
-def _withhold_secondary_keys(primary: PrimaryConfig, secondaries: Sequence[SecondaryConfig]) -> PrimaryConfig:
-    """Keys a secondary owns are no longer the primary's to change: it answers them itself."""
-    owned = frozenset().union(*(backend.policy.change_configuration_allow_keys for backend in secondaries))
-    if not owned:
-        return primary
-    return replace(primary, policy=replace(primary.policy, withheld_configuration_keys=owned))
 
 
 class _Secrets:
