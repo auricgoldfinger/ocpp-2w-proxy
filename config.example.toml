@@ -29,7 +29,7 @@ id = "CHANGE-ME"
 # primary_id = "CHANGE-ME"
 # Per secondary backend (defaults to id):
 # [chargers.secondary_ids]
-# solaredge = "CHANGE-ME"
+# homeassistant = "CHANGE-ME"
 
 # Primary = the backend in charge (Tap Electric): card authorization, transaction
 # numbers and remote starts come from here. Its replies are what the charger sees.
@@ -68,12 +68,12 @@ actions = { SetChargingProfile = "answer", ClearChargingProfile = "answer" }
 
 # Secondary backends: zero or more, each a [[secondary]] entry with a unique name
 # ("primary" is reserved) that shows up in logs and errors. Remove all of them for a 1-way proxy.
-# This one is the solar/control backend (SolarEdge): it sees the messages below, may stop
+# This one is the solar/control backend (HomeAssistant): it sees the messages below, may stop
 # sessions and - once assigned above - set charging profiles, but may never change
 # authorization, configuration, availability or firmware, and never starts sessions.
 [[secondary]]
-name = "solaredge"
-url = "wss://CHANGE-ME"   # <url>/<secondary_ids.solaredge or charger id>
+name = "homeassistant"
+url = "wss://CHANGE-ME"   # <url>/<secondary_ids.homeassistant or charger id>
 auth = "none"             # none | basic   ('forward' is refused: it would leak charger credentials)
 # password_env = "SECONDARY_PASSWORD"
 call_timeout = 30

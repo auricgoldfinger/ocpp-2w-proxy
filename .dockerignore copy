@@ -1,0 +1,18 @@
+# Keep the build context minimal. state/ is a runtime bind mount, tests/
+# fixtures are ~1 MB of PDFs we don't need in the image, and the usual
+# Python/VCS noise has no business inside a container.
+state/
+tests/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.gitignore
+.dockerignore
+README.md
+deploy/
+build.sh
+.env.build
+.env.build.example
+*.tar
+*.tar.gz

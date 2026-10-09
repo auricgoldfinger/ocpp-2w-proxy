@@ -136,7 +136,7 @@ AUTHORIZATION_CONFIG_KEYS: frozenset[str] = frozenset(
 )
 
 
-# A secondary backend (e.g. the SolarEdge control backend): may stop sessions and read state,
+# A secondary backend (e.g. the HomeAssistant control backend): may stop sessions and read state,
 # but by default must not touch what the primary backend (Tap, which authorizes and bills)
 # relies on: charging profiles, configuration, availability, firmware, the local
 # authorization list, or card authorization (remote start). Config can hand it some of these.

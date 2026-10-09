@@ -9,11 +9,11 @@ services:
     user: "568:568"
     ports:
       # Bind to the NAS's LAN IP only; never forward this port on your router.
-      - "192.168.1.10:8321:8321"
+      - "192.168.0.10:8321:8321"
     environment:
       - TZ=Europe/Brussels
       # - PRIMARY_PASSWORD=change-me      # Tap (primary): if [primary] uses auth = "basic"
-      - SECONDARY_PASSWORD=change-me     # SolarEdge (secondary): [[secondary]] password_env
+      - SECONDARY_PASSWORD=change-me     # HomeAssistant (secondary): [[secondary]] password_env
       # - CHARGER_PASSWORD=change-me     # if [[chargers]] password_env is set
     volumes:
       - /mnt/volume/apps/ocpp-2w-proxy/config:/config:ro

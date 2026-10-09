@@ -6,14 +6,14 @@ primary and any number of named secondary backends (CSMSes) at the same time:
 - **primary**: the backend *in charge*, e.g. **Tap Electric** (billing). Card authorization,
   transaction numbers and remote starts come from it; its answers are what the charger sees,
   and by default it may send any command.
-- **secondary backends**: *control* or statistics backends, e.g. **SolarEdge** ("charge on
+- **secondary backends**: *control* or statistics backends, e.g. **HomeAssistant** ("charge on
   solar"). Each sees the messages configured for it and may lower/pause/resume charging via
   charging profiles assigned to it, but cannot change anything the primary relies on.
 
 ```
                           ┌──────────── primary (Tap) ────── billing, card authorisation, remote start
 charger ── wss ── proxy ─┤
-                          └──────────── secondaries (SolarEdge, ...) ─ solar charging profiles
+                          └──────────── secondaries (HomeAssistant, ...) ─ solar charging profiles
 ```
 
 ## How messages are routed
@@ -187,9 +187,9 @@ password_env = "PRIMARY_PASSWORD"
 [primary.policy]                # hand the solar charging profiles to the secondary
 actions = { SetChargingProfile = "answer", ClearChargingProfile = "answer" }
 
-[[secondary]]                   # SolarEdge
-name = "solaredge"
-url = "wss://<solaredge-endpoint>"
+[[secondary]]                   # HomeAssistant
+name = "homeassistant"
+url = "ws://<homeassistant-endpoint>"
 auth = "none"
 
 [secondary.policy]

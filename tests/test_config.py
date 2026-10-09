@@ -342,7 +342,7 @@ def test_example_config_is_valid():
     example = Path(__file__).resolve().parent.parent / "config.example.toml"
     config = parse(tomllib.loads(example.read_text()), {})
     assert config.primary.name == "primary"
-    assert [backend.name for backend in config.secondaries] == ["solaredge"]
+    assert [backend.name for backend in config.secondaries] == ["homeassistant"]
     # The worked example of BR-009: the profiles are taken away from the primary ...
     assert config.primary.policy.rule_for("SetChargingProfile") is Rule.ANSWER
     # ... and assigned to exactly one secondary backend.
