@@ -18,6 +18,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from operator import attrgetter
 
 from .backend_auth import backend_headers, backend_url
 from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
@@ -27,15 +28,13 @@ from .config import ChargerConfig, SecondaryConfig
 from .message_classes import is_secondary_durable
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id
 from .policy import CommandPolicy
+from .queue_overflow import pick_victim
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
 from .transactions import TransactionMap
 
 logger = logging.getLogger(__name__)
-
-# Dropped first when the queue overflows.
-EXPENDABLE_ACTION = "MeterValues"
 
 DEFAULT_BOOT_RETRY_INTERVAL = 60
 MIN_BOOT_RETRY_INTERVAL = 10
@@ -191,14 +190,11 @@ class SecondaryChannel:
             logger.warning("%s dropped stale %s: too many waiting calls", self.name, victim.call.action)
 
     def _sacrifice(self) -> _QueuedCall | None:
-        """The first droppable durable item: meter data first, oldest otherwise. Never the
-        head currently being sent - removing it would make the sender pop the next
-        item, which was never sent, losing it silently. Transient items do not count
-        toward the limit, so dropping one would not relieve it."""
+        """The durable item to drop on overflow; never the head the sender is sending.
+        Transient items do not count toward the limit, so dropping one would not
+        relieve it."""
         candidates = [i for i in self._queue if i.durable and i is not self._in_flight]
-        if not candidates:
-            return None
-        return next((i for i in candidates if i.call.action == EXPENDABLE_ACTION), candidates[0])
+        return pick_victim(candidates, attrgetter("call.action"))
 
     def _persist_queue(self) -> None:
         self._state.outboxes[self._config.name] = [

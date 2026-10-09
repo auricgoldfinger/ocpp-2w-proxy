@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections import deque
+from operator import attrgetter
 
 from .backend_auth import backend_headers, backend_url
 from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
@@ -14,14 +15,12 @@ from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
 from .message_classes import MessageClass, classify, latest_key
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso
+from .queue_overflow import pick_victim
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
-
-# Dropped first when the queue overflows: meter data is expendable, stops are not.
-EXPENDABLE_ACTION = "MeterValues"
 
 
 class PrimaryUnavailable(Exception):
@@ -248,13 +247,8 @@ class PrimaryChannel:
             logger.error("primary queue full (%d); dropped queued %s", self._max_queue, victim.action)
 
     def _sacrifice(self) -> Call | None:
-        """The first droppable call: meter data first, oldest otherwise. Never the
-        head currently being sent - removing it would make the drain pop the next
-        call, which was never sent, losing it silently."""
-        candidates = [c for c in self._queue if c is not self._in_flight]
-        if not candidates:
-            return None
-        return next((c for c in candidates if c.action == EXPENDABLE_ACTION), candidates[0])
+        """The call to drop on overflow; never the head the drain is sending."""
+        return pick_victim([c for c in self._queue if c is not self._in_flight], attrgetter("action"))
 
     def _persist(self) -> None:
         self._store.state.primary_outbox = [to_dict(call) for call in self._queue]
