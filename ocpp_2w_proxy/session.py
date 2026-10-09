@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from functools import partial
+from typing import Any
 
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed
@@ -137,7 +138,7 @@ class ChargerSession:
         except ConnectionClosed as exc:
             logger.info("%s charger disconnected: %s", self.charger_id, exc)
 
-    def _spawn(self, coroutine) -> None:
+    def _spawn(self, coroutine: Coroutine[Any, Any, None]) -> None:
         # Relays run concurrently so the charger's replies to backend commands keep flowing
         # while a call waits for the primary's answer.
         task = asyncio.create_task(coroutine)
