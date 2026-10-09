@@ -62,9 +62,7 @@ class ProxyServer:
         )
         self._server = server
         for context in self._chargers.values():
-            context.primary.start_background()
-            for channel in context.secondaries.values():
-                channel.start_background()
+            context.start_background()
         scheme = "wss" if proxy.tls_cert else "ws"
         logger.info("listening on %s://%s:%d/<chargerId>", scheme, proxy.listen, proxy.port)
         return server
@@ -74,10 +72,7 @@ class ProxyServer:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
-        await asyncio.gather(*(context.primary.close() for context in self._chargers.values()))
-        await asyncio.gather(
-            *(channel.close() for context in self._chargers.values() for channel in context.secondaries.values())
-        )
+        await asyncio.gather(*(context.close() for context in self._chargers.values()))
 
     def _build_context(self, charger: ChargerConfig) -> ChargerContext:
         store = StateStore.for_charger(self._config.proxy.state_dir, charger.id)

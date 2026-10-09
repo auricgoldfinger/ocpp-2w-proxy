@@ -6,6 +6,7 @@ secondaries all outlive individual charger sessions and keep draining their queu
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -24,3 +25,11 @@ class ChargerContext:
     secondaries: Mapping[str, SecondaryChannel]
     transactions: TransactionMap
     traffic: TrafficLog
+
+    def start_background(self) -> None:
+        self.primary.start_background()
+        for channel in self.secondaries.values():
+            channel.start_background()
+
+    async def close(self) -> None:
+        await asyncio.gather(self.primary.close(), *(channel.close() for channel in self.secondaries.values()))
