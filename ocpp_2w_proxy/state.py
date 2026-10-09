@@ -21,6 +21,14 @@ SCHEMA_VERSION = 3
 FLUSH_DELAY = 0.25
 
 
+def _call_of_entry(item: dict[str, Any]) -> Call | None:
+    """The call stored in one persisted entry (current or pre-v3 layout); None if unreadable."""
+    try:
+        return from_dict(item.get("call", item))
+    except AttributeError, KeyError, TypeError:
+        return None
+
+
 def restore_outbox(items: Sequence[dict[str, Any]]) -> list[tuple[Call, str | None]]:
     """Restore persisted queued calls as (call, start_ref), skipping unreadable entries.
 
@@ -29,9 +37,8 @@ def restore_outbox(items: Sequence[dict[str, Any]]) -> list[tuple[Call, str | No
     """
     restored: list[tuple[Call, str | None]] = []
     for item in items:
-        try:
-            call = from_dict(item.get("call", item))
-        except AttributeError, KeyError, TypeError:
+        call = _call_of_entry(item)
+        if call is None:
             logger.error("skipping unreadable queued entry %r in the state file", item)
             continue
         restored.append((call, item.get("start_ref")))
@@ -44,9 +51,8 @@ def _migrate_v2(data: dict[str, Any]) -> None:
     outbox: list[dict[str, Any]] = []
     latest: dict[str, dict[str, Any]] = {}
     for item in data.get("primary_outbox", []):
-        try:
-            call = from_dict(item.get("call", item))
-        except AttributeError, KeyError, TypeError:
+        call = _call_of_entry(item)
+        if call is None:
             outbox.append(item)  # left for restore_outbox to report and skip
             continue
         match classify(call):
