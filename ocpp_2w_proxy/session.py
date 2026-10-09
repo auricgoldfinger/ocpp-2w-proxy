@@ -44,6 +44,7 @@ from .ocpp import (
 )
 from .policy import CANNED_ANSWERS, CommandPolicy
 from .primary_channel import PrimaryUnavailable
+from .primary_outage import outlast_grace
 from .secondary_channel import SecondaryChannel
 
 logger = logging.getLogger(__name__)
@@ -89,10 +90,20 @@ class ChargerSession:
             name: channel.attach(self._identity, partial(self._on_secondary_call, channel))
             for name, channel in self._secondaries.items()
         }
-        essential = {asyncio.create_task(self._read_charger(), name="charger")}
+        reader = asyncio.create_task(self._read_charger(), name="charger")
+        outage = asyncio.create_task(outlast_grace(self._primary, self._config.primary.outage_grace), name="outage")
+        essential = {reader, outage}
         try:
-            await asyncio.gather(*essential)
-            logger.info("%s charger disconnected; ending session", self.charger_id)
+            await asyncio.wait(essential, return_when=asyncio.FIRST_COMPLETED)
+            if outage.done():
+                logger.warning(
+                    "%s primary backend unavailable for over %ss; closing charger connection",
+                    self.charger_id,
+                    self._config.primary.outage_grace,
+                )
+                await self._close_primary_unavailable()
+            else:
+                logger.info("%s charger disconnected; ending session", self.charger_id)
         finally:
             tasks = essential | self._relays
             for task in tasks:

@@ -61,6 +61,8 @@ class PrimaryChannel:
         self._generation = 0
         self._link: BackendLink | None = None
         self._connected = asyncio.Event()  # set exactly while _link is registered
+        self._disconnected = asyncio.Event()  # its inverse
+        self._disconnected.set()
         self._reader: asyncio.Task | None = None
         self._boot_resend: asyncio.Task | None = None
         # Set once the cached boot has been replayed on the current link (or needs no replay):
@@ -141,6 +143,9 @@ class PrimaryChannel:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._connected.wait(), timeout)
         return self.connected
+
+    async def wait_disconnected(self) -> None:
+        await self._disconnected.wait()
 
     async def call(self, call: Call, timeout: float) -> Reply:
         """Relay a charger call; raises PrimaryUnavailable for a LIVE call the primary cannot answer."""
@@ -286,6 +291,7 @@ class PrimaryChannel:
             self._reader = asyncio.create_task(link.serve(self._dispatch_call), name="primary-reader")
             self._link = link
             self._connected.set()
+            self._disconnected.clear()
             self._resend_boot(link)
             return link
 
@@ -320,6 +326,7 @@ class PrimaryChannel:
             return
         self._link = None
         self._connected.clear()
+        self._disconnected.set()
         self._replayed_boot = None
         resend = self._boot_resend
         self._boot_resend = None

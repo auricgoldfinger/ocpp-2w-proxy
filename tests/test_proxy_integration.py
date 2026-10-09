@@ -281,8 +281,7 @@ async def test_a_start_the_primary_cannot_answer_goes_unanswered_and_closes_the_
     await secondary.connected.wait()
     await primary.stop()
 
-    with pytest.raises((ConnectionClosed, TimeoutError)):
-        await charger.call("StartTransaction", START, timeout=3)
+    await charger.send_raw(json.dumps([2, "start-1", "StartTransaction", START]))
     await asyncio.wait_for(charger.ws.wait_closed(), 5)
 
     # No substitute answer: the charger keeps the start and resends it once back online.
@@ -290,6 +289,35 @@ async def test_a_start_the_primary_cannot_answer_goes_unanswered_and_closes_the_
     assert not [frame for frame in charger.frames if frame[0] in (3, 4)]
     # A start the primary never confirmed opens no session in the secondary (UC-003 step 3).
     assert [action for action, _ in secondary.calls if action == "StartTransaction"] == []
+
+
+async def test_a_primary_outage_longer_than_the_grace_period_closes_the_charger(primary, secondary, start_proxy):
+    url = await start_proxy(primary.url, secondary.url, primary={"outage_grace": 0.3})
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await primary.connected.wait()
+    await primary.stop()
+
+    await asyncio.wait_for(charger.ws.wait_closed(), 5)
+    assert charger.ws.close_code == 1011
+
+
+async def test_a_primary_outage_within_the_grace_period_keeps_the_charger_connected(primary, start_proxy):
+    port = primary.port
+    url = await start_proxy(primary.url, primary={"outage_grace": 0.8})
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await primary.connected.wait()
+    await primary.stop()
+    await asyncio.sleep(0.3)
+
+    recovered = await FakeCsms().start(port)
+    try:
+        await recovered.connected.wait()
+        await asyncio.sleep(0.8)  # past the grace period that started with the outage
+        assert charger.ws.close_code is None
+        assert (await charger.call("Heartbeat", {}))[2] == {"currentTime": "2026-01-01T00:00:00Z"}
+    finally:
+        await charger.close()
+        await recovered.stop()
 
 
 async def test_primary_outbox_survives_proxy_restart(primary, tmp_path):

@@ -33,12 +33,14 @@ id = "CHANGE-ME"
 
 # Primary = the backend in charge (Tap Electric): card authorization, transaction
 # numbers and remote starts come from here. Its replies are what the charger sees.
-# It must be reachable to start a session; during later outages the proxy keeps the
-# charger connected and retries in the background. Meanwhile it queues StopTransaction and
-# the MeterValues of a transaction, keeps only the newest StatusNotification per connector,
-# answers heartbeats itself, drops other meter readings, and refuses what needs the
-# primary's own answer (Authorize, and StartTransaction until the queue is empty) so the
-# charger falls back on its local behavior.
+# The charger sees the primary's availability: it must be reachable to start a session,
+# and an outage longer than outage_grace closes the charger connection, so the charger
+# goes offline and queues/authorizes by its own OCPP offline rules until the primary is back.
+# During the grace period the proxy queues StopTransaction and the MeterValues of a
+# transaction, keeps only the newest StatusNotification per connector, answers heartbeats
+# itself and drops other meter readings. A message that needs the primary's own answer
+# (Authorize, StartTransaction, ...) waits up to call_timeout for the primary; if it cannot
+# be answered the charger connection is closed unanswered, so the charger keeps it and resends.
 [primary]
 url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 # none    : no credentials
