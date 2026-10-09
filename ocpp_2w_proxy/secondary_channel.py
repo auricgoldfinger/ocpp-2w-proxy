@@ -19,10 +19,8 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from websockets.exceptions import InvalidHandshake, InvalidURI
-
 from .backend_auth import backend_headers, backend_url
-from .backend_link import BackendLink, BackendUnavailable, send_reply
+from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import ChargerConfig, SecondaryConfig
@@ -233,7 +231,7 @@ class SecondaryChannel:
                 continue
             try:
                 link = await BackendLink.open(self.name, self._url, self._headers, self._user_agent, self._traffic)
-            except (OSError, TimeoutError, InvalidHandshake, InvalidURI) as exc:
+            except CONNECT_ERRORS as exc:
                 logger.warning("%s unreachable (%s); retrying in ~%.0fs", self.name, exc, backoff.current)
             else:
                 try:

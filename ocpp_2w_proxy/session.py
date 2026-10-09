@@ -21,10 +21,9 @@ from collections.abc import Callable
 from functools import partial
 
 from websockets.asyncio.server import ServerConnection
-from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
+from websockets.exceptions import ConnectionClosed
 
-from .backend_auth import MissingChargerCredentials
-from .backend_link import BackendUnavailable
+from .backend_link import CONNECT_ERRORS, BackendUnavailable
 from .charger_auth import ChargerIdentity
 from .charger_context import ChargerContext
 from .command_router import CommandRouter, ReplyTarget
@@ -79,7 +78,7 @@ class ChargerSession:
     async def run(self) -> None:
         try:
             token = await self._primary.attach(self._identity, self._on_primary_call)
-        except (OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials) as exc:
+        except CONNECT_ERRORS as exc:
             logger.error("%s primary backend unavailable (%s); closing charger connection", self.charger_id, exc)
             await self._close_primary_unavailable()
             return

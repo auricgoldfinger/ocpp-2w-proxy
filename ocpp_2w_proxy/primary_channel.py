@@ -8,10 +8,8 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 
-from websockets.exceptions import InvalidHandshake, InvalidURI
-
-from .backend_auth import MissingChargerCredentials, backend_headers, backend_url
-from .backend_link import BackendLink, BackendUnavailable, send_reply
+from .backend_auth import backend_headers, backend_url
+from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
@@ -105,7 +103,7 @@ class PrimaryChannel:
         self._ensure_worker()
         try:
             await self._connect()
-        except OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials:
+        except CONNECT_ERRORS:
             self._release(token)
             raise
         return token
@@ -358,7 +356,7 @@ class PrimaryChannel:
                     continue
                 try:
                     await self._connect()
-                except (OSError, TimeoutError, InvalidHandshake, InvalidURI, MissingChargerCredentials) as exc:
+                except CONNECT_ERRORS as exc:
                     logger.warning(
                         "%s primary backend unreachable (%s); retrying in ~%.0fs",
                         self._charger.id,
