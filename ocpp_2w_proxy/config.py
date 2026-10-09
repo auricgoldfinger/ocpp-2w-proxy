@@ -30,6 +30,7 @@ PRIMARY_NAME = "primary"
 # NFR-004: every durable queue holds at least this many messages, so a small value cannot
 # quietly turn an ordinary backend outage into lost billing data.
 MIN_QUEUE = 10_000
+DEFAULT_OUTAGE_GRACE = 30.0
 
 DEFAULT_SECONDARY_FORWARD_ACTIONS = [
     "BootNotification",
@@ -47,6 +48,7 @@ PROXY_KEYS = frozenset({"listen", "port", "state_dir", "tls_cert", "tls_key", "p
 LOGGING_KEYS = frozenset({"level", "log_payloads"})
 CHARGER_KEYS = frozenset({"id", "password_env", "primary_id", "secondary_ids"})
 BACKEND_KEYS = frozenset({"url", "auth", "password_env", "call_timeout", "max_queue", "policy"})
+PRIMARY_KEYS = BACKEND_KEYS | {"outage_grace"}
 SECONDARY_KEYS = BACKEND_KEYS | {"name", "forward_actions"}
 POLICY_KEYS = frozenset({"actions", "default", "change_configuration_allow_keys", "strip_charging_profile"})
 
@@ -95,6 +97,12 @@ class BackendConfig:
 
 
 @dataclass(frozen=True)
+class PrimaryConfig(BackendConfig):
+    # Seconds a primary outage stays hidden from the charger before its connection is closed.
+    outage_grace: float = DEFAULT_OUTAGE_GRACE
+
+
+@dataclass(frozen=True)
 class SecondaryConfig(BackendConfig):
     forward_actions: frozenset[str] = frozenset()
 
@@ -103,7 +111,7 @@ class SecondaryConfig(BackendConfig):
 class Config:
     proxy: ProxyConfig
     chargers: Mapping[str, ChargerConfig]
-    primary: BackendConfig
+    primary: PrimaryConfig
     secondaries: tuple[SecondaryConfig, ...]
 
 
@@ -157,9 +165,7 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     chargers = _parse_chargers(raw.get("chargers", []), secrets)
     if "primary" not in raw:
         raise ConfigError("[primary] backend is required")
-    primary = _parse_backend(
-        PRIMARY_NAME, raw["primary"], secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, BACKEND_KEYS
-    )
+    primary = _parse_primary(raw["primary"], secrets)
     secondaries = _parse_secondaries(raw.get("secondary"), secrets)
     _validate_charger_backend_ids(chargers, secondaries)
     _validate_command_assignments(primary, secondaries)
@@ -250,7 +256,7 @@ def _validate_change_configuration_keys(primary: BackendConfig, secondaries: Seq
             owners[key] = backend.name
 
 
-def _withhold_secondary_keys(primary: BackendConfig, secondaries: Sequence[SecondaryConfig]) -> BackendConfig:
+def _withhold_secondary_keys(primary: PrimaryConfig, secondaries: Sequence[SecondaryConfig]) -> PrimaryConfig:
     """Keys a secondary owns are no longer the primary's to change: it answers them itself."""
     owned = frozenset().union(*(backend.policy.change_configuration_allow_keys for backend in secondaries))
     if not owned:
@@ -409,6 +415,14 @@ def _lowercase_keys(keys: Any, backend_name: str) -> frozenset[str]:
     if not isinstance(keys, list) or not all(isinstance(key, str) for key in keys):
         raise ConfigError(f"[{backend_name}.policy] change_configuration_allow_keys must be a list of key names")
     return frozenset(key.lower() for key in keys)
+
+
+def _parse_primary(section: Mapping[str, Any], secrets: _Secrets) -> PrimaryConfig:
+    base = _parse_backend(PRIMARY_NAME, section, secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, PRIMARY_KEYS)
+    return PrimaryConfig(
+        **vars(base),
+        outage_grace=_number(section, "outage_grace", DEFAULT_OUTAGE_GRACE, f"[{PRIMARY_NAME}]", float, 0),
+    )
 
 
 def _parse_secondary(name: str, section: Mapping[str, Any], secrets: _Secrets) -> SecondaryConfig:

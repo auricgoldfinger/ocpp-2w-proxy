@@ -233,6 +233,8 @@ def test_chargers_as_a_table_is_rejected():
         {"chargers": [{"id": "CH1", "unknown_key": 1}]},
         {"primary": {"url": "wss://p", "unknown_key": 1}},
         {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "unknown_key": 1}]},
+        # Only the primary's outage is mirrored to the charger.
+        {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "outage_grace": 5}]},
         {
             "secondary": [
                 {"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "policy": {"unknown_key": 1}}
@@ -251,6 +253,7 @@ def test_unknown_keys_are_rejected(where):
         {"proxy": {"port": "not a number"}},
         {"proxy": {"ping_interval": "soon"}},
         {"primary": {"url": "wss://p", "call_timeout": "soon"}},
+        {"primary": {"url": "wss://p", "outage_grace": "soon"}},
         {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "max_queue": "lots"}]},
     ],
 )
@@ -268,6 +271,7 @@ def test_bad_numbers_are_config_errors(bad):
         {"primary": {"url": "wss://p", "call_timeout": 0}},
         {"primary": {"url": "wss://p", "max_queue": 0}},
         {"primary": {"url": "wss://p", "max_queue": 9_999}},
+        {"primary": {"url": "wss://p", "outage_grace": -1}},
         {"secondary": [{"name": "tap", "url": "wss://x", "auth": "basic", "password_env": "TAP", "max_queue": -5}]},
     ],
 )
@@ -354,3 +358,9 @@ def test_queue_defaults_to_the_minimum_capacity():
     config = parse(raw(), {"TAP": "pw"})
     assert config.primary.max_queue == 10_000
     assert config.secondaries[0].max_queue == 10_000
+
+
+def test_primary_outage_grace_defaults_and_can_be_set():
+    assert parse(raw(), {"TAP": "pw"}).primary.outage_grace == 30
+    config = parse(raw(primary={"url": "wss://p", "outage_grace": 0}), {"TAP": "pw"})
+    assert config.primary.outage_grace == 0

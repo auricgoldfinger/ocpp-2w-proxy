@@ -44,6 +44,7 @@ A named Primary or Secondary Backend to which the proxy connects.
 | password_env | Environment variable containing the backend password | String | 100 | Optional |
 | call_timeout | Maximum wait for a backend answer, in seconds | Decimal | 10,2 | Not Null |
 | max_queue | Maximum number of queued Billing Messages per charger | Integer | 10 | Not Null, Default 10,000, Min 10,000 |
+| outage_grace | Seconds a Primary Backend outage is hidden from the charger before its connection is closed | Decimal | 10,2 | Primary Backend only, Default 30, Min 0 |
 | forward_actions | Message types from the charger also sent to this Secondary Backend | List of String | - | Secondary Backends only |
 
 #### Constraints

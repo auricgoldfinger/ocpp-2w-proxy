@@ -47,6 +47,8 @@ url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 auth = "none"
 # password_env = "PRIMARY_PASSWORD"
 call_timeout = 30
+# Seconds a primary outage is hidden from the charger before its connection is closed (0 = at once).
+outage_grace = 30
 # Max queued transaction messages while the primary backend is unreachable (minimum 10000).
 # When it overflows, MeterValues are dropped first, then the oldest message.
 max_queue = 10000
