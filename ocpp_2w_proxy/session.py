@@ -232,7 +232,8 @@ class ChargerSession:
                 # leaving it to wait out its own timeout.
                 self._router.discard(outbound.id)
                 decision = CallError(call.id, "GenericError", "charger is disconnected")
-        logger.info("%s %s from %s answered by proxy (policy)", self.charger_id, call.action, origin.name)
+        else:
+            logger.info("%s %s from %s answered by proxy (policy)", self.charger_id, call.action, origin.name)
         await origin.reply(decision)
 
     async def _send_to_charger(self, message: Message) -> bool:
