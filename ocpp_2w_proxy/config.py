@@ -147,9 +147,16 @@ def _number(
     except TypeError, ValueError:
         raise ConfigError(f"{where}: {key} must be a number, not {value!r}") from None
     if (minimum is not None and number < minimum) or (maximum is not None and number > maximum):
-        bounds = f"between {minimum} and {maximum}" if None not in (minimum, maximum) else f"at least {minimum}"
-        raise ConfigError(f"{where}: {key} must be {bounds}, not {value!r}")
+        raise ConfigError(f"{where}: {key} must be {_bounds_text(minimum, maximum)}, not {value!r}")
     return number
+
+
+def _bounds_text(minimum: float | None, maximum: float | None) -> str:
+    if minimum is not None and maximum is not None:
+        return f"between {minimum} and {maximum}"
+    if minimum is not None:
+        return f"at least {minimum}"
+    return f"at most {maximum}"
 
 
 def _flag(section: Mapping[str, Any], key: str, where: str) -> bool:
