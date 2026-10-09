@@ -47,10 +47,10 @@
 
 ### A3: Unknown transaction
 
-**Trigger:** A remote stop from a Secondary Backend names a transaction the proxy cannot link to the Primary Backend's numbering (step 3)  
+**Trigger:** A remote stop, or a charging profile for one transaction, from a Secondary Backend names a transaction the proxy cannot link to the Primary Backend's numbering (step 3)  
 **Flow:**
 
-1. System replies "rejected" to the Secondary Backend.
+1. System logs a warning and replies "rejected" to the Secondary Backend.
 2. Use case ends.
 
 ### A4: Backend offline
@@ -105,4 +105,4 @@ A Secondary Backend uses its own transaction numbers; commands naming a transact
 
 ### BR-008: Charging profile stripped
 
-A charging profile attached to a forwarded remote start is removed unless the sending backend owns the set charging profile command, because it would override that backend's Charging Profiles.
+When the administrator enables `strip_charging_profile` in a backend's policy, a charging profile attached to a remote start forwarded from that backend is removed, so the remote start cannot override the Charging Profiles another backend sets. It is off by default, so nothing is changed in a remote start without the administrator asking for it.

@@ -1,6 +1,6 @@
 # Roadmap
 
-Follow-up work for ocpp-2w-proxy after the 0.2.0 rewrite. Each item lists the problem, the
+Follow-up work for ocpp-2w-proxy (currently 0.3.0) after the 0.2.0 rewrite. Each item lists the problem, the
 intended design, where it goes, and what "done" means, so it can be picked up cold.
 
 Status legend: `[ ]` open, `[x]` done.
@@ -27,6 +27,9 @@ references below describe follow-up work, not completed support for those requir
 | `charger_auth.py` | Handshake auth: path → charger id, allowlist, Basic auth |
 | `backend_auth.py` | Upstream URL + Authorization header per backend auth mode |
 | `backend_link.py` | One WebSocket to a backend; `call()` with reply correlation, `serve()` read loop |
+| `message_classes.py` | How a charger message is kept while a backend is away (durable / latest / droppable / live) |
+| `backoff.py` | Exponential backoff with jitter for reconnects and retries |
+| `charger_context.py` | Per-charger state and channels, which outlive individual charger sessions |
 | `primary_channel.py` | Reconnecting Primary Backend link and durable outbox for selected charger messages |
 | `secondary_channel.py` | Reconnecting store-and-forward link to each secondary backend (boot replay, durable per-backend queue) |
 | `transactions.py` | primary ↔ secondary transactionId mapping and payload rewriting |
@@ -82,32 +85,25 @@ block the project.
 
 ---
 
-## Phase 4: Robustness (known limitations of 0.2.0)
+## Phase 4: Robustness (known limitations found in 0.2.0)
 
-- [ ] **4.1 Retain undelivered durable Billing Messages.**
-  *Problem:* `SecondaryChannel._send_head` drops any call after 3 timeouts, including
-  `StartTransaction`/`StopTransaction`, so the session is lost for billing.
-  *Design:* for durable items, a timeout ends the current connection (raise
-  `BackendUnavailable`) so the reconnect/backoff loop retries later. Retain durable items
-  after backend rejections and missing transaction mappings as well, with no attempt limit.
-  Preserve order per backend; only queue overflow or forwarding-policy exclusion permits
-  discarding an undelivered durable item.
-  *Done when:* a test with a secondary that stays silent for `StartTransaction` and then
-  recovers shows eventual delivery and no loss. Also cover explicit rejection, missing
-  mappings, overflow and policy exclusion. Do not infer exactly-once receipt from retries:
-  a timed-out answer can follow a message the backend already received.
+- [x] **4.1 Retain undelivered durable Billing Messages.**
+  *Was:* `SecondaryChannel._send_head` dropped a message after timeouts or a backend rejection.
+  *Now:* a timeout ends the connection (`BackendUnavailable`), and the message is sent again
+  after reconnecting, with no attempt limit; the wait is at least the message-retry backoff,
+  which only resets after a delivered message. A CallError keeps the message and retries it
+  with that backoff; after `MAX_CALL_ERROR_ATTEMPTS` (5) CallErrors in a row it is dropped and
+  logged (OCPP 1.6 TransactionMessageAttempts), so one bad message cannot block the queue for
+  ever. The count is in memory only. A stop without a transaction link is dropped at once: in
+  an ordered queue the link can no longer appear. A queued message whose type the backend no
+  longer forwards is dropped and logged. Exactly-once receipt is not guaranteed: a timed-out
+  answer can follow a message the backend already received.
 
-- [ ] **4.2 Retry a Pending/Rejected live BootNotification.**
-  *Problem:* `_boot` only retries the *cached* boot. When the charger's own boot is first in the
-  queue and the Secondary Backend answers `Pending`, the proxy only logs it and continues draining; it may then
-  reject everything.
-  *Design:* treat a BootNotification at the head of the queue as the handshake: move the
-  accept/retry loop from `_boot` into a helper used for both cached and live boots. Use the
-  `interval` from the reply. Inject `sleep` through `ChargerSession` → `SecondaryChannel`, so
-  tests don't wait 10 s. Add an optional `sleep` param to `ChargerSession`, or a
-  `boot_retry_min` config value.
-  *Done when:* an integration test with a secondary that answers `Pending` once, then
-  `Accepted`, sees two BootNotifications before any StartTransaction.
+- [x] **4.2 Retry a Pending/Rejected live BootNotification.**
+  *Now:* `_accept_boot` sends a boot until the backend accepts it, at the `interval` it names
+  (minimum 10 s, default 60 s), for both the cached boot on connect and a boot the charger sends
+  while connected; nothing else is sent before it. `sleep` is injected into
+  `SecondaryChannel`, so the unit test does not wait.
 
 - [ ] **4.3 De-duplicate StartTransaction replays.**
   *Problem:* if the Primary Backend drops after a Secondary Backend already got a `StartTransaction`, the Charger replays
@@ -130,11 +126,9 @@ block the project.
   *Done when:* the outage test in `test_proxy_integration.py` asserts StatusNotification comes
   after StopTransaction.
 
-- [ ] **4.5 Log failed relay tasks.**
-  *Problem:* an unexpected exception in `ChargerSession._relay_charger_call` only surfaces as
-  asyncio's "Task exception was never retrieved".
-  *Design:* in `_spawn`, add a done-callback that logs `task.exception()` with `logger.error`
-  (skip cancelled tasks).
+- [x] **4.5 Log failed relay tasks.**
+  *Now:* `ChargerSession._relay_finished` is a done-callback that logs a relay task's
+  exception with `logger.error` (cancelled tasks are skipped).
 
 - [ ] **4.6 Reload the TLS certificate without a restart** (only when the proxy terminates TLS).
   *Design:* a background task in `ProxyServer` checks the mtime of `tls_cert`/`tls_key` every
@@ -142,11 +136,14 @@ block the project.
   Log reload failures and keep the old cert.
   *Done when:* a unit test with a temp cert pair shows the context reloads after an mtime change.
 
-- [ ] **4.7 Retain selected Primary Backend updates during outages.**
-  `PrimaryChannel` keeps established Charger sessions open, locally acknowledges and durably
-  queues `StatusNotification`, `MeterValues`, and `StopTransaction`, then retries and replays
-  them in order. It retries indefinitely with exponential backoff and jitter, and the per-Charger
-  queue survives restarts with a 10,000-call limit.
+- [x] **4.7 Retain selected Primary Backend updates during outages.**
+  `PrimaryChannel` keeps established Charger sessions open and acknowledges locally. It queues
+  `StopTransaction` and transaction `MeterValues` durably and replays them in order; it keeps only
+  the newest status/firmware/diagnostics report per connector and sends it after the queue
+  empties; it answers `Heartbeat` itself and drops `MeterValues` outside a transaction
+  (`message_classes.py`). `StartTransaction` is refused until the queue is empty. It retries
+  indefinitely with exponential backoff and jitter, and the per-Charger queue survives restarts
+  with a limit of at least 10,000 calls.
 
 ## Phase 5: Observability and operations
 

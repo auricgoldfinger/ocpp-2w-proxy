@@ -36,8 +36,9 @@ id = "CHANGE-ME"
 # It must be reachable to start a session; during later outages the proxy keeps the
 # charger connected and retries in the background. Meanwhile it queues StopTransaction and
 # the MeterValues of a transaction, keeps only the newest StatusNotification per connector,
-# drops other meter readings, and refuses what needs the primary's own answer
-# (Authorize, StartTransaction, ...) so the charger falls back on its local behavior.
+# answers heartbeats itself, drops other meter readings, and refuses what needs the
+# primary's own answer (Authorize, and StartTransaction until the queue is empty) so the
+# charger falls back on its local behavior.
 [primary]
 url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 # none    : no credentials
@@ -46,8 +47,8 @@ url = "wss://CHANGE-ME"   # the charger id is appended: <url>/<primary_id>
 auth = "none"
 # password_env = "PRIMARY_PASSWORD"
 call_timeout = 30
-# Max queued transaction messages while the primary backend is unreachable.
-# When it overflows, MeterValues are dropped first; stops are kept.
+# Max queued transaction messages while the primary backend is unreachable (minimum 10000).
+# When it overflows, MeterValues are dropped first, then the oldest message.
 max_queue = 10000
 
 [primary.policy]
@@ -62,7 +63,7 @@ actions = { SetChargingProfile = "answer", ClearChargingProfile = "answer" }
 # strip_charging_profile = true
 
 # Secondary backends: zero or more, each a [[secondary]] entry with a unique name
-# that shows up in logs and errors. Remove all of them for a 1-way proxy.
+# ("primary" is reserved) that shows up in logs and errors. Remove all of them for a 1-way proxy.
 # This one is the solar/control backend (SolarEdge): it sees the messages below, may stop
 # sessions and - once assigned above - set charging profiles, but may never change
 # authorization, configuration, availability or firmware, and never starts sessions.
@@ -82,7 +83,9 @@ forward_actions = [
     "StopTransaction",
     "MeterValues",
 ]
-# Max queued transaction messages while this backend is unreachable.
+# Max queued transaction messages while this backend is unreachable (minimum 10000).
+# A queued message this backend answers with an OCPP error is retried with a growing
+# delay and dropped (logged) after 5 errors in a row.
 max_queue = 10000
 
 [secondary.policy]

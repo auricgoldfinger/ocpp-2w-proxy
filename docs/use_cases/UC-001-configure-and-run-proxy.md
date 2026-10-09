@@ -70,7 +70,7 @@ At least one charger must be configured; charger ids must be unique and consist 
 
 ### BR-002: Backends
 
-Exactly one Primary Backend and zero or more Secondary Backends are configured, each with a WebSocket address (ws:// or wss://) and a name that is unique and used in logs and errors. Without a Secondary Backend the proxy is a one-way proxy.
+Exactly one Primary Backend and zero or more Secondary Backends are configured, each with a WebSocket address (ws:// or wss://) and a name that is unique and used in logs and errors. The name `primary` is reserved for the Primary Backend. Without a Secondary Backend the proxy is a one-way proxy.
 
 ### BR-003: Backend authentication modes
 
@@ -90,7 +90,7 @@ For each backend the administrator can override per command whether it is forwar
 
 ### BR-007: Exclusive Commands
 
-The Exclusive Commands are: set and clear charging profile, change configuration, change availability, reset, clear cache, send local list, reserve, cancel reservation, update firmware, data transfer, and remote start. Each may be forwarded by at most one backend. Configuration changes may instead be permitted per configuration key; each key may then be permitted for at most one backend, and not for any backend when another backend forwards all configuration changes.
+The Exclusive Commands are: set and clear charging profile, change configuration, change availability, reset, clear cache, send local list, reserve, cancel reservation, update firmware, data transfer, and remote start. Each may be forwarded by at most one backend. Configuration changes may instead be permitted per configuration key; each key may then be permitted for at most one backend. A Secondary Backend may own a key while the Primary Backend forwards all configuration changes: the proxy then answers the Primary Backend's changes to that key with Rejected, so only one backend can change it.
 
 ### BR-008: Authorization Commands stay with the Primary Backend
 
@@ -98,7 +98,7 @@ Remote start, send local list, reserve, cancel reservation, and changes to the c
 
 ### BR-009: Defaults
 
-Unless configured otherwise the proxy listens on all addresses on port 8321, waits 30 seconds for a backend answer, queues at most 10,000 Billing Messages per Secondary Backend, and does not log message contents. The Primary Backend forwards every command; a Secondary Backend forwards only remote stop, trigger message, get configuration, unlock connector and get composite schedule, and answers or refuses the rest. To give an Exclusive Command to a Secondary Backend, the administrator must also take it away from the Primary Backend.
+Unless configured otherwise the proxy listens on all addresses on port 8321, waits 30 seconds for a backend answer, queues at most 10,000 Billing Messages for the Primary Backend and for each Secondary Backend (configurable, but never below 10,000), and does not log message contents. The Primary Backend forwards every command; a Secondary Backend forwards only remote stop, trigger message, get configuration, unlock connector and get composite schedule, and answers or refuses the rest. To give an Exclusive Command to a Secondary Backend, the administrator must also take it away from the Primary Backend.
 
 ### BR-010: Continuous operation
 

@@ -16,6 +16,8 @@ erDiagram
     BACKEND ||--o{ QUEUED_CALL : "receives"
     CHARGER ||--o{ PRIMARY_QUEUED_CALL : "has"
     BACKEND ||--o{ PRIMARY_QUEUED_CALL : "receives"
+    CHARGER ||--o{ PRIMARY_LATEST_REPORT : "has"
+    BACKEND ||--o{ PRIMARY_LATEST_REPORT : "receives"
     CHARGER ||--o| BOOT_INFO : "has"
     CHARGER ||--o{ CONNECTOR_STATUS : "has"
 ```
@@ -41,9 +43,12 @@ A named Primary or Secondary Backend to which the proxy connects.
 | auth_mode | Backend authentication method | String | 30 | Not Null, Values: None, Password, Charger Credentials |
 | password_env | Environment variable containing the backend password | String | 100 | Optional |
 | call_timeout | Maximum wait for a backend answer, in seconds | Decimal | 10,2 | Not Null |
+| max_queue | Maximum number of queued Billing Messages per charger | Integer | 10 | Not Null, Default 10,000, Min 10,000 |
+| forward_actions | Message types from the charger also sent to this Secondary Backend | List of String | - | Secondary Backends only |
 
 #### Constraints
 
+- The name `primary` is reserved for the Primary Backend.
 - A password environment variable is required when the authentication method is Password.
 - Charger credentials may only be forwarded to the Primary Backend.
 
@@ -121,7 +126,7 @@ A Primary Backend update waiting for ordered delivery after an outage.
 | id | Unique identifier that defines delivery order | Long | 19 | Primary Key, Sequence |
 | charger_id | Charger that sent the message | String | 64 | Not Null, Foreign Key (CHARGER.id) |
 | backend_id | The Primary Backend receiving the message | Long | 19 | Not Null, Foreign Key (BACKEND.id) |
-| action | Message type | String | 30 | Not Null, Values: StatusNotification, MeterValues, StopTransaction |
+| action | Message type | String | 30 | Not Null, Values: StopTransaction, MeterValues (only with a transaction id) |
 | payload | Message content with the original timestamps | String | - | Not Null |
 
 #### Constraints
@@ -130,9 +135,25 @@ A Primary Backend update waiting for ordered delivery after an outage.
 - The queue holds at most `max_queue` calls per Charger (default 10,000); overflow drops a queued meter reading first, then the oldest call, never the call currently being sent.
 - The queue survives proxy restarts. Credentials are not stored with queued calls.
 
+### PRIMARY_LATEST_REPORT
+
+The newest status report per connector held for the Primary Backend during an outage; it replaces an older report of the same type for the same connector.
+
+| Attribute | Description | Data Type | Length/Precision | Validation Rules |
+|-----------|-------------|-----------|------------------|------------------|
+| charger_id | Charger that sent the report | String | 64 | Primary Key, Foreign Key (CHARGER.id) |
+| action | Report type | String | 30 | Primary Key, Values: StatusNotification, FirmwareStatusNotification, DiagnosticsStatusNotification |
+| connector_id | Connector number (0 when the report names none) | Integer | 10 | Primary Key |
+| payload | Content of the report | String | - | Not Null |
+
+#### Constraints
+
+- Reports are sent after the PRIMARY_QUEUED_CALL queue of the charger is empty, and removed after a Primary Backend reply.
+- Reports survive proxy restarts.
+
 ### BOOT_INFO
 
-The charger's last boot notification, resent to Secondary Backends when they reconnect.
+The charger's last boot notification, resent to every backend when it reconnects (to Secondary Backends that receive boots, and to the Primary Backend).
 
 | Attribute | Description | Data Type | Length/Precision | Validation Rules |
 |-----------|-------------|-----------|------------------|------------------|

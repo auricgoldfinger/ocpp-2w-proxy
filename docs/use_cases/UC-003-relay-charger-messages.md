@@ -37,18 +37,26 @@
 **Trigger:** No answer arrives within the timeout or the Primary Backend is gone (step 4)  
 **Flow:**
 
-1. If the message is a `StatusNotification`, `MeterValues`, or `StopTransaction`, System
-   stores it durably in the Primary outbox and returns an empty OCPP `CallResult` to the
-   Charger; the Primary Backend's eventual reply is discarded. The same applies while the
-   outbox still drains after a reconnection: those messages keep their place in line, so the
-   Primary Backend never sees a newer message before an older queued one.
-2. Otherwise, System returns an OCPP `GenericError`; it does not queue or replay calls whose
+1. If the message is a `StopTransaction`, or a `MeterValues` that belongs to a transaction,
+   System stores it durably in the Primary outbox and returns an empty OCPP `CallResult` to the
+   Charger; the Primary Backend's eventual reply is discarded.
+2. If the message is a `StatusNotification`, `FirmwareStatusNotification` or
+   `DiagnosticsStatusNotification`, System durably keeps only the newest one per connector,
+   replacing an older one, and returns an empty OCPP `CallResult`. These are sent after the
+   outbox has been emptied, so an outdated state is never reported.
+3. A `Heartbeat` is answered locally with the current time, so the Charger keeps its clock in
+   sync without treating the outage as a fault. A `MeterValues` outside a transaction gets an
+   empty `CallResult` and is dropped.
+4. Otherwise, System returns an OCPP `GenericError`; it does not queue or replay calls whose
    Primary Backend reply is needed, such as `Authorize`, `StartTransaction`, `BootNotification`,
-   or `DataTransfer`. A `Heartbeat` is answered locally with the current time, so the Charger
-   keeps its clock in sync without treating the outage as a fault.
-3. System keeps the established Charger session open and reconnects to the Primary Backend
+   or `DataTransfer`.
+5. Steps 1 and 2 also apply while the outbox still drains after a reconnection, so the Primary
+   Backend never sees a newer message before an older queued one. A `StartTransaction` is
+   refused with `GenericError` until the outbox has been emptied, so the Primary Backend always
+   sees the previous transaction's stop before the next start.
+6. System keeps the established Charger session open and reconnects to the Primary Backend
    with exponential backoff and jitter; queued messages are sent oldest first.
-4. Use case ends when the Charger disconnects.
+7. Use case ends when the Charger disconnects.
 
 ### A2: Malformed message
 
@@ -114,7 +122,7 @@ Each backend issues its own transaction number; the charger only knows the Prima
 
 ### BR-004: Card authorization warning
 
-If a Secondary Backend rejects a card the Primary Backend accepted, a warning naming that backend is logged; the charging session continues.
+Whenever a Secondary Backend does not accept a card (in its answer to an authorization or a transaction start), a warning naming that backend is logged; the charging session continues.
 
 ### BR-005: Concurrent relaying
 
@@ -127,20 +135,22 @@ Card numbers are masked except the last four characters; message contents are on
 ### BR-007: Primary Billing Message delivery
 
 Transaction starts, Transaction stops and meter readings are Billing Messages. A
-`StopTransaction` and `MeterValues` message received while the Primary Backend is unavailable
-are stored durably and replayed in order; a `StartTransaction` is not queued because its
-Primary Backend reply supplies the transaction id. A `StatusNotification`, `MeterValues` or
-`StopTransaction` sent while the outbox drains is stored too and keeps its place in line
-behind the older queued messages. On every new Primary Backend connection the proxy replays
-the Charger's last `BootNotification`, so backends that key their charger state to the
-booting connection accept the session's calls. UC-006 provides separate durable delivery
+`StopTransaction`, and a `MeterValues` of a transaction, received while the Primary Backend is
+unavailable or while the outbox drains are stored durably and replayed in order; a
+`StartTransaction` is not queued because its Primary Backend reply supplies the transaction
+id. Connector status, firmware status and diagnostics status reports are not queued in order:
+only the newest per connector is kept, and it is sent after the outbox has been emptied.
+On every new Primary Backend connection the proxy replays the Charger's last
+`BootNotification`, so backends that key their charger state to the booting connection accept
+the session's calls; when the Charger then sends that same boot, it is answered with the
+reply to the replay instead of booting twice. UC-006 provides separate durable delivery
 to Secondary Backends.
 
 ### BR-008: Primary outbox
 
 The Primary outbox holds at most `max_queue` messages per Charger (default 10,000) across
-proxy restarts. On overflow, queued meter readings are dropped first; if there is none, the
-oldest message is dropped, and an error is logged. The message currently being sent is never
+proxy restarts (configurable, but never below 10,000). On overflow, queued meter readings
+are dropped first; if there is none, the oldest message is dropped, and an error is logged. The message currently being sent is never
 dropped by an overflow. Retries continue indefinitely
 with delays that start at 1 second, double up to 300 seconds, and vary by ±50%. The outbox
 continues draining after the Charger disconnects. When Primary Backend authentication

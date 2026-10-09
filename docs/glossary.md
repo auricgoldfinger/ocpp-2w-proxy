@@ -15,7 +15,7 @@
 | Command Policy    | The per-Backend rule deciding whether a Command is forwarded, answered by the proxy, or refused.                                | Allowlist of commands |
 | Allowlist         | The configured set of Charger identities that may connect.                                                                      | Whitelist            |
 | Billing Message   | A Transaction start, Transaction stop or meter reading used for billing or statistics. It is relayed to the Primary Backend and stored durably for ordered delivery to each Secondary Backend configured to receive its type. | Billing event |
-| Primary Outbox    | The per-Charger durable queue for `StatusNotification`, `MeterValues`, and `StopTransaction` calls acknowledged locally during a Primary Backend outage. | |
+| Primary Outbox    | The per-Charger durable queue for `StopTransaction` and transaction `MeterValues` calls acknowledged locally during a Primary Backend outage, delivered in order. Beside it the proxy keeps only the newest connector, firmware and diagnostics status report per connector, sent once the queue is empty. | |
 | Transaction       | A charging session, identified by a transaction number that differs per Backend; it is distinct from a Charger Connection. | |
 | Charger Connection | The active connection through the proxy between a Charger and its Primary Backend; it can span multiple Transactions. | |
 | Live Message      | A non-billing Charger message forwarded to a Secondary Backend only while connected, without durable replay. Boot information and connector status additionally retain their latest values for resending after reconnection. | |
