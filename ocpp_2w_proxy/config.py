@@ -30,6 +30,7 @@ PRIMARY_NAME = "primary"
 # quietly turn an ordinary backend outage into lost billing data.
 MIN_QUEUE = 10_000
 DEFAULT_OUTAGE_GRACE = 30.0
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 DEFAULT_SECONDARY_FORWARD_ACTIONS = [
     "BootNotification",
@@ -161,6 +162,20 @@ def _flag(section: Mapping[str, Any], key: str, where: str) -> bool:
     return value
 
 
+class _Secrets:
+    def __init__(self, environ: Mapping[str, str]):
+        self._environ = environ
+
+    def get(self, section: Mapping[str, Any], where: str) -> str | None:
+        name = section.get("password_env")
+        if not name:
+            return None
+        value = self._environ.get(name)
+        if not value:
+            raise ConfigError(f"{where}: environment variable {name!r} is not set or empty")
+        return value
+
+
 def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Config:
     _reject_unknown_keys(raw, TOP_LEVEL_KEYS, "configuration")
     secrets = _Secrets(environ)
@@ -205,23 +220,6 @@ def _validate_charger_backend_ids(
             raise ConfigError(
                 f"charger {charger.id!r}: secondary_ids names backends that are not configured: {sorted(unknown)}"
             )
-
-
-class _Secrets:
-    def __init__(self, environ: Mapping[str, str]):
-        self._environ = environ
-
-    def get(self, section: Mapping[str, Any], where: str) -> str | None:
-        name = section.get("password_env")
-        if not name:
-            return None
-        value = self._environ.get(name)
-        if not value:
-            raise ConfigError(f"{where}: environment variable {name!r} is not set or empty")
-        return value
-
-
-LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
 def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any]) -> ProxyConfig:
