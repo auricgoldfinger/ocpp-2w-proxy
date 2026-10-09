@@ -46,4 +46,5 @@ def describe_credentials(username: str | None, password: str | None) -> str:
     """For handshake diagnostics: tells whether credentials were sent, never their value."""
     if username is None:
         return "no Authorization header"
-    return f"username={username!r} password={'present (' + str(len(password)) + ' chars)' if password else 'absent'}"
+    password_summary = f"present ({len(password)} chars)" if password else "absent"
+    return f"username={username!r} password={password_summary}"
