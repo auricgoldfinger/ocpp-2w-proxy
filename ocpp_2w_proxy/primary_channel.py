@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable
 
 from .backend_auth import backend_headers, backend_url
 from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
@@ -15,6 +14,7 @@ from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
 from .message_classes import MessageClass, classify, latest_key
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso
+from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
 from .traffic_log import TrafficLog
 
@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 # Dropped first when the queue overflows: meter data is expendable, stops are not.
 EXPENDABLE_ACTION = "MeterValues"
-
-OnCall = Callable[[Call], Awaitable[None]]
 
 
 class PrimaryUnavailable(Exception):
@@ -52,11 +50,7 @@ class PrimaryChannel:
         self._traffic = traffic
         self._max_queue = backend.max_queue
         self._identity = ChargerIdentity(charger, None, None)
-        # A session is attached exactly while _on_call is set. The generation ties that routing
-        # to the latest attach, so a replaced session that outlives the server's replacement
-        # timeout cannot unhook its successor during cleanup (UC-002 BR-004).
-        self._on_call: OnCall | None = None
-        self._generation = 0
+        self._routing = SessionRouting()
         self._link: BackendLink | None = None
         self._connected = asyncio.Event()  # set exactly while _link is registered
         self._disconnected = asyncio.Event()  # its inverse
@@ -95,9 +89,7 @@ class PrimaryChannel:
         identifies this attach: hand it to detach() to end this session's routing.
         """
         self._identity = identity
-        self._on_call = on_call
-        self._generation += 1
-        token = self._generation
+        token = self._routing.attach(on_call)
         self._queue_changed.set()
         self._wake.set()
         self._ensure_worker()
@@ -118,11 +110,9 @@ class PrimaryChannel:
         self._release(token)
 
     def _release(self, token: int) -> None:
-        if token != self._generation:
-            return  # a newer session owns the channel now
-        self._on_call = None
-        self._queue_changed.set()
-        self._wake.set()
+        if self._routing.detach(token):
+            self._queue_changed.set()
+            self._wake.set()
 
     def start_background(self) -> None:
         """Drain restored messages at server startup when credentials are available."""
@@ -345,7 +335,7 @@ class PrimaryChannel:
         backoff = Backoff()
         while not self._closed:
             if self._link is None:
-                if self._on_call is None and not self._backlog:
+                if not self._routing.attached and not self._backlog:
                     self._queue_changed.clear()
                     await self._queue_changed.wait()
                     continue
@@ -377,9 +367,9 @@ class PrimaryChannel:
                 logger.exception("%s primary connection failed unexpectedly", self._charger.id)
             # Never discard a healthy link a session just attached to: without its reader,
             # every call of that session would time out against the primary (UC-002 A4).
-            if dead or (self._on_call is None and not self._backlog):
+            if dead or (not self._routing.attached and not self._backlog):
                 await self._discard(link)
-                if dead and (self._on_call is not None or self._backlog):
+                if dead and (self._routing.attached or self._backlog):
                     await self._backoff_sleep(backoff.next_delay())
             # A parked link stays registered and is pumped again on the next loop turn.
 
@@ -412,12 +402,7 @@ class PrimaryChannel:
             await asyncio.gather(sender, return_exceptions=True)
 
     async def _dispatch_call(self, call: Call) -> None:
-        if self._on_call is None:
-            link = self._link
-            if link is not None:
-                await link.reply(CallError(call.id, "GenericError", "charger is disconnected"))
-            return
-        await self._on_call(call)
+        await self._routing.dispatch(call, self._link)
 
     async def _drain(self, link: BackendLink) -> None:
         await self._boot_replayed.wait()
@@ -426,7 +411,7 @@ class PrimaryChannel:
                 await self._send_queue_head(link)
             elif self._latest:
                 await self._send_latest(link)
-            elif self._on_call is None:
+            elif not self._routing.attached:
                 return  # no session: park the healthy link, nothing to deliver
             else:
                 self._queue_changed.clear()
