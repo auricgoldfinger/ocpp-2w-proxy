@@ -88,9 +88,7 @@ class ProxyServer:
             for backend in self._config.secondaries
         }
         primary = PrimaryChannel(self._config.primary, charger, store, traffic)
-        return ChargerContext(
-            primary=primary, secondaries=secondaries, store=store, transactions=transactions, traffic=traffic
-        )
+        return ChargerContext(primary=primary, secondaries=secondaries, transactions=transactions, traffic=traffic)
 
     def _ssl_context(self) -> ssl.SSLContext | None:
         proxy = self._config.proxy

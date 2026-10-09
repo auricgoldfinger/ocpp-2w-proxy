@@ -69,7 +69,6 @@ class ChargerSession:
         self._primary = charger.primary
         self.charger_id = identity.charger.id
         self._traffic = charger.traffic
-        self._store = charger.store
         self._transactions = charger.transactions
         self._secondaries = dict(charger.secondaries)
         self._router = CommandRouter()
