@@ -41,7 +41,7 @@ from .ocpp import (
     serialize,
     substitute_reply,
 )
-from .policy import CANNED_ANSWERS, CommandPolicy
+from .policy import CANNED_ANSWERS, CommandPolicy, canned_answer
 from .primary_channel import PrimaryUnavailable
 from .primary_outage import outlast_grace
 from .secondary_channel import SecondaryChannel
@@ -252,5 +252,5 @@ def _unchanged(call: Call) -> Call:
 
 def _rejection(call: Call) -> Reply:
     if call.action in CANNED_ANSWERS:
-        return CallResult(call.id, dict(CANNED_ANSWERS[call.action]))
+        return canned_answer(call)
     return CallError(call.id, "GenericError", "rejected by proxy")

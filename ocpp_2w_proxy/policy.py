@@ -207,9 +207,14 @@ class CommandPolicy:
                 transform = _FORWARD_TRANSFORMS.get(call.action)
                 return transform(self, call) if transform else call
             case Rule.ANSWER:
-                return CallResult(call.id, dict(CANNED_ANSWERS[call.action]))
+                return canned_answer(call)
             case Rule.ERROR:
                 return CallError(call.id, "NotSupported", f"{call.action} is not allowed through this proxy")
+
+
+def canned_answer(call: Call) -> CallResult:
+    """The harmless confirmation the proxy sends for an action it does not forward."""
+    return CallResult(call.id, dict(CANNED_ANSWERS[call.action]))
 
 
 def _strip_charging_profile(policy: CommandPolicy, call: Call) -> Call:
