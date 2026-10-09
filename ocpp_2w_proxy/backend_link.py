@@ -10,7 +10,6 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 
 from .backend_auth import MissingChargerCredentials
-
 from .ocpp import Call, Message, ProtocolError, Reply, parse, protocol_error_reply, serialize, substitute_reply
 from .traffic_log import TrafficLog
 
