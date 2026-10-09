@@ -5,10 +5,16 @@ import pytest
 from fakes import FakeCsms
 
 from ocpp_2w_proxy.backend_link import BackendUnavailable
+from ocpp_2w_proxy.backoff import Backoff
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
-from ocpp_2w_proxy.ocpp import Call, CallError
-from ocpp_2w_proxy.secondary_channel import MAX_TRANSIENT_QUEUE, SecondaryChannel, _QueuedCall
+from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
+from ocpp_2w_proxy.secondary_channel import (
+    MAX_CALL_ERROR_ATTEMPTS,
+    MAX_TRANSIENT_QUEUE,
+    SecondaryChannel,
+    _QueuedCall,
+)
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
 from ocpp_2w_proxy.transactions import TransactionMap
@@ -283,3 +289,141 @@ async def test_restored_queue_is_delivered_without_a_session_and_then_disconnect
     finally:
         await csms.stop()
 
+
+class _ScriptedLink:
+    """A link that answers each Call with the next scripted reply (a callable of the call)."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.sent = []
+
+    async def call(self, call, timeout):
+        self.sent.append(call)
+        reply = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        return reply(call)
+
+
+def _rejected(call):
+    return CallError(call.id, "InternalError", "try later")
+
+
+def _accepted(call):
+    return CallResult(call.id, {})
+
+
+def _recording_sleep(channel):
+    delays = []
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    channel._sleep = sleep
+    return delays
+
+
+async def test_a_rejected_billing_message_is_retried_and_then_delivered_once(tmp_path):
+    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    delays = _recording_sleep(channel)
+    meter = _QueuedCall(Call("m", "MeterValues", {"connectorId": 1}), durable=True)
+    channel._queue.append(meter)
+    link = _ScriptedLink(_rejected, _accepted)
+
+    await channel._send_head(link)
+    assert channel._queue[0] is meter  # kept for another attempt, after a backoff delay
+    assert len(delays) == 1
+    await channel._send_head(link)
+
+    assert not channel._queue
+    assert [call.action for call in link.sent] == ["MeterValues", "MeterValues"]
+
+
+async def test_a_billing_message_rejected_every_time_is_dropped_after_the_attempt_limit(tmp_path, caplog):
+    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    delays = _recording_sleep(channel)
+    channel._transactions.primary_started("a", 100)
+    channel._transactions.secondary_started("tap", "a", 9)
+    stop = _QueuedCall(Call("s", "StopTransaction", {"transactionId": 100, "meterStop": 1}), durable=True)
+    after = _QueuedCall(Call("m", "MeterValues", {"connectorId": 1}), durable=True)
+    channel._queue.extend([stop, after])
+    link = _ScriptedLink(*[_rejected] * MAX_CALL_ERROR_ATTEMPTS, _accepted)
+
+    for _ in range(MAX_CALL_ERROR_ATTEMPTS):
+        assert channel._queue[0] is stop  # later messages wait behind it
+        await channel._send_head(link)
+
+    assert list(channel._queue) == [after]
+    assert channel._transactions.to_secondary(100, "tap") is None  # its transaction link is freed
+    assert "tap rejected StopTransaction 5 times" in caplog.text
+    assert len(delays) == MAX_CALL_ERROR_ATTEMPTS - 1
+    await channel._send_head(link)
+    assert not channel._queue
+
+
+async def test_retry_delay_grows_while_a_message_keeps_timing_out(tmp_path):
+    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    channel._queue.append(_QueuedCall(Call("m", "MeterValues", {"connectorId": 1}), durable=True))
+    channel._retry_backoff = Backoff(1, 300)  # the real schedule, not the fast test one
+    reconnect = Backoff()
+
+    for _ in range(4):
+        reconnect.reset()  # what an accepted boot does to the reconnect schedule
+        with pytest.raises(BackendUnavailable):
+            await channel._send_head(_SilentLink())
+        channel._next_delay(reconnect)
+
+    assert channel._retry_backoff.current == 16  # 1, 2, 4, 8 used: not back to 1 after each boot
+
+    await channel._send_head(_ScriptedLink(_accepted))
+    assert channel._retry_backoff.current == 1  # a delivered message resets it
+
+
+async def test_a_queued_message_no_longer_forwarded_is_discarded(tmp_path, caplog):
+    config = make_config({"name": "tap", "url": "ws://s", "forward_actions": ["StopTransaction"]})
+    channel = make_channel(config, "tap", StateStore(tmp_path / "CH1.json"))
+    channel._queue.append(_QueuedCall(Call("m", "MeterValues", {"connectorId": 1}), durable=True))
+    link = _ScriptedLink(_accepted)
+
+    await channel._send_head(link)
+
+    assert not channel._queue
+    assert not link.sent
+    assert "tap no longer forwards MeterValues" in caplog.text
+
+
+async def test_a_rejected_status_replay_is_logged(tmp_path, caplog):
+    store = StateStore(tmp_path / "CH1.json")
+    store.state.statuses["1"] = {"connectorId": 1, "status": "Available", "errorCode": "NoError"}
+    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", store)
+
+    await channel._send_statuses(_ScriptedLink(_rejected))
+
+    assert "tap rejected StatusNotification: InternalError" in caplog.text
+
+
+async def test_card_rejection_warning_names_the_backend(tmp_path, caplog):
+    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    item = _QueuedCall(Call("a", "Authorize", {"idTag": "X"}), durable=False)
+
+    channel._handle_result(item, CallResult("a", {"idTagInfo": {"status": "Invalid"}}))
+
+    assert "secondary backend tap answered Authorize with idTag status 'Invalid'" in caplog.text
+
+
+async def test_the_chargers_own_boot_is_retried_until_accepted(tmp_path):
+    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    delays = _recording_sleep(channel)
+    channel._queue.append(_QueuedCall(Call("b", "BootNotification", {"chargePointVendor": "v"}), durable=False))
+
+    def pending(call):
+        return CallResult(call.id, {"status": "Pending", "currentTime": "t", "interval": 30})
+
+    def accepted(call):
+        return CallResult(call.id, {"status": "Accepted", "currentTime": "t", "interval": 7})
+
+    link = _ScriptedLink(pending, accepted)
+
+    await channel._send_head(link)
+
+    assert [call.action for call in link.sent] == ["BootNotification", "BootNotification"]
+    assert delays == [30]  # the interval the backend asked for
+    assert not channel._queue

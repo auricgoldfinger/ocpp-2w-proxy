@@ -40,6 +40,11 @@ DURABLE_ACTIONS = frozenset({"StartTransaction", "StopTransaction", "MeterValues
 EXPENDABLE_ACTION = "MeterValues"
 
 DEFAULT_BOOT_RETRY_INTERVAL = 60
+MIN_BOOT_RETRY_INTERVAL = 10
+# UC-006 A5: a billing message the backend answers with a CallError is retried (OCPP 1.6
+# TransactionMessageAttempts); after this many CallErrors in a row it is dropped, so one
+# message the backend can never accept does not hold up every later one.
+MAX_CALL_ERROR_ATTEMPTS = 5
 # Transient calls (heartbeats, authorizations, ...) wait only while connected, but a backend
 # that keeps refusing the boot would let them pile up: the oldest are dropped past this.
 MAX_TRANSIENT_QUEUE = 1000
@@ -53,6 +58,8 @@ class _QueuedCall:
     durable: bool
     # Correlates a StartTransaction with the primary's answer for the same charger call.
     start_ref: str | None = None
+    # CallErrors in a row for this message; kept in memory only, so a restart starts over.
+    call_errors: int = 0
 
 
 class SecondaryChannel:
@@ -93,6 +100,10 @@ class SecondaryChannel:
         self._worker: asyncio.Task | None = None
         self._heartbeater: asyncio.Task | None = None
         self._heartbeat_interval: int | None = None
+        # UC-006 BR-004: message retries back off on their own schedule, reset only by a
+        # delivered message, so a message that keeps failing is not retried every few seconds.
+        self._retry_backoff = Backoff()
+        self._delivery_failed = False
         self._closed = False
         if self._queue:
             logger.info("%s: %d queued call(s) restored from disk", self.name, len(self._queue))
@@ -232,7 +243,16 @@ class SecondaryChannel:
                     # Never let a bug end the secondary for the rest of the server run.
                     logger.exception("%s connection failed unexpectedly", self.name)
             if self._wanted():
-                await self._sleep(backoff.next_delay())
+                await self._sleep(self._next_delay(backoff))
+
+    def _next_delay(self, backoff: Backoff) -> float:
+        """The reconnect delay, but at least the message-retry delay when the connection
+        ended because a queued message was not answered."""
+        delay = backoff.next_delay()
+        if self._delivery_failed:
+            self._delivery_failed = False
+            delay = max(delay, self._retry_backoff.next_delay())
+        return delay
 
     async def _serve(self, link: BackendLink) -> bool:
         """Run one connection until it drops. Returns True if the boot was accepted."""
@@ -315,13 +335,19 @@ class SecondaryChannel:
         if not self.forwards("BootNotification"):
             return True  # this backend is not configured to receive boots
         if self._queue and self._queue[0].call.action == "BootNotification":
-            return True  # the charger just booted; its own BootNotification is first in line
+            # The charger just booted: its own boot is the cached one sent below.
+            self._complete(self._queue[0])
         if self._state.boot is None:
             logger.warning("no BootNotification cached yet; %s gets none until the charger reboots", self.name)
             return True
+        return await self._accept_boot(link, self._state.boot)
+
+    async def _accept_boot(self, link: BackendLink, payload: dict) -> bool:
+        """Send a boot until the backend accepts it (UC-006 A2), at the interval it names.
+        False: it never did and nobody needs the connection any more."""
         while self._wanted():
             try:
-                reply = await link.call(Call(new_message_id(), "BootNotification", self._state.boot), self._timeout)
+                reply = await link.call(Call(new_message_id(), "BootNotification", payload), self._timeout)
             except TimeoutError:
                 await self._sleep(DEFAULT_BOOT_RETRY_INTERVAL)
                 continue
@@ -330,7 +356,7 @@ class SecondaryChannel:
                 return True
             interval = DEFAULT_BOOT_RETRY_INTERVAL
             if isinstance(reply, CallResult):
-                interval = max(10, int(reply.payload.get("interval") or DEFAULT_BOOT_RETRY_INTERVAL))
+                interval = max(MIN_BOOT_RETRY_INTERVAL, int(reply.payload.get("interval") or interval))
             logger.warning("%s did not accept BootNotification (%s); retry in %ss", self.name, reply, interval)
             await self._sleep(interval)
         return False
@@ -340,12 +366,27 @@ class SecondaryChannel:
             return
         for payload in list(self._state.statuses.values()):
             try:
-                await link.call(Call(new_message_id(), "StatusNotification", payload), self._timeout)
+                reply = await link.call(Call(new_message_id(), "StatusNotification", payload), self._timeout)
             except TimeoutError:
                 logger.warning("%s did not answer StatusNotification", self.name)
+                continue
+            if isinstance(reply, CallError):
+                logger.warning("%s rejected StatusNotification: %s %s", self.name, reply.code, reply.description)
 
     async def _send_head(self, link: BackendLink) -> None:
         item = self._queue[0]
+        if not self.forwards(item.call.action):
+            # Queued before the configuration stopped forwarding it to this backend (UC-006 A9).
+            logger.warning(
+                "%s no longer forwards %s; queued message discarded (forwarding policy)", self.name, item.call.action
+            )
+            self._complete(item)
+            return
+        if item.call.action == "BootNotification":
+            # The charger rebooted while connected: the backend must accept it before anything else.
+            self._complete(item)
+            await self._accept_boot(link, item.call.payload)
+            return
         outgoing = self._transactions.rewrite_for_secondary(item.call, self.name)
         if outgoing is None:
             self._complete(item)
@@ -354,14 +395,47 @@ class SecondaryChannel:
         try:
             reply = await link.call(outgoing, self._timeout)
         except TimeoutError as exc:
-            # A silent link is wedged: reconnect and send the message again. Only the
-            # backend's own CallError ends a message's life; a timeout never does.
+            # A silent link is wedged: reconnect and send the message again. A timeout
+            # never ends a message's life.
             logger.warning("%s did not answer %s; reconnecting to send it again", self.name, item.call.action)
+            self._delivery_failed = True
             raise BackendUnavailable(f"{self.name} did not answer {item.call.action}") from exc
         finally:
             self._in_flight = None
+        if isinstance(reply, CallError) and item.durable and await self._retry_after_call_error(item, reply):
+            return
+        if isinstance(reply, CallResult):
+            self._retry_backoff.reset()
         self._complete(item)
         self._handle_result(item, reply)
+
+    async def _retry_after_call_error(self, item: _QueuedCall, reply: CallError) -> bool:
+        """Keep a rejected billing message for another attempt (UC-006 A5). False once it
+        has used up its attempts: the caller then drops it."""
+        item.call_errors += 1
+        if item.call_errors >= MAX_CALL_ERROR_ATTEMPTS:
+            logger.error(
+                "%s rejected %s %d times (%s %s); dropped",
+                self.name,
+                item.call.action,
+                item.call_errors,
+                reply.code,
+                reply.description,
+            )
+            return False
+        delay = self._retry_backoff.next_delay()
+        logger.warning(
+            "%s rejected %s (%s %s); retry %d of %d in ~%.0fs",
+            self.name,
+            item.call.action,
+            reply.code,
+            reply.description,
+            item.call_errors,
+            MAX_CALL_ERROR_ATTEMPTS - 1,
+            delay,
+        )
+        await self._sleep(delay)
+        return True
 
     def _forget_stopped_transaction(self, item: _QueuedCall) -> None:
         """This backend will never confirm the stop: end its transaction link so
@@ -392,7 +466,7 @@ class SecondaryChannel:
             handler(self, item, reply)
 
     def _start_transaction_result(self, item: _QueuedCall, reply: CallResult) -> None:
-        _warn_if_not_accepted(reply, "StartTransaction")
+        self._warn_if_not_accepted(reply, "StartTransaction")
         transaction_id = reply.payload.get("transactionId")
         if isinstance(transaction_id, int) and item.start_ref:
             self._transactions.secondary_started(self.name, item.start_ref, transaction_id)
@@ -404,26 +478,21 @@ class SecondaryChannel:
             self._transactions.forget(primary_tx, self.name)
 
     def _authorize_result(self, item: _QueuedCall, reply: CallResult) -> None:
-        _warn_if_not_accepted(reply, "Authorize")
+        self._warn_if_not_accepted(reply, "Authorize")
 
-    def _boot_notification_result(self, item: _QueuedCall, reply: CallResult) -> None:
-        if reply.payload.get("status") == "Accepted":
-            self._note_heartbeat_interval(reply)  # its answer to the charger's own boot counts too
-            return
-        logger.warning("secondary backend answered the charger's BootNotification with %r", reply.payload.get("status"))
-
-
-def _warn_if_not_accepted(reply: CallResult, action: str) -> None:
-    status = reply.payload.get("idTagInfo", {}).get("status")
-    if status != "Accepted":
-        logger.warning(
-            "secondary backend answered %s with idTag status %r: this session may not be billed", action, status
-        )
+    def _warn_if_not_accepted(self, reply: CallResult, action: str) -> None:
+        status = reply.payload.get("idTagInfo", {}).get("status")
+        if status != "Accepted":
+            logger.warning(
+                "secondary backend %s answered %s with idTag status %r: this session may not be billed there",
+                self.name,
+                action,
+                status,
+            )
 
 
 _RESULT_HANDLERS: Mapping[str, Callable[[SecondaryChannel, _QueuedCall, CallResult], None]] = {
     "StartTransaction": SecondaryChannel._start_transaction_result,
     "StopTransaction": SecondaryChannel._stop_transaction_result,
     "Authorize": SecondaryChannel._authorize_result,
-    "BootNotification": SecondaryChannel._boot_notification_result,
 }
