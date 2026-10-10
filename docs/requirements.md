@@ -29,6 +29,7 @@ The proxy is vendor-neutral and supports Chargers and Backends using the protoco
 | FR-019 | Reserve Authorization for Primary  | As a Primary Backend Operator, I want the proxy to refuse a configuration that lets a Secondary Backend forward an Authorization Command so that no Secondary Backend can start a charging session for a card I denied.            | High     | Implemented   |
 | FR-020 | Pause and Resume Charging          | As a Secondary Backend Operator, I want to lower, pause and resume the charging power of a running Transaction with the Exclusive Command assigned to me so that I can follow solar surplus without ending the Transaction.        | High     | Open   |
 | FR-021 | Store and Forward Primary Updates  | As a Backend Operator, I want `StopTransaction` and transaction `MeterValues` messages retained and delivered in order after a Primary Backend outage, and the newest connector status, firmware status and diagnostics status kept and delivered after them, each with an immediate local acknowledgement, so that updates are not lost when the service recovers. | High | Implemented |
+| FR-022 | Send Debug Command                 | As a Proxy Administrator, I want to send any Charger-bound OCPP command to a connected Charger through an optional, disabled-by-default debug endpoint and see the Charger's raw reply so that I can diagnose Charger behavior without a Backend. | Medium   | Open   |
 
 ## Non-Functional Requirements
 
@@ -45,6 +46,7 @@ The proxy is vendor-neutral and supports Chargers and Backends using the protoco
 | NFR-009 | Secondary Isolation      | An outage, slowness or rejection of one Secondary Backend must cause 0 delayed or lost messages to any other Secondary Backend.     | Availability    | High     | Open        |
 | NFR-010 | Backend Count            | The proxy must serve at least 5 Secondary Backends per Charger session at the same time.                                           | Scalability     | Medium   | Implemented        |
 | NFR-011 | Primary Outage Recovery   | The Charger connection mirrors the Primary Backend's availability: an outage shorter than the configured grace period (default 30 seconds) must not close the Charger connection; a longer one, or a call needing the Primary Backend's answer that cannot get one within its timeout, must close it without a substitute answer, so the Charger applies its own OCPP offline behavior. The proxy must retry indefinitely, retain up to 10,000 eligible updates per Charger (default, configurable to no less than 10,000) across restarts, replay them in order, and log/drop meter readings first on overflow, then the oldest. | Availability | High | Implemented |
+| NFR-012 | Debug Endpoint Exposure  | The debug endpoint must be off by default, bind to loopback by default, reject browser requests (Origin header) and allow at most 1 command in flight per Charger. | Security        | High     | Open        |
 
 ## Constraints
 

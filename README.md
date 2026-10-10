@@ -126,6 +126,112 @@ with `Rejected`.
   read-only; secrets come from environment variables.
 - **Never** forward the proxy port on your router.
 
+## Debug endpoint
+
+An optional HTTP endpoint that sends **any charger-bound OCPP 1.6 command** to a connected charger
+and returns the charger's own CALLRESULT or CALLERROR. It exists to diagnose charger behavior,
+for example when a backend's `SetChargingProfile` is `Accepted` but the charging power does not
+change (`Accepted` means "stored", not "applied"). It is off by default.
+
+Enable it in `config.toml` (see `config.example.toml`):
+
+```toml
+[debug]
+enabled = true
+listen = "127.0.0.1"    # default
+port = 8322             # default; must differ from [proxy] port
+default_timeout = 30    # seconds to wait for the charger
+max_timeout = 250       # per-request timeout is clamped to this
+```
+
+### Security model
+
+There is **no authentication**. The guard-rails are:
+
+- off unless `enabled = true`; binds to loopback by default (a warning is logged when bound elsewhere);
+- only `GET` and `POST`; a request with an `Origin` header (a browser) is refused with 403 and a
+  command needs `Content-Type: application/json`;
+- at most one command in flight per charger (409 otherwise); small request size limits;
+- one audit log line per command; no queuing when the charger is offline.
+
+Things to know before you use it:
+
+- It **bypasses the command policy** and the exclusive-command rules, and **no `transactionId`
+  rewriting** happens: use the charger's own transaction id (the primary's), not a secondary's.
+- Debug commands and their replies are **never forwarded to backends**, but their effects stay on
+  the charger and can interfere with the control backend's charging profiles.
+- Persistent effects: `ChangeConfiguration`, `ChangeAvailability` and charging profiles survive
+  until changed again. An empty `ClearChargingProfile` removes every profile, including the
+  load-balancing cap the control backend set.
+- Hardware risks: `UpdateFirmware`, `Reset` (a hard reset or `UnlockConnector` under load),
+  `DataTransfer`, `GetDiagnostics` (uploads to any URL you give) and vendor or safety keys via
+  `ChangeConfiguration` (e.g. `AuthorizationKey`). A profile above the site's breaker rating is
+  not checked by the proxy.
+- Anyone who can reach the port can do all of this. Never publish it to the LAN or router.
+
+### Endpoints
+
+List the configured chargers:
+
+```sh
+curl http://127.0.0.1:8322/debug/chargers
+```
+```json
+{"chargers": [{"id": "SE123456", "connected": true, "connected_since": "2026-10-10T08:01:12Z", "remote": "192.168.1.50:51234"}]}
+```
+
+Send a command (`payload` defaults to `{}`, `timeout` to `default_timeout`):
+
+```sh
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"GetConfiguration","payload":{"key":["ChargingScheduleMaxPeriods"]}}' \
+  http://127.0.0.1:8322/debug/chargers/SE123456/commands
+```
+```json
+{
+  "status": "CallResult",
+  "answered_by": "charger",
+  "message_id": "dbg-0f3a...",
+  "action": "GetConfiguration",
+  "latency_ms": 143,
+  "result": {"configurationKey": [{"key": "ChargingScheduleMaxPeriods", "readonly": true, "value": "24"}]},
+  "sent": [2, "dbg-0f3a...", "GetConfiguration", {"key": ["ChargingScheduleMaxPeriods"]}],
+  "received": [3, "dbg-0f3a...", {"configurationKey": []}]
+}
+```
+
+A charger that answers with an OCPP error is still HTTP 200, with `"status": "CallError"` and
+`"error": {"code": ..., "description": ..., "details": ...}` instead of `result`.
+`answered_by: "charger"` tells a charger's own `Rejected` from one the proxy would answer
+itself. Only the 19 charger-bound OCPP 1.6 actions are accepted (not charger-to-backend ones such
+as `Authorize`).
+
+| HTTP | Meaning |
+|---|---|
+| 200 | the charger answered (CallResult or CallError) |
+| 400 | invalid JSON, unknown or charger-originated action, `payload` not an object, bad `timeout` |
+| 403 | `Origin` header present (browser request) |
+| 404 | unknown charger, or charger not connected |
+| 408 / 411 / 413 / 431 / 501 | request read timeout / no `Content-Length` / body too large / headers too large / chunked or unsupported method |
+| 409 | another debug command is in flight for this charger |
+| 502 | the charger disconnected before it answered |
+| 504 | the charger did not answer within the timeout (the frame that was sent is included) |
+
+### Bruno collection and diagnostic playbook
+
+`bruno/` holds a [Bruno](https://www.usebruno.com/) collection with one request per charger-bound
+action (open the folder in Bruno, pick the `local` environment, set `chargerId`) and its own
+README with the diagnostic playbook for a charging profile that is accepted but has no effect:
+`GetConfiguration` (supported feature profiles, schedule limits) -> `TriggerMessage MeterValues`
+-> `GetCompositeSchedule` -> `ClearChargingProfile` -> `SetChargingProfile` variants, re-checking
+`GetCompositeSchedule` and the meter's `Current.Offered` after each.
+
+### Docker
+
+Inside the container the endpoint must listen on all interfaces (`listen = "0.0.0.0"`), which is
+only safe if you publish it on the host's loopback: use `"127.0.0.1:8322:8322"` in `ports` (the
+commented line in `compose.yaml`), never the LAN IP. Remove it again when you are done.
+
 ## Before you rely on it: Phase 0 checks
 
 1. **Find the backend OCPP endpoints.** Pointing the charger straight at only one backend

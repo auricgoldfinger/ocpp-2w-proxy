@@ -23,3 +23,5 @@
 | Authorization Command | An Exclusive Command that can let a card charge without the Primary Backend's Card Authorization: remote start, local authorization list, reservations, and changes to the Charger's authorization settings. Only the Primary Backend may forward it. | |
 | Card Authorization | The Primary Backend's decision whether a charging card may charge, given in reply to the Charger's authorization or transaction start. | Card check |
 | Charging Profile  | A Command-supplied power limit for a Transaction or connector; a limit of zero pauses charging without ending the Transaction. | Power schedule |
+| Debug Endpoint    | An optional HTTP listener, disabled by default, that lets the Proxy Administrator send a Command directly to a connected Charger, bypassing every Command Policy, and returns the Charger's raw reply. | Admin API |
+| Debug Command     | A Command sent through the Debug Endpoint; it is never forwarded to a Backend and its transaction numbers are the Charger's own. | |

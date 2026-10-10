@@ -19,6 +19,16 @@ level = "INFO"          # DEBUG, INFO, WARNING, ERROR, CRITICAL
 # At DEBUG, also log (redacted) payloads. RFID tags are masked; credentials never logged.
 log_payloads = false
 
+# Optional debug endpoint: send any OCPP command to a connected charger over HTTP and read its
+# raw answer (see "Debug endpoint" in the README). Off by default, NO authentication, and it
+# bypasses every command policy: enable it only while diagnosing, keep it on loopback.
+# [debug]
+# enabled = false
+# listen = "127.0.0.1"     # in a container use "0.0.0.0" and publish only on the host's 127.0.0.1
+# port = 8322              # must differ from [proxy] port
+# default_timeout = 30     # seconds to wait for the charger's answer
+# max_timeout = 250        # upper limit for a per-request timeout
+
 # Allowlist: only these chargers may connect. The charger connects to <proxy-url>/<id>
 # and sends <id> as Basic-auth username.
 [[chargers]]

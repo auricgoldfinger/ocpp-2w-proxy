@@ -13,6 +13,7 @@ rectangle "ocpp-2w-proxy" {
     usecase "UC-003\nRelay Charger Messages" as UC003
     usecase "UC-004\nRelay Backend Commands" as UC004
     usecase "UC-006\nDeliver Billing Messages to Secondary Backends" as UC006
+    usecase "UC-007\nSend Debug Command" as UC007
 }
 
 note bottom of secondary
@@ -29,6 +30,8 @@ primary --> UC004
 secondary --> UC004
 secondary --> UC006
 secondary_operator --> UC006
+admin --> UC007
+charger --> UC007
 
 note bottom of UC006
   Delivery is initiated automatically by the proxy.

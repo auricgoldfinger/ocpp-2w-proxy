@@ -10,6 +10,9 @@ services:
     ports:
       # Bind to the NAS's LAN IP only; never forward this port on your router.
       - "192.168.0.10:8321:8321"
+      # Optional debug endpoint (needs [debug] enabled = true and listen = "0.0.0.0" in config.toml).
+      # Unauthenticated: keep the host side on 127.0.0.1, never the LAN IP.
+      # - "127.0.0.1:8322:8322"
     environment:
       - TZ=Europe/Brussels
       # - PRIMARY_PASSWORD=change-me      # Tap (primary): if [primary] uses auth = "basic"
