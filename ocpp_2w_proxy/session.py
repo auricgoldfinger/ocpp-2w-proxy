@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -29,6 +31,7 @@ from .charger_auth import ChargerIdentity
 from .charger_context import ChargerContext
 from .command_router import CommandRouter, ReplyTarget
 from .config import Config
+from .debug_target import ChargerGone, CommandTimeout, FutureReplyTarget
 from .ocpp import (
     Call,
     CallError,
@@ -56,6 +59,15 @@ SESSION_ENDED = 1001
 Translate = Callable[[Call], Call | None]
 
 
+@dataclass(frozen=True)
+class CommandReply:
+    """The outcome of send_command: what went out, what came back (both with the wire id)."""
+
+    sent: Call
+    reply: Reply
+    latency_ms: int
+
+
 class ChargerSession:
     def __init__(
         self,
@@ -74,6 +86,7 @@ class ChargerSession:
         self._secondaries = dict(charger.secondaries)
         self._router = CommandRouter()
         self._relays: set[asyncio.Task] = set()
+        self._debug_targets: set[FutureReplyTarget] = set()
 
     async def run(self) -> None:
         try:
@@ -104,6 +117,8 @@ class ChargerSession:
             else:
                 logger.info("%s charger disconnected; ending session", self.charger_id)
         finally:
+            for target in self._debug_targets:
+                target.fail(ChargerGone())
             tasks = essential | self._relays
             for task in tasks:
                 task.cancel()
@@ -235,6 +250,26 @@ class ChargerSession:
         else:
             logger.info("%s %s from %s answered by proxy (policy)", self.charger_id, call.action, origin.name)
         await origin.reply(decision)
+
+    async def send_command(self, action: str, payload: dict, timeout: float) -> CommandReply:
+        """Send a Call of our own to the charger, bypassing policy, and wait for its answer.
+
+        Raises ChargerGone if the socket is or goes away, CommandTimeout if no answer comes in time.
+        """
+        target = FutureReplyTarget()
+        sent = self._router.outbound(target, Call(new_message_id(), action, payload))
+        self._debug_targets.add(target)
+        started = time.monotonic()
+        try:
+            if not await self._send_to_charger(sent):
+                raise ChargerGone
+            reply = await target.wait(timeout)
+        except TimeoutError:
+            raise CommandTimeout(sent) from None
+        finally:
+            self._debug_targets.discard(target)
+            self._router.discard(sent.id)
+        return CommandReply(sent, reply.with_id(sent.id), round((time.monotonic() - started) * 1000))
 
     async def _send_to_charger(self, message: Message) -> bool:
         """True if the message was handed to the charger's socket."""
