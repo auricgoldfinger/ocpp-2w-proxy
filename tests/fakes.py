@@ -7,6 +7,7 @@ import base64
 import json
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -25,6 +26,14 @@ def default_responder(action: str, payload: dict[str, Any]) -> dict[str, Any] | 
         "MeterValues": {},
         "StatusNotification": {},
     }.get(action, {})
+
+
+@dataclass(frozen=True)
+class ErrorReply:
+    """What a FakeCharger responder returns to answer with a CallError."""
+
+    code: str = "NotSupported"
+    description: str = ""
 
 
 class FakeCsms:
@@ -114,7 +123,8 @@ class FakeCsms:
 
 
 class FakeCharger:
-    """Connects to the proxy like a charger would; answers commands via `responder`."""
+    """Connects to the proxy like a charger would; answers commands via `responder`
+    (an ErrorReply answers with a CallError, None stays silent)."""
 
     def __init__(self, ws: ClientConnection, responder: Responder):
         self.ws = ws
@@ -146,7 +156,11 @@ class FakeCharger:
             self.frames.append(frame)
             if frame[0] == 2:
                 self.received_calls.append(frame)
-                await self.ws.send(json.dumps([3, frame[1], self.responder(frame[2], frame[3])]))
+                answer = self.responder(frame[2], frame[3])
+                if isinstance(answer, ErrorReply):
+                    await self.ws.send(json.dumps([4, frame[1], answer.code, answer.description, {}]))
+                elif answer is not None:  # None: stay silent
+                    await self.ws.send(json.dumps([3, frame[1], answer]))
             else:
                 future = self._pending.pop(frame[1], None)
                 if future and not future.done():

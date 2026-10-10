@@ -40,6 +40,7 @@ from .ocpp import (
     ProtocolError,
     Reply,
     new_message_id,
+    now_iso,
     parse,
     protocol_error_reply,
     serialize,
@@ -87,6 +88,9 @@ class ChargerSession:
         self._router = CommandRouter()
         self._relays: set[asyncio.Task] = set()
         self._debug_targets: set[FutureReplyTarget] = set()
+        self.connected_since = now_iso()
+        address = ws.remote_address
+        self.remote = f"{address[0]}:{address[1]}" if address else None
 
     async def run(self) -> None:
         try:

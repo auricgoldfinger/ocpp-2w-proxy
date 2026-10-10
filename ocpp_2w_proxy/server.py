@@ -32,6 +32,7 @@ REPLACE_TIMEOUT_SECONDS = 15
 @dataclass
 class _ActiveSession:
     ws: ServerConnection
+    session: ChargerSession
     finished: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -73,6 +74,14 @@ class ProxyServer:
             await self._server.wait_closed()
             self._server = None
         await asyncio.gather(*(context.close() for context in self._chargers.values()))
+
+    def session_for(self, charger_id: str) -> ChargerSession | None:
+        """The charger's live session, or None while it is not connected."""
+        active = self._sessions.get(charger_id)
+        return active.session if active else None
+
+    def charger_ids(self) -> tuple[str, ...]:
+        return tuple(self._config.chargers)
 
     def _build_context(self, charger: ChargerConfig) -> ChargerContext:
         store = StateStore.for_charger(self._config.proxy.state_dir, charger.id)
@@ -122,11 +131,12 @@ class ProxyServer:
         charger_id = identity.charger.id
         async with self._locks[charger_id]:
             await self._replace_existing(charger_id)
-            active = _ActiveSession(ws)
+            session = ChargerSession(ws, identity, self._config, self._chargers[charger_id])
+            active = _ActiveSession(ws, session)
             self._sessions[charger_id] = active
         logger.info("%s connected (subprotocol %s)", charger_id, ws.subprotocol)
         try:
-            await ChargerSession(ws, identity, self._config, self._chargers[charger_id]).run()
+            await session.run()
         except Exception:
             logger.exception("%s session crashed", charger_id)
         finally:

@@ -64,9 +64,13 @@ def make_raw_config(
 
 
 @pytest.fixture
-async def start_proxy(tmp_path):
-    proxies = []
+def proxies():
+    """The ProxyServers started by start_proxy, for tests that reach into them."""
+    return []
 
+
+@pytest.fixture
+async def start_proxy(tmp_path, proxies):
     async def _start(primary_url: str, secondary_urls: str | list[str] | None = None, environ=None, **overrides) -> str:
         environ = {"TAP_PASSWORD": "tap-secret", **(environ or {})}
         config = parse(make_raw_config(primary_url, secondary_urls, tmp_path, **overrides), environ)
