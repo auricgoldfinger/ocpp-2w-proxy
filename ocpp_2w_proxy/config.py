@@ -13,6 +13,8 @@ from typing import Any
 
 from .command_assignments import validate_command_assignments, withhold_secondary_keys
 from .config_error import ConfigError
+from .config_values import flag, number, reject_unknown_keys
+from .debug_config import DebugConfig, parse_debug
 from .ocpp import OCPP_ACTIONS
 from .policy import (
     PRIMARY_DEFAULT_RULE,
@@ -43,7 +45,7 @@ DEFAULT_SECONDARY_FORWARD_ACTIONS = [
 ]
 
 # Known keys per configuration section: a typo must fail loudly, not silently never match.
-TOP_LEVEL_KEYS = frozenset({"proxy", "logging", "chargers", "primary", "secondary"})
+TOP_LEVEL_KEYS = frozenset({"proxy", "logging", "chargers", "primary", "secondary", "debug"})
 PROXY_KEYS = frozenset({"listen", "port", "state_dir", "tls_cert", "tls_key", "ping_interval", "ping_timeout"})
 LOGGING_KEYS = frozenset({"level", "log_payloads"})
 CHARGER_KEYS = frozenset({"id", "password_env", "primary_id", "secondary_ids"})
@@ -109,6 +111,7 @@ class Config:
     chargers: Mapping[str, ChargerConfig]
     primary: PrimaryConfig
     secondaries: tuple[SecondaryConfig, ...]
+    debug: DebugConfig = DebugConfig()
 
 
 def load(path: Path, environ: Mapping[str, str] = os.environ) -> Config:
@@ -118,48 +121,6 @@ def load(path: Path, environ: Mapping[str, str] = os.environ) -> Config:
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"cannot read {path}: {exc}") from exc
     return parse(raw, environ)
-
-
-def _reject_unknown_keys(section: Mapping[str, Any], known: frozenset[str], where: str) -> None:
-    unknown = set(section) - known
-    if unknown:
-        raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
-
-
-def _number(
-    section: Mapping[str, Any],
-    key: str,
-    default: Any,
-    where: str,
-    cast: type,
-    minimum: float | None = None,
-    maximum: float | None = None,
-) -> Any:
-    value = section.get(key, default)
-    try:
-        if isinstance(value, bool):
-            raise TypeError
-        number = cast(value)
-    except TypeError, ValueError:
-        raise ConfigError(f"{where}: {key} must be a number, not {value!r}") from None
-    if (minimum is not None and number < minimum) or (maximum is not None and number > maximum):
-        raise ConfigError(f"{where}: {key} must be {_bounds_text(minimum, maximum)}, not {value!r}")
-    return number
-
-
-def _bounds_text(minimum: float | None, maximum: float | None) -> str:
-    if minimum is not None and maximum is not None:
-        return f"between {minimum} and {maximum}"
-    if minimum is not None:
-        return f"at least {minimum}"
-    return f"at most {maximum}"
-
-
-def _flag(section: Mapping[str, Any], key: str, where: str) -> bool:
-    value = section.get(key, False)
-    if not isinstance(value, bool):
-        raise ConfigError(f"{where}: {key} must be true or false, not {value!r}")
-    return value
 
 
 class _Secrets:
@@ -177,7 +138,7 @@ class _Secrets:
 
 
 def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Config:
-    _reject_unknown_keys(raw, TOP_LEVEL_KEYS, "configuration")
+    reject_unknown_keys(raw, TOP_LEVEL_KEYS, "configuration")
     secrets = _Secrets(environ)
     chargers = _parse_chargers(raw.get("chargers", []), secrets)
     if "primary" not in raw:
@@ -187,7 +148,9 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     _validate_charger_backend_ids(chargers, secondaries)
     validate_command_assignments(primary, secondaries)
     primary = withhold_secondary_keys(primary, secondaries)
-    return Config(_parse_proxy(raw.get("proxy", {}), raw.get("logging", {})), chargers, primary, secondaries)
+    proxy = _parse_proxy(raw.get("proxy", {}), raw.get("logging", {}))
+    debug = parse_debug(raw.get("debug", {}), proxy.port)
+    return Config(proxy, chargers, primary, secondaries, debug)
 
 
 def _parse_secondaries(entries: Any, secrets: _Secrets) -> tuple[SecondaryConfig, ...]:
@@ -223,8 +186,8 @@ def _validate_charger_backend_ids(
 
 
 def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any]) -> ProxyConfig:
-    _reject_unknown_keys(section, PROXY_KEYS, "[proxy]")
-    _reject_unknown_keys(logging_section, LOGGING_KEYS, "[logging]")
+    reject_unknown_keys(section, PROXY_KEYS, "[proxy]")
+    reject_unknown_keys(logging_section, LOGGING_KEYS, "[logging]")
     tls_cert, tls_key = section.get("tls_cert") or None, section.get("tls_key") or None
     if bool(tls_cert) != bool(tls_key):
         raise ConfigError("[proxy] tls_cert and tls_key must be set together")
@@ -233,14 +196,14 @@ def _parse_proxy(section: Mapping[str, Any], logging_section: Mapping[str, Any])
         raise ConfigError(f"[logging] level must be one of {', '.join(LOG_LEVELS)}, not {log_level!r}")
     return ProxyConfig(
         listen=str(section.get("listen", "0.0.0.0")),
-        port=_number(section, "port", 8321, "[proxy]", int, 0, 65535),
+        port=number(section, "port", 8321, "[proxy]", int, 0, 65535),
         state_dir=Path(section.get("state_dir", "./state")),
         tls_cert=Path(tls_cert) if tls_cert else None,
         tls_key=Path(tls_key) if tls_key else None,
-        ping_interval=_number(section, "ping_interval", 30, "[proxy]", float, 1),
-        ping_timeout=_number(section, "ping_timeout", 60, "[proxy]", float, 1),
+        ping_interval=number(section, "ping_interval", 30, "[proxy]", float, 1),
+        ping_timeout=number(section, "ping_timeout", 60, "[proxy]", float, 1),
         log_level=log_level,
-        log_payloads=_flag(logging_section, "log_payloads", "[logging]"),
+        log_payloads=flag(logging_section, "log_payloads", "[logging]"),
     )
 
 
@@ -262,7 +225,7 @@ def _parse_chargers(entries: Any, secrets: _Secrets) -> dict[str, ChargerConfig]
         if charger_id in chargers:
             raise ConfigError(f"duplicate charger id {charger_id!r}")
         _reject_inline_password(entry, f"charger {charger_id!r}")
-        _reject_unknown_keys(entry, CHARGER_KEYS, f"charger {charger_id!r}")
+        reject_unknown_keys(entry, CHARGER_KEYS, f"charger {charger_id!r}")
         chargers[charger_id] = ChargerConfig(
             id=charger_id,
             password=secrets.get(entry, f"charger {charger_id}"),
@@ -297,7 +260,7 @@ def _parse_backend(
     known_keys: frozenset[str],
 ) -> BackendConfig:
     _reject_inline_password(section, f"[{name}]")
-    _reject_unknown_keys(section, known_keys, f"[{name}]")
+    reject_unknown_keys(section, known_keys, f"[{name}]")
     url = section.get("url")
     if not isinstance(url, str) or not url.startswith(("ws://", "wss://")):
         raise ConfigError(f"[{name}] url must start with ws:// or wss://")
@@ -314,8 +277,8 @@ def _parse_backend(
         auth=auth,
         password=password,
         policy=_parse_policy(name, section.get("policy", {}), default_rules, default_rule),
-        call_timeout=_number(section, "call_timeout", 30, f"[{name}]", float, 1),
-        max_queue=_number(section, "max_queue", MIN_QUEUE, f"[{name}]", int, MIN_QUEUE),
+        call_timeout=number(section, "call_timeout", 30, f"[{name}]", float, 1),
+        max_queue=number(section, "max_queue", MIN_QUEUE, f"[{name}]", int, MIN_QUEUE),
     )
 
 
@@ -327,7 +290,7 @@ def _parse_policy(
 ) -> CommandPolicy:
     if not isinstance(section, Mapping):
         raise ConfigError(f"[{name}] policy must be a table")
-    _reject_unknown_keys(section, POLICY_KEYS, f"[{name}.policy]")
+    reject_unknown_keys(section, POLICY_KEYS, f"[{name}.policy]")
     allow_keys = _lowercase_keys(section.get("change_configuration_allow_keys", []), name)
     actions = section.get("actions", {})
     if not isinstance(actions, Mapping):
@@ -344,7 +307,7 @@ def _parse_policy(
             rules=rules,
             default_rule=Rule(section.get("default", default_rule)),
             change_configuration_allow_keys=allow_keys,
-            strip_charging_profile=_flag(section, "strip_charging_profile", f"[{name}.policy]"),
+            strip_charging_profile=flag(section, "strip_charging_profile", f"[{name}.policy]"),
         )
     except ValueError as exc:
         raise ConfigError(f"[{name}.policy] {exc}") from exc
@@ -362,7 +325,7 @@ def _parse_primary(section: Mapping[str, Any], secrets: _Secrets) -> PrimaryConf
     base = _parse_backend(PRIMARY_NAME, section, secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, PRIMARY_KEYS)
     return PrimaryConfig(
         **vars(base),
-        outage_grace=_number(section, "outage_grace", DEFAULT_OUTAGE_GRACE, f"[{PRIMARY_NAME}]", float, 0),
+        outage_grace=number(section, "outage_grace", DEFAULT_OUTAGE_GRACE, f"[{PRIMARY_NAME}]", float, 0),
     )
 
 
