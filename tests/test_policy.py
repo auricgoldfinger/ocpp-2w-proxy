@@ -2,6 +2,7 @@ import pytest
 
 from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
 from ocpp_2w_proxy.policy import (
+    CHARGER_BOUND_ACTIONS,
     PRIMARY_DEFAULT_RULE,
     PRIMARY_DEFAULT_RULES,
     SECONDARY_DEFAULT_RULE,
@@ -87,3 +88,9 @@ def test_primary_cannot_change_a_key_owned_by_a_secondary():
     other = Call("2", "ChangeConfiguration", {"key": "HeartbeatInterval", "value": "60"})
     assert primary.decide(owned) == CallResult("1", {"status": "Rejected"})
     assert primary.decide(other) == other
+
+
+def test_charger_bound_actions_are_the_nineteen_a_central_system_can_send():
+    assert len(CHARGER_BOUND_ACTIONS) == 19
+    assert {"Reset", "SetChargingProfile", "DataTransfer"} <= CHARGER_BOUND_ACTIONS
+    assert not CHARGER_BOUND_ACTIONS & {"Heartbeat", "BootNotification", "StartTransaction", "Nope"}

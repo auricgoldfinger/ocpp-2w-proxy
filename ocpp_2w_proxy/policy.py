@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .ocpp import Call, CallError, CallResult, Reply
+from .ocpp import OCPP_ACTIONS, Call, CallError, CallResult, Reply
 
 
 class Rule(StrEnum):
@@ -46,6 +46,24 @@ CANNED_ANSWERS: Mapping[str, dict[str, Any]] = {
     "UnlockConnector": {"status": "NotSupported"},
     "UpdateFirmware": {},
 }
+
+# Actions only a charger sends. DataTransfer is not among them: either side may send it.
+CHARGER_ORIGINATED_ACTIONS: frozenset[str] = frozenset(
+    {
+        "Authorize",
+        "BootNotification",
+        "DiagnosticsStatusNotification",
+        "FirmwareStatusNotification",
+        "Heartbeat",
+        "MeterValues",
+        "StartTransaction",
+        "StatusNotification",
+        "StopTransaction",
+    }
+)
+
+# The 19 actions a Central System can send to a charger.
+CHARGER_BOUND_ACTIONS: frozenset[str] = OCPP_ACTIONS - CHARGER_ORIGINATED_ACTIONS
 
 # UC-001 BR-007: commands that change the charger's behavior, settings or authorization.
 # Each may be forwarded by at most one backend.
