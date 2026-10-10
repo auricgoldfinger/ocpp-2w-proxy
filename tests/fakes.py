@@ -179,3 +179,23 @@ class FakeCharger:
     async def close(self) -> None:
         await self.ws.close()
         self._reader.cancel()
+
+
+async def http_request(
+    port: int, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
+) -> tuple[int, Any]:
+    """A bare-bones HTTP client for the debug endpoint: JSON body in (unless a str/bytes), JSON out."""
+    payload = body if isinstance(body, bytes) else b"" if body is None else json.dumps(body).encode()
+    sent = {"Host": "localhost", "Content-Length": str(len(payload))}
+    if payload:
+        sent["Content-Type"] = "application/json"
+    sent.update(headers or {})
+    head = f"{method} {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in sent.items()) + "\r\n"
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(head.encode() + payload)
+        response = await asyncio.wait_for(reader.read(), 10)
+    finally:
+        writer.close()
+    status_line, _, rest = response.partition(b"\r\n")
+    return int(status_line.split(b" ")[1]), json.loads(rest.partition(b"\r\n\r\n")[2])

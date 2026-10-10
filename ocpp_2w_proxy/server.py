@@ -16,6 +16,7 @@ from .backend_link import SUBPROTOCOL
 from .charger_auth import AuthRejected, ChargerIdentity, authenticate, parse_basic
 from .charger_context import ChargerContext
 from .config import ChargerConfig, Config
+from .debug_server import DebugServer
 from .primary_channel import PrimaryChannel
 from .redact import describe_credentials
 from .secondary_channel import SecondaryChannel
@@ -41,6 +42,7 @@ class ProxyServer:
         self._config = config
         self._chargers = {charger_id: self._build_context(charger) for charger_id, charger in config.chargers.items()}
         self._server: Server | None = None
+        self._debug = DebugServer(config.debug, self) if config.debug.enabled else None
         # Weak: a handshake can still fail after process_request (e.g. subprotocol mismatch).
         self._identities: weakref.WeakKeyDictionary[ServerConnection, ChargerIdentity] = weakref.WeakKeyDictionary()
         self._sessions: dict[str, _ActiveSession] = {}
@@ -64,11 +66,19 @@ class ProxyServer:
         self._server = server
         for context in self._chargers.values():
             context.start_background()
+        if self._debug is not None:
+            await self._debug.start()
         scheme = "wss" if proxy.tls_cert else "ws"
         logger.info("listening on %s://%s:%d/<chargerId>", scheme, proxy.listen, proxy.port)
         return server
 
+    @property
+    def debug_port(self) -> int | None:
+        return self._debug.port if self._debug is not None else None
+
     async def close(self) -> None:
+        if self._debug is not None:
+            await self._debug.close()
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()

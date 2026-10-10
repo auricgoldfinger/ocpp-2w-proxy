@@ -46,6 +46,8 @@ def make_raw_config(
         "chargers": [{"id": CHARGER_ID, **overrides.pop("charger", {})}],
         "primary": {"url": primary_url, "auth": "forward", "call_timeout": 3, **overrides.pop("primary", {})},
     }
+    if "debug" in overrides:  # the endpoint is off unless a test asks for it; port 0 = any free port
+        raw["debug"] = {"enabled": True, "port": 0, **overrides.pop("debug")}
     secondary_overrides = overrides.pop("secondary", {})
     entries = [
         {
