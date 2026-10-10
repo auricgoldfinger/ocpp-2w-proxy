@@ -1,0 +1,33 @@
+meta {
+  name: GetCompositeSchedule connector 1 W
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "GetCompositeSchedule",
+    "payload": {
+      "connectorId": 1,
+      "duration": 3600,
+      "chargingRateUnit": "W"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 3b. Same as 3a in Watts. Compare with the A result: W = A * volts * phases. A mismatch hints at wrong phase/voltage assumptions.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

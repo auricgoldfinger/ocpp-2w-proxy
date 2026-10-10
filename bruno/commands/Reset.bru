@@ -1,0 +1,35 @@
+meta {
+  name: Reset
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "Reset",
+    "payload": {
+      "type": "Soft"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Reboots the charger. Soft = graceful, Hard = power-cycle style.
+
+  Side effects / persistence: Charger disconnects and reconnects; running transactions are stopped/interrupted.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+
+  HARDWARE RISK: Hard reset under load can interrupt a transaction abruptly and stress the hardware. Prefer Soft.
+}

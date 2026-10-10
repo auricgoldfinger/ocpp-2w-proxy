@@ -1,0 +1,51 @@
+meta {
+  name: SetChargingProfile-TxProfile
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 101,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxProfile",
+        "chargingProfileKind": "Relative",
+        "transactionId": 10048,
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Installs a profile for the running transaction 10048 (use the charger's own transaction id). 6 A, stack level 1.
+
+  Side effects / persistence: Stored for the duration of the transaction. 'Accepted' means stored, NOT applied.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+
+  HARDWARE RISK: A limit above the installation rating is not checked here.
+}

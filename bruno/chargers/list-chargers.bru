@@ -1,0 +1,20 @@
+meta {
+  name: List chargers
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/debug/chargers
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Lists configured chargers with connected, connected_since and remote.
+  Read-only.
+}

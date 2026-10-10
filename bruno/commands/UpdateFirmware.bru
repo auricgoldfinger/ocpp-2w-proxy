@@ -1,0 +1,38 @@
+meta {
+  name: UpdateFirmware
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "UpdateFirmware",
+    "payload": {
+      "location": "https://example.invalid/firmware.bin",
+      "retrieveDate": "2030-01-01T03:00:00Z",
+      "retries": 1,
+      "retryInterval": 60
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Tells the charger to download and install firmware.
+
+  Side effects / persistence: Charger downloads, installs, and reboots; FirmwareStatusNotification follows.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+
+  HARDWARE RISK: A wrong or malicious image can brick the charger. Only use vendor-signed firmware from a server you control.
+}

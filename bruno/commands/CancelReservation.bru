@@ -1,0 +1,33 @@
+meta {
+  name: CancelReservation
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "CancelReservation",
+    "payload": {
+      "reservationId": 1
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Cancels an existing reservation.
+
+  Side effects / persistence: Removes the reservation stored on the charger.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+}

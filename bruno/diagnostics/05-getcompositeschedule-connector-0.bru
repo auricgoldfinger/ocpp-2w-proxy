@@ -1,0 +1,33 @@
+meta {
+  name: GetCompositeSchedule connector 0
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "GetCompositeSchedule",
+    "payload": {
+      "connectorId": 0,
+      "duration": 3600,
+      "chargingRateUnit": "A"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 3c. Charger-wide schedule. Compare with connector 1: a lower value here means a ChargePointMaxProfile or site cap is limiting.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

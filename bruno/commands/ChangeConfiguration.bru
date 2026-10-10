@@ -1,0 +1,36 @@
+meta {
+  name: ChangeConfiguration
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "ChangeConfiguration",
+    "payload": {
+      "key": "MeterValueSampleInterval",
+      "value": "60"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Writes one configuration key.
+
+  Side effects / persistence: Persisted in charger flash; some keys need a reboot (status RebootRequired).
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+
+  HARDWARE RISK: Vendor safety keys and AuthorizationKey can be changed or bricked. Read the current value with GetConfiguration first and write it back to undo.
+}

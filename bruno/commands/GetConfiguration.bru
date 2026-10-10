@@ -1,0 +1,31 @@
+meta {
+  name: GetConfiguration
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "GetConfiguration",
+    "payload": {},
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Reads all configuration keys (omit 'key' for all).
+
+  Side effects / persistence: Read-only.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+}

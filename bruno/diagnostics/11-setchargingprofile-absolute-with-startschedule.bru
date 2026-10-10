@@ -1,0 +1,49 @@
+meta {
+  name: SetChargingProfile Absolute with startSchedule
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 114,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxProfile",
+        "chargingProfileKind": "Absolute",
+        "transactionId": 10048,
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6
+            }
+          ],
+          "startSchedule": "2026-01-01T00:00:00Z",
+          "duration": 3600
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 5e. Absolute with startSchedule. EDIT startSchedule to a current UTC time before sending, otherwise the schedule is in the past. Compare with Relative (5b).
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

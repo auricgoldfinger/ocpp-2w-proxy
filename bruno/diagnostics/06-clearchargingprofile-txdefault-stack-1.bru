@@ -1,0 +1,34 @@
+meta {
+  name: ClearChargingProfile TxDefault stack 1
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "ClearChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "chargingProfilePurpose": "TxDefaultProfile",
+      "stackLevel": 1
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 4. Removes the test profile (stack level 1, TxDefault) before the variants. Never send an empty payload: that clears every profile.
+  HARDWARE RISK: the empty-payload form would remove load-balancing caps.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

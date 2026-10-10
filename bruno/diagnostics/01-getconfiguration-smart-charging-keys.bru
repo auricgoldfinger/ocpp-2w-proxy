@@ -1,0 +1,38 @@
+meta {
+  name: GetConfiguration smart-charging keys
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "GetConfiguration",
+    "payload": {
+      "key": [
+        "SupportedFeatureProfiles",
+        "ChargingScheduleMaxPeriods",
+        "MaxChargingProfilesInstalled",
+        "ConnectorSwitch3to1PhaseSupported",
+        "ChargingScheduleAllowedChargingRateUnit",
+        "ChargeProfileMaxStackLevel"
+      ]
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 1. Check SmartCharging is in SupportedFeatureProfiles, the period/profile limits, and whether 3-to-1 phase switching is supported. Compare: does the charger support the profile kinds and unit (A/W) you send later? Keys listed under 'unknownKey' are not implemented.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

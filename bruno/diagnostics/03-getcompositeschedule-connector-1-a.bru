@@ -1,0 +1,33 @@
+meta {
+  name: GetCompositeSchedule connector 1 A
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "GetCompositeSchedule",
+    "payload": {
+      "connectorId": 1,
+      "duration": 3600,
+      "chargingRateUnit": "A"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 3a. Compare the schedule limit with Current.Offered. If they differ, the charger is not applying its own composite schedule.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

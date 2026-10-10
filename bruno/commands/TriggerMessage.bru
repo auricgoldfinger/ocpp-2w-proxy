@@ -1,0 +1,34 @@
+meta {
+  name: TriggerMessage
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "TriggerMessage",
+    "payload": {
+      "requestedMessage": "MeterValues",
+      "connectorId": 1
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Asks the charger to send a message now (MeterValues, StatusNotification, Heartbeat, ...).
+
+  Side effects / persistence: The triggered message is sent to the backend through the proxy as usual.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+}

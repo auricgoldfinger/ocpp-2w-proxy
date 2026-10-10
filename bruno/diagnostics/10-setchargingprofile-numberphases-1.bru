@@ -1,0 +1,48 @@
+meta {
+  name: SetChargingProfile numberPhases 1
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 113,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxProfile",
+        "chargingProfileKind": "Relative",
+        "transactionId": 10048,
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6,
+              "numberPhases": 1
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 5d. Adds numberPhases 1. Compare Current.Offered per phase; a charger that supports 3to1 switching may only react with numberPhases set.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

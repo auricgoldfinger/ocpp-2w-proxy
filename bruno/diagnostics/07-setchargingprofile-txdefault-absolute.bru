@@ -1,0 +1,46 @@
+meta {
+  name: SetChargingProfile TxDefault absolute
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 110,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxDefaultProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 5a. Baseline variant. After it, re-run TriggerMessage MeterValues and GetCompositeSchedule; compare Current.Offered with 6 A.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

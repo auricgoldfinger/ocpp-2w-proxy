@@ -1,0 +1,47 @@
+meta {
+  name: SetChargingProfile ChargePointMaxProfile
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 0,
+      "csChargingProfiles": {
+        "chargingProfileId": 115,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "ChargePointMaxProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 5f. Charger-wide cap on connector 0. Compare with connector 1 GetCompositeSchedule.
+  HARDWARE RISK: remember to clear it afterwards (ClearChargingProfile with chargingProfilePurpose ChargePointMaxProfile).
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

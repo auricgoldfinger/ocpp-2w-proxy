@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "OCPP 2W Proxy Debug",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

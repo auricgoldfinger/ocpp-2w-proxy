@@ -1,0 +1,47 @@
+meta {
+  name: SetChargingProfile TxProfile relative
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 111,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxProfile",
+        "chargingProfileKind": "Relative",
+        "transactionId": 10048,
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 5b. Transaction-bound relative profile for transaction 10048 (use the charger's own id). Compare effect with 5a.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

@@ -1,0 +1,47 @@
+meta {
+  name: SetChargingProfile stack sweep 2 (level 2)
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 122,
+        "stackLevel": 2,
+        "chargingProfilePurpose": "TxProfile",
+        "chargingProfileKind": "Relative",
+        "transactionId": 10048,
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 6.2. Stack sweep at stackLevel 2. Send levels in order and compare GetCompositeSchedule after each; the highest valid stack level should win. A rejection shows ChargeProfileMaxStackLevel was exceeded.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

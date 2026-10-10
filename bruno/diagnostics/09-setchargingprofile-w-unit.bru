@@ -1,0 +1,47 @@
+meta {
+  name: SetChargingProfile W unit
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 112,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxProfile",
+        "chargingProfileKind": "Relative",
+        "transactionId": 10048,
+        "chargingSchedule": {
+          "chargingRateUnit": "W",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 4000
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 5c. Same as 5b in Watts (4000 W). Compare: if only W (or only A) changes Current.Offered, the charger ignores the other unit.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

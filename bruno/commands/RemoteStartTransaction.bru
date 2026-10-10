@@ -1,0 +1,34 @@
+meta {
+  name: RemoteStartTransaction
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "RemoteStartTransaction",
+    "payload": {
+      "connectorId": 1,
+      "idTag": "TESTTAG"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Asks the charger to start a transaction for an idTag.
+
+  Side effects / persistence: Starts charging if the idTag is accepted; the resulting StartTransaction goes through the proxy to the backend.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+}

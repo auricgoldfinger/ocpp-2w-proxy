@@ -1,0 +1,35 @@
+meta {
+  name: GetCompositeSchedule
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "GetCompositeSchedule",
+    "payload": {
+      "connectorId": 1,
+      "duration": 3600,
+      "chargingRateUnit": "A"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Asks the charger for the schedule it currently computes from all installed profiles.
+
+  Side effects / persistence: Read-only. Compare with Current.Offered in MeterValues to see whether a profile is really applied.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+}

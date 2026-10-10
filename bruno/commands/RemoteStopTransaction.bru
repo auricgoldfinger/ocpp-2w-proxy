@@ -1,0 +1,33 @@
+meta {
+  name: RemoteStopTransaction
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "RemoteStopTransaction",
+    "payload": {
+      "transactionId": 10048
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Stops a running transaction. Use the charger's own transaction id (no proxy rewriting).
+
+  Side effects / persistence: Ends the transaction; StopTransaction follows to the backend.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+}

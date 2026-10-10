@@ -1,0 +1,37 @@
+meta {
+  name: DataTransfer
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "DataTransfer",
+    "payload": {
+      "vendorId": "ExampleVendor",
+      "messageId": "Ping",
+      "data": "hello"
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Vendor-specific data exchange; semantics depend on vendorId/messageId.
+
+  Side effects / persistence: Unknown; depends entirely on the vendor extension.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+
+  HARDWARE RISK: Vendor extensions can change settings or trigger actions without any OCPP safeguards. Only send documented vendor messages.
+}

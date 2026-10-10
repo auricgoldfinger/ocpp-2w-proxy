@@ -1,0 +1,35 @@
+meta {
+  name: UnlockConnector
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "UnlockConnector",
+    "payload": {
+      "connectorId": 1
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Releases the connector's cable lock.
+
+  Side effects / persistence: May stop an ongoing transaction.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+
+  HARDWARE RISK: Unlocking while the cable carries load can cause arcing and damage; make sure no charging is in progress.
+}

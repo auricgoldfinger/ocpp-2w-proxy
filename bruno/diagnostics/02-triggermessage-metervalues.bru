@@ -1,0 +1,32 @@
+meta {
+  name: TriggerMessage MeterValues
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "TriggerMessage",
+    "payload": {
+      "requestedMessage": "MeterValues",
+      "connectorId": 1
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Step 2. Forces a MeterValues so you can read Current.Offered in the proxy log. Baseline value to compare against GetCompositeSchedule and after each SetChargingProfile.
+
+  Status 200 only means the proxy delivered the command. 'Accepted' means stored, not applied.
+}

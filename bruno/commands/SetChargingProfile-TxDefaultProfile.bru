@@ -1,0 +1,50 @@
+meta {
+  name: SetChargingProfile-TxDefaultProfile
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "SetChargingProfile",
+    "payload": {
+      "connectorId": 1,
+      "csChargingProfiles": {
+        "chargingProfileId": 100,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxDefaultProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": {
+          "chargingRateUnit": "A",
+          "chargingSchedulePeriod": [
+            {
+              "startPeriod": 0,
+              "limit": 6
+            }
+          ]
+        }
+      }
+    },
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Installs a default profile applied to new transactions (6 A, stack level 1).
+
+  Side effects / persistence: Stored by the charger (usually persisted). 'Accepted' means stored, NOT applied.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+
+  HARDWARE RISK: A limit above the installation rating is not checked here. Keep limits at or below the site breaker rating.
+}

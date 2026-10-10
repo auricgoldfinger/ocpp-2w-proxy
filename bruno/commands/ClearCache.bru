@@ -1,0 +1,31 @@
+meta {
+  name: ClearCache
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/debug/chargers/{{chargerId}}/commands
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "action": "ClearCache",
+    "payload": {},
+    "timeout": {{timeout}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Clears the charger's local authorization cache.
+
+  Side effects / persistence: Cached idTags are dropped; the next authorization goes to the backend.
+
+  Status 200 only means the proxy delivered the command; check the body for CallResult/CallError. 'Accepted' means stored, not applied.
+}
