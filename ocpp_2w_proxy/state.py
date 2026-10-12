@@ -81,6 +81,11 @@ class ChargerState:
     pending_primary_starts: dict[str, int] = field(default_factory=dict)
     # Backend name -> {StartTransaction start_ref: that backend's transactionId}
     pending_secondary_starts: dict[str, dict[str, int]] = field(default_factory=dict)
+    # Proxy-made transactionIds of sessions withheld from the primary (unauthorized idTag),
+    # oldest first, while the charger may still report on them
+    withheld_transactions: list[int] = field(default_factory=list)
+    # The next proxy-made transactionId; counts down so it stays clear of the primary's ids
+    next_withheld_tx: int = 2147483647
     # Primary calls acknowledged locally while the primary backend was unavailable
     primary_outbox: list[dict[str, Any]] = field(default_factory=list)
     # Newest state report (Status/Firmware/Diagnostics) per subject the primary has not

@@ -16,6 +16,9 @@ from .state import StateStore
 logger = logging.getLogger(__name__)
 
 MAX_PENDING_STARTS = 100
+# Proxy-made transactionIds count down from the int32 maximum: positive (charger firmware
+# may not take a negative id) and far from the ids a backend hands out.
+FIRST_WITHHELD_TX = 2147483647
 
 
 class TransactionMap:
@@ -27,6 +30,56 @@ class TransactionMap:
 
     def primary_started(self, start_ref: str, primary_tx: int) -> None:
         """The primary answered StartTransaction (start_ref = the proxy's own reference for that start)."""
+        self._evict_withheld(primary_tx)
+        self._record_start(start_ref, primary_tx)
+        self._store.save()
+
+    def withheld_started(self, start_ref: str) -> int:
+        """A start the primary never sees: the proxy makes up its transactionId.
+
+        Secondary backends link their ids to it just as they would to a primary's id.
+        """
+        transaction_id = self._allocate_withheld()
+        self._record_start(start_ref, transaction_id)
+        withheld = self._state.withheld_transactions
+        withheld.append(transaction_id)
+        while len(withheld) > MAX_PENDING_STARTS:
+            logger.warning("forgetting withheld transaction %s", withheld.pop(0))
+        self._store.save()
+        return transaction_id
+
+    def withheld_stopped(self, transaction_id: int) -> None:
+        if transaction_id in self._state.withheld_transactions:
+            self._state.withheld_transactions.remove(transaction_id)
+            self._store.save()
+
+    def is_withheld(self, transaction_id: object) -> bool:
+        return transaction_id in self._state.withheld_transactions
+
+    def _allocate_withheld(self) -> int:
+        in_use = (
+            {int(tx) for tx in self._state.transactions}
+            | set(self._state.pending_primary_starts.values())
+            | set(self._state.withheld_transactions)
+        )
+        candidate = self._state.next_withheld_tx
+        while candidate in in_use or candidate < 1:
+            candidate = FIRST_WITHHELD_TX if candidate <= 1 else candidate - 1
+        self._state.next_withheld_tx = candidate - 1
+        return candidate
+
+    def _evict_withheld(self, primary_tx: int) -> None:
+        """The primary reuses a withheld id: the real session wins, its billing data must
+        reach the primary. The withheld session was stopped long ago (it got Invalid)."""
+        if primary_tx not in self._state.withheld_transactions:
+            return
+        logger.error("primary transaction %s reuses a withheld id; the withheld session is forgotten", primary_tx)
+        self._state.withheld_transactions.remove(primary_tx)
+        self._state.transactions.pop(str(primary_tx), None)
+        for ref in [ref for ref, tx in self._state.pending_primary_starts.items() if tx == primary_tx]:
+            del self._state.pending_primary_starts[ref]
+
+    def _record_start(self, start_ref: str, primary_tx: int) -> None:
         links = {
             name: pending.pop(start_ref)
             for name, pending in self._state.pending_secondary_starts.items()
@@ -36,7 +89,6 @@ class TransactionMap:
             self._link(primary_tx, links)
         # Keep the record: secondary backends that answer later still link through it.
         _put_capped(self._state.pending_primary_starts, start_ref, primary_tx)
-        self._store.save()
 
     def secondary_started(self, backend_name: str, start_ref: str, secondary_tx: int) -> None:
         primary_tx = self._state.pending_primary_starts.get(start_ref)

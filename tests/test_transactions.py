@@ -1,6 +1,6 @@
 from ocpp_2w_proxy.ocpp import Call
 from ocpp_2w_proxy.state import StateStore
-from ocpp_2w_proxy.transactions import TransactionMap
+from ocpp_2w_proxy.transactions import MAX_PENDING_STARTS, TransactionMap
 
 
 def make(tmp_path):
@@ -144,3 +144,52 @@ def test_late_secondary_links_through_the_pending_primary_record(tmp_path):
     txmap.secondary_started("stats", "a", 10)  # answers much later, after tap already linked
     assert txmap.to_secondary(100, "tap") == 9
     assert txmap.to_secondary(100, "stats") == 10
+
+
+def test_withheld_ids_count_down_and_survive_restart(tmp_path):
+    txmap = make(tmp_path)
+    assert txmap.withheld_started("a") == 2147483647
+    assert make(tmp_path).withheld_started("b") == 2147483646
+    assert make(tmp_path).is_withheld(2147483647)
+
+
+def test_withheld_transaction_links_to_secondaries(tmp_path):
+    txmap = make(tmp_path)
+    tx = txmap.withheld_started("a")
+    txmap.secondary_started("ha", "a", 9)
+    assert txmap.to_secondary(tx, "ha") == 9
+
+
+def test_withheld_stopped_releases_the_id(tmp_path):
+    txmap = make(tmp_path)
+    tx = txmap.withheld_started("a")
+    txmap.withheld_stopped(tx)
+    assert not txmap.is_withheld(tx)
+
+
+def test_withheld_ids_are_capped(tmp_path):
+    txmap = make(tmp_path)
+    first = txmap.withheld_started("first")
+    for n in range(MAX_PENDING_STARTS):
+        txmap.withheld_started(str(n))
+    assert not txmap.is_withheld(first)
+
+
+def test_withheld_allocation_skips_ids_in_use_and_wraps(tmp_path):
+    txmap = make(tmp_path)
+    txmap.primary_started("real", 2147483647)
+    assert txmap.withheld_started("a") == 2147483646
+    txmap._state.next_withheld_tx = 1
+    txmap.primary_started("low", 1)
+    assert txmap.withheld_started("b") == 2147483645
+
+
+def test_primary_reusing_a_withheld_id_wins(tmp_path):
+    txmap = make(tmp_path)
+    tx = txmap.withheld_started("a")
+    txmap.secondary_started("ha", "a", 9)
+    txmap.primary_started("real", tx)
+    assert not txmap.is_withheld(tx)
+    assert txmap.to_secondary(tx, "ha") is None
+    txmap.secondary_started("ha", "a", 9)  # a late answer to the withheld start links nothing
+    assert txmap.to_secondary(tx, "ha") is None
