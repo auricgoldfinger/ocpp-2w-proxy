@@ -162,3 +162,14 @@ delivery waits for the next authenticated Charger handshake.
 
 A timed-out or interrupted delivery may be retried even if the Primary Backend received the
 original call but its reply was lost; delivery is at least once, not exactly once.
+
+### BR-009: Unauthorized idTag withheld from the Primary Backend
+
+An `Authorize` or `StartTransaction` whose `idTag` is empty or consists only of zeros is not
+sent to the Primary Backend. The proxy answers it with `idTagInfo.status = Invalid`. For a
+start, the answer includes a proxy-made transaction number: counting down from 2147483647,
+skipping numbers still in use, kept across restarts. The `MeterValues` and `StopTransaction`
+of that transaction are also answered by the proxy and not sent to the Primary Backend.
+Secondary Backends receive all of these messages as usual, with their own transaction
+numbers. If the Primary Backend ever issues a number that is still marked as withheld, the
+Primary Backend's transaction takes it over and an error is logged.

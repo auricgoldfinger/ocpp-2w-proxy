@@ -33,6 +33,13 @@ Details that make this work in practice:
   knows the primary's, so the proxy remembers which id each secondary assigned to it and rewrites
   `MeterValues`/`StopTransaction` (to that secondary) and `RemoteStopTransaction` (from it).
   The mapping is stored on disk.
+- **Unauthorized sessions stay away from the primary.** An `Authorize` or `StartTransaction`
+  whose `idTag` is empty or all zeros (some chargers start such a session on plug-in) is never
+  sent to the primary. The proxy answers it `Invalid` itself, so the charger ends the session as
+  it would for an unknown card. For a start, the proxy makes up a `transactionId` that counts
+  down from 2147483647 and skips ids in use. The session's `MeterValues` and `StopTransaction`
+  are withheld from the primary too. The secondaries still receive all of it, so they show that
+  it happened.
 - **Message ids.** Every backend command is given a fresh unique id on its way to the charger,
   so both backends using the same id (e.g. counters) cannot get each other's replies.
 - **Card authorisation** is decided by the primary (register your RFID card in Tap). Whenever a
