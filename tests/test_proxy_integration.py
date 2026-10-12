@@ -89,6 +89,30 @@ async def test_transaction_ids_are_translated_for_the_secondary(primary, seconda
     await charger.close()
 
 
+async def test_unauthorized_session_is_withheld_from_the_primary(primary, secondary, start_proxy):
+    primary.responder = responder_with_transaction(100)
+    secondary.responder = responder_with_transaction(9)
+    url = await start_proxy(primary.url, secondary.url)
+    charger = await FakeCharger.connect(url, CHARGER_ID)
+    await secondary.connected.wait()
+
+    start = await charger.call("StartTransaction", {**START, "idTag": "0" * 20})
+    assert start[2] == {"transactionId": 2147483647, "idTagInfo": {"status": "Invalid"}}
+    await secondary.wait_for_call("StartTransaction")
+
+    await charger.call("MeterValues", {"connectorId": 1, "transactionId": 2147483647, "meterValue": []})
+    await charger.call("StopTransaction", {"transactionId": 2147483647, "meterStop": 7, "timestamp": "t"})
+    assert (await secondary.wait_for_call("MeterValues"))[0]["transactionId"] == 9
+    assert (await secondary.wait_for_call("StopTransaction"))[0]["transactionId"] == 9
+
+    # A real card afterwards still goes to the primary.
+    assert (await charger.call("StartTransaction", START))[2]["transactionId"] == 100
+    assert [p["idTag"] for a, p in primary.calls if a == "StartTransaction"] == [START["idTag"]]
+    assert "MeterValues" not in primary.actions()
+    assert "StopTransaction" not in primary.actions()
+    await charger.close()
+
+
 async def test_remote_stop_from_secondary_is_translated(primary, secondary, start_proxy):
     primary.responder = responder_with_transaction(100)
     secondary.responder = responder_with_transaction(9)

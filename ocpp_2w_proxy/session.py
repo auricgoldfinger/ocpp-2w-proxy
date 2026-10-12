@@ -7,6 +7,8 @@ Routing rules (OCPP 1.6J):
   backend Call         -> policy -> charger with a proxy-unique id, or answered by the proxy
   charger CallResult/  -> the backend that issued the command, with its original id
            CallError
+  charger Call of an   -> every forwarding secondary only; the proxy answers the charger
+  unauthorized idTag      "Invalid" itself (withheld_calls)
 The session lives as long as the charger is connected. Secondary backends reconnect
 independently. The charger mirrors the primary's availability: a call that needs the
 primary's own answer and cannot get one closes the charger connection, so the charger
@@ -50,6 +52,7 @@ from .policy import CANNED_ANSWERS, CommandPolicy, canned_answer
 from .primary_channel import PrimaryUnavailable
 from .primary_outage import outlast_grace
 from .secondary_channel import SecondaryChannel
+from .withheld_calls import Withheld, withhold
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +173,9 @@ class ChargerSession:
             logger.error("%s relaying a charger call failed", self.charger_id, exc_info=task.exception())
 
     async def _relay_charger_call(self, call: Call) -> None:
+        if (withheld := withhold(call, self._transactions)) is not None:
+            await self._relay_withheld(call, withheld)
+            return
         try:
             if call.action == "StartTransaction":
                 await self._relay_start_transaction(call)
@@ -183,6 +189,13 @@ class ChargerSession:
             # (OCPP 1.6 section 3.7); a substitute answer would make it act on a guess.
             logger.warning("%s %s; closing charger connection", self.charger_id, exc)
             await self._close_primary_unavailable()
+
+    async def _relay_withheld(self, call: Call, withheld: Withheld) -> None:
+        """An unauthorized idTag's call: the secondaries see it, the primary never does."""
+        logger.info("%s %s of an unauthorized idTag withheld from the primary", self.charger_id, call.action)
+        for channel in self._secondaries.values():
+            channel.submit(call, start_ref=withheld.start_ref)
+        await self._send_to_charger(withheld.reply)
 
     async def _close_primary_unavailable(self) -> None:
         await self._ws.close(CLOSE_PRIMARY_UNAVAILABLE, "primary backend unavailable")
