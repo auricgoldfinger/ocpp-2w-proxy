@@ -35,6 +35,9 @@ def _configure_logging(level: str) -> None:
     )
     # websockets logs full handshakes (incl. headers) at DEBUG; keep it quieter.
     logging.getLogger("websockets").setLevel(logging.INFO if level == "DEBUG" else logging.WARNING)
+    # Every container health check probe ends in "connection closed"; the proxy logs real
+    # charger disconnects itself, so that line is only noise.
+    logging.getLogger("websockets.server").addFilter(lambda record: record.msg != "connection closed")
 
 
 async def _serve(server: ProxyServer) -> None:
