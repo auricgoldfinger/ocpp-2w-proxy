@@ -203,3 +203,12 @@ block the project.
   - SIGTERM shuts down within the timeout.
 - [ ] **7.3 Backups:** document a TrueNAS periodic snapshot task on the `data` dataset. It holds
   the transaction map and undelivered billing messages.
+
+## Phase 8: Charger-specific current control
+
+- [ ] **8.1 Current control through the KEBA UDP interface.**
+  *Problem:* the SolarEdge ONE EV Pro stores OCPP charging profiles but never applies them, and
+  every profile change clicks its relay.
+  *Design and gate test:* see [plans/keba-udp-current-control.md](plans/keba-udp-current-control.md).
+  *Done when:* HA can limit and pause charging through the proxy with the cable in and the Tap
+  session open, within the plan's relay and flash guard.
