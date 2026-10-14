@@ -52,6 +52,7 @@ from .policy import CANNED_ANSWERS, CommandPolicy, canned_answer
 from .primary_channel import PrimaryUnavailable
 from .primary_outage import outlast_grace
 from .secondary_channel import SecondaryChannel
+from .traffic_log import CHARGER
 from .withheld_calls import Withheld, withhold
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ class ChargerSession:
                         # The backend that issued the command must not wait for it forever.
                         await self._route_charger_reply(substitute)
                     continue
-                self._traffic.frame("charger ->", message)
+                self._traffic.received(CHARGER, message)
                 if isinstance(message, Call):
                     self._spawn(self._relay_charger_call(message))
                 else:
@@ -290,7 +291,7 @@ class ChargerSession:
 
     async def _send_to_charger(self, message: Message) -> bool:
         """True if the message was handed to the charger's socket."""
-        self._traffic.frame("-> charger", message)
+        self._traffic.sent(CHARGER, message)
         try:
             await self._ws.send(serialize(message))
         except ConnectionClosed:

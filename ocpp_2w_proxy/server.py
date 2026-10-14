@@ -95,7 +95,8 @@ class ProxyServer:
 
     def _build_context(self, charger: ChargerConfig) -> ChargerContext:
         store = StateStore.for_charger(self._config.proxy.state_dir, charger.id)
-        traffic = TrafficLog(charger.id, self._config.proxy.log_payloads)
+        peers = [self._config.primary.name, *(backend.name for backend in self._config.secondaries)]
+        traffic = TrafficLog(charger.id, self._config.proxy.log_payloads, peers)
         transactions = TransactionMap(store)
         secondaries = {
             backend.name: SecondaryChannel(backend, charger, store, transactions, traffic)

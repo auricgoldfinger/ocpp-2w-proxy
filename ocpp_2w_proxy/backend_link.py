@@ -66,7 +66,7 @@ class BackendLink:
         return cls(name, ws, traffic)
 
     async def send(self, message: Message) -> None:
-        self._traffic.frame(f"-> {self.name}", message)
+        self._traffic.sent(self.name, message)
         try:
             await self._ws.send(serialize(message))
         except ConnectionClosed as exc:
@@ -100,7 +100,7 @@ class BackendLink:
                     elif (substitute := substitute_reply(exc)) is not None:
                         self._resolve(substitute)  # our Call ends now instead of timing out
                     continue
-                self._traffic.frame(f"<- {self.name}", message)
+                self._traffic.received(self.name, message)
                 if isinstance(message, Call):
                     await on_call(message)
                 else:

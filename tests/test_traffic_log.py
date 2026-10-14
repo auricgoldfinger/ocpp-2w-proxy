@@ -1,0 +1,18 @@
+import logging
+
+from ocpp_2w_proxy.ocpp import Call, CallResult
+from ocpp_2w_proxy.traffic_log import TrafficLog
+
+
+def test_frames_name_both_ends_aligned_across_all_peers(caplog):
+    traffic = TrafficLog("CH1", False, ["primary", "homeassistant"])
+
+    with caplog.at_level(logging.INFO, logger="ocpp_2w_proxy.traffic"):
+        traffic.received("charger", Call("1", "Heartbeat", {}))
+        traffic.sent("primary", Call("1", "Heartbeat", {}))
+        traffic.received("homeassistant", CallResult("2", {}))
+
+    lines = [record.getMessage() for record in caplog.records]
+    assert lines[0].startswith("CH1       charger -> proxy         Call Heartbeat")
+    assert lines[1].startswith("CH1         proxy -> primary       Call Heartbeat")
+    assert lines[2].startswith("CH1 homeassistant -> proxy         CallResult")
