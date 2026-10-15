@@ -18,6 +18,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = [".", "tests"]
+markers = ["perf: timing comparisons that need a quiet machine; run with -m perf"]
+addopts = "-m 'not perf'"
 
 [tool.ruff]
 line-length = 120
