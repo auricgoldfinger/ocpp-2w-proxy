@@ -1,9 +1,10 @@
 """The monitor's one writer task: from the recorders' queue to the store and the live stream.
 
 It takes a batch (up to 500 events, or whatever arrived within 200 ms of the first), and works through it in
-slices of about 0.1 ms (at most 50 events) with a yield to the loop after each (see ``loop_slice``), so a relay
-callback never waits long behind it. The assembler does the per-event work; compression and SQLite run in the
-write worker's thread. The writer also counts the frames per peer (``rates``), so the relay path never has to.
+slices of about 0.1 ms (at most 50 events), resting after each so it never takes more than a quarter of the
+loop (see ``loop_slice``): a relay round trip meets one slice at most. The assembler does the per-event work;
+compression and SQLite run in the write worker's thread. The writer also counts the frames per peer (``rates``),
+so the relay path never has to.
 
 A failing database costs data, never the writer: the batch is counted in ``dropped_batches`` and the writer
 carries on with the next one.
@@ -66,6 +67,7 @@ class MonitorWriter:
         self._batch_size = batch_size
         self._batch_window = batch_window
         self._slice_size = slice_size
+        self._slice_budget = slice_budget
         self._slice = LoopSlice(slice_budget, slice_size)
         self._flush_timeout = flush_timeout
         self._clock = clock
@@ -89,6 +91,8 @@ class MonitorWriter:
             if self._waiting:
                 task.cancel()  # idle in queue.get(): no event is lost, it stays in the queue
             await asyncio.wait([task])
+        # Nothing is relayed any more: the flush still yields to the loop, but never rests.
+        self._slice = LoopSlice(self._slice_budget, self._slice_size, max_share=1.0)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._flush_timeout
         while not self._queue.empty() and loop.time() < deadline:
