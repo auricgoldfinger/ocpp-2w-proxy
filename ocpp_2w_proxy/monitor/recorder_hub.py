@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 
 from .recorder import MonitorRecorder
 
@@ -20,6 +21,14 @@ class RecorderHub:
 
     def recorder_for(self, charger_id: str) -> MonitorRecorder:
         return self._recorders[charger_id]
+
+    def detach(self) -> None:
+        """Every recorder stops recording and what is queued is let go; for a monitor that could not start."""
+        for recorder in self._recorders.values():
+            recorder.detach()
+        with suppress(asyncio.QueueEmpty):
+            while True:
+                self.queue.get_nowait()
 
     def dropped(self) -> Mapping[str, int]:
         """Events dropped so far, per charger."""

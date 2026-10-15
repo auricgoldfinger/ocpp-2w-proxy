@@ -45,6 +45,10 @@ class MonitorRecorder:
     def link_changed(self, peer: str, up: bool) -> None:
         self._record(_LINK, peer, None, None, up)
 
+    def detach(self) -> None:
+        """Record nothing from now on: the monitor could not start, so no writer will ever read the queue."""
+        self._put = _discard
+
     def _record(self, kind: EventKind, peer: str, message: Message | None, reason: Reason | None, detail: object):
         at = _now()
         try:
@@ -52,3 +56,7 @@ class MonitorRecorder:
         except asyncio.QueueFull:
             self.dropped += 1
             self.last_drop_at = at
+
+
+def _discard(event: tuple) -> None:
+    pass

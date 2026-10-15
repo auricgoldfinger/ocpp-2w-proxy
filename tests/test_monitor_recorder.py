@@ -79,6 +79,20 @@ def test_a_full_queue_drops_and_counts_per_charger():
     assert abs(hub.last_drop_at()["b"] - time.time()) < 5
 
 
+def test_a_detached_hub_lets_go_of_the_queue_and_records_nothing():
+    hub = RecorderHub(["a"], per_charger=2)
+    rec = hub.recorder_for("a")
+    rec.sent("primary", CALL)
+
+    hub.detach()
+    for _ in range(5):
+        rec.sent("primary", CALL)
+        rec.link_changed("primary", True)
+
+    assert hub.queue.empty()
+    assert hub.dropped() == {"a": 0}
+
+
 def test_hook_costs_about_a_microsecond():
     calls, chunk = 100_000, 1_000
     hub = RecorderHub(["cp"], per_charger=calls)
