@@ -1,4 +1,4 @@
-"""A deliberately small, hardened HTTP/1.1 subset for the debug endpoint: JSON in, JSON out.
+"""A deliberately small, hardened HTTP/1.1 subset for the local endpoints: JSON in, JSON or bytes out.
 
 GET and POST only, one request per connection (`Connection: close`), a Content-Length body
 (no chunked encoding), and hard limits on header size, header count, body size, read time and
@@ -47,7 +47,18 @@ class Response:
     body: Any  # JSON-serializable
 
 
-Handler = Callable[[Request], Awaitable[Response]]
+@dataclass(frozen=True)
+class Content:
+    """A response whose body is already encoded, such as a static file or prebuilt JSON."""
+
+    status: int
+    body: bytes
+    content_type: str
+    headers: tuple[tuple[str, str], ...] = ()  # extra (name, value) pairs, e.g. security headers
+
+
+Reply = Response | Content
+Handler = Callable[[Request], Awaitable[Reply]]
 
 
 class HttpError(Exception):
@@ -90,7 +101,7 @@ class _Connections:
             with contextlib.suppress(ConnectionError):
                 await writer.wait_closed()
 
-    async def _respond(self, reader: asyncio.StreamReader) -> Response:
+    async def _respond(self, reader: asyncio.StreamReader) -> Reply:
         try:
             request = await asyncio.wait_for(_read_request(reader), READ_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -179,14 +190,27 @@ def _error(error: HttpError) -> Response:
     return Response(error.status, {"error": error.code, "message": error.message})
 
 
-async def _write(writer: asyncio.StreamWriter, response: Response) -> None:
-    body = json.dumps(response.body).encode()
+async def _write(writer: asyncio.StreamWriter, reply: Reply) -> None:
+    match reply:
+        case Response():
+            await _write_content(writer, _as_json(reply))
+        case Content():
+            await _write_content(writer, reply)
+
+
+def _as_json(response: Response) -> Content:
+    return Content(response.status, json.dumps(response.body).encode(), "application/json")
+
+
+async def _write_content(writer: asyncio.StreamWriter, content: Content) -> None:
+    extra = "".join(f"{name}: {value}\r\n" for name, value in content.headers)
     head = (
-        f"HTTP/1.1 {response.status} {HTTPStatus(response.status).phrase}\r\n"
-        "Content-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\n"
+        f"HTTP/1.1 {content.status} {HTTPStatus(content.status).phrase}\r\n"
+        f"Content-Type: {content.content_type}\r\n"
+        f"Content-Length: {len(content.body)}\r\n"
+        f"{extra}"
         "Connection: close\r\n"
         "\r\n"
     )
-    writer.write(head.encode("ascii") + body)
+    writer.write(head.encode("ascii") + content.body)
     await writer.drain()

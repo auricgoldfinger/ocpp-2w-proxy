@@ -8,10 +8,19 @@ import json
 import pytest
 
 from ocpp_2w_proxy import minihttp
-from ocpp_2w_proxy.minihttp import HttpError, Request, Response
+from ocpp_2w_proxy.minihttp import Content, HttpError, Request, Response
+
+STATIC = Content(
+    200,
+    b"<!doctype html>\n",
+    "text/html; charset=utf-8",
+    (("Content-Security-Policy", "default-src 'self'"), ("X-Content-Type-Options", "nosniff")),
+)
 
 
-async def echo(request: Request) -> Response:
+async def echo(request: Request) -> Response | Content:
+    if request.path == "/static":
+        return STATIC
     if request.path == "/boom":
         raise RuntimeError("boom")
     if request.path == "/refuse":
@@ -36,7 +45,7 @@ async def port():
     await server.wait_closed()
 
 
-async def exchange(port: int, raw: bytes) -> tuple[int, dict]:
+async def exchange_raw(port: int, raw: bytes) -> tuple[str, bytes]:
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(raw)
     try:
@@ -44,7 +53,12 @@ async def exchange(port: int, raw: bytes) -> tuple[int, dict]:
     finally:
         writer.close()
     head, _, body = response.partition(b"\r\n\r\n")
-    return int(head.split(b" ")[1]), json.loads(body)
+    return head.decode("ascii"), body
+
+
+async def exchange(port: int, raw: bytes) -> tuple[int, dict]:
+    head, body = await exchange_raw(port, raw)
+    return int(head.split(" ")[1]), json.loads(body)
 
 
 def post(body: bytes = b"{}", headers: str = "", path: str = "/x") -> bytes:
@@ -89,6 +103,20 @@ async def test_the_response_is_json_and_closes_the_connection(port):
     writer.close()
     assert "Content-Type: application/json" in head
     assert "Connection: close" in head
+
+
+async def test_content_is_sent_as_is_with_its_type_and_extra_headers(port):
+    head, body = await exchange_raw(port, b"GET /static HTTP/1.1\r\n\r\n")
+    lines = head.split("\r\n")
+    assert lines[0] == "HTTP/1.1 200 OK"
+    assert body == STATIC.body
+    assert set(lines[1:]) == {
+        "Content-Type: text/html; charset=utf-8",
+        f"Content-Length: {len(STATIC.body)}",
+        "Content-Security-Policy: default-src 'self'",
+        "X-Content-Type-Options: nosniff",
+        "Connection: close",
+    }
 
 
 async def test_a_handler_refusal_keeps_its_status(port):
