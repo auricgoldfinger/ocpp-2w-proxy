@@ -1,5 +1,9 @@
-"""Every leg of one logical message carries the exchange id of the Call it came from."""
+"""Every leg of one logical message carries the exchange id of the Call it came from, and that id is cheap."""
 
+import statistics
+import timeit
+
+import pytest
 from conftest import CHARGER_ID, make_raw_config
 from fakes import RecordingFlow
 from test_secondary_channel import make_channel, make_config
@@ -92,3 +96,27 @@ async def test_exchange_id_survives_primary_delivery(tmp_path):
         await channel.close()
     assert link.calls[0].id != call.id
     assert link.calls[0].exchange_id == call.exchange_id
+
+
+# --- cost: the counter is on the relay path even with the monitor off -------------------------
+
+# The plan's budget for constructing a Call, counter included; measured about 0.2 µs (Python 3.14, x86-64).
+CALL_BUDGET_SECONDS = 0.3e-6
+# The default run only guards against a gross regression: shared machines are noisy.
+CALL_GUARD_SECONDS = 1e-6
+
+
+def median_call_construction_seconds(loops: int = 20_000, repeat: int = 7) -> float:
+    timer = timeit.Timer("Call('w1', 'Heartbeat', payload)", globals={"Call": Call, "payload": {}})
+    return statistics.median(timer.repeat(repeat=repeat, number=loops)) / loops
+
+
+def test_constructing_a_call_stays_cheap():
+    assert median_call_construction_seconds() <= CALL_GUARD_SECONDS
+
+
+@pytest.mark.perf
+def test_constructing_a_call_meets_the_plan_budget():
+    median = median_call_construction_seconds(loops=100_000)
+    print(f"Call construction median {median * 1e9:.0f} ns")
+    assert median <= CALL_BUDGET_SECONDS
