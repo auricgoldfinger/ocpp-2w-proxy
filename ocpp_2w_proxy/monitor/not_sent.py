@@ -27,7 +27,8 @@ class NotSentMap:
         by_charger: dict[str, _ByAction] = {}
         all_secondaries: dict[str, tuple[str, ...]] = {}
         for charger in config.chargers.values():
-            secondaries = tuple(name for name in forward_actions if name in charger.secondary_ids)
+            # Every charger is relayed to every secondary; secondary_ids only renames the charger there.
+            secondaries = tuple(forward_actions)
             by_charger[charger.id] = MappingProxyType(
                 {
                     action: tuple(name for name in secondaries if action not in forward_actions[name])
