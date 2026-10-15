@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Mapping
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 
 from .backend_auth import MissingChargerCredentials
+from .flow import FlowRecorder
 from .ocpp import Call, Message, ProtocolError, Reply, parse, protocol_error_reply, serialize, substitute_reply
-from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +38,12 @@ async def send_reply(link: BackendLink | None, message: Reply, backend_name: str
 
 
 class BackendLink:
-    def __init__(self, name: str, ws: ClientConnection, traffic: TrafficLog):
+    def __init__(self, name: str, ws: ClientConnection, traffic: FlowRecorder):
         self.name = name
         self._ws = ws
         self._traffic = traffic
         self._pending: dict[str, asyncio.Future[Reply]] = {}
+        self.connected_since = time.time()
 
     @classmethod
     async def open(
@@ -50,7 +52,7 @@ class BackendLink:
         url: str,
         headers: Mapping[str, str],
         user_agent: str | None,
-        traffic: TrafficLog,
+        traffic: FlowRecorder,
     ) -> BackendLink:
         ws = await connect(
             url,
@@ -63,6 +65,7 @@ class BackendLink:
         if ws.subprotocol != SUBPROTOCOL:
             logger.warning("%s backend negotiated subprotocol %r instead of %s", name, ws.subprotocol, SUBPROTOCOL)
         logger.info("connected to %s backend %s", name, url)
+        traffic.link_changed(name, True)
         return cls(name, ws, traffic)
 
     async def send(self, message: Message) -> None:
@@ -108,6 +111,7 @@ class BackendLink:
         except ConnectionClosed as exc:
             logger.warning("%s backend connection lost: %s", self.name, exc)
         finally:
+            self._traffic.link_changed(self.name, False)
             self._fail_pending()
 
     def _resolve(self, reply: Reply) -> None:

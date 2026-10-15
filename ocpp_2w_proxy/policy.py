@@ -14,6 +14,7 @@ from enum import StrEnum
 from typing import Any
 
 from .ocpp import OCPP_ACTIONS, Call, CallError, CallResult, Reply
+from .reasons import Reason
 
 
 class Rule(StrEnum):
@@ -191,6 +192,12 @@ class CommandPolicy:
                 return canned_answer(call)
             case Rule.ERROR:
                 return CallError(call.id, "NotSupported", f"{call.action} is not allowed through this proxy")
+
+
+def answer_reason(answer: Reply) -> Reason:
+    """Why the backend got the proxy's answer instead of the charger's: a canned
+    confirmation blocks the command, a CallError refuses it."""
+    return Reason.POLICY_ANSWERED if isinstance(answer, CallResult) else Reason.POLICY_REFUSED
 
 
 def canned_answer(call: Call) -> CallResult:

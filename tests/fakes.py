@@ -13,6 +13,9 @@ from typing import Any
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from ocpp_2w_proxy.ocpp import Call, Message
+from ocpp_2w_proxy.reasons import Reason
+
 Responder = Callable[[str, dict[str, Any]], dict[str, Any] | None]
 
 
@@ -34,6 +37,44 @@ class ErrorReply:
 
     code: str = "NotSupported"
     description: str = ""
+
+
+@dataclass(frozen=True)
+class Decision:
+    peer: str
+    call: Call
+    reason: Reason
+    detail: object = None
+
+
+class RecordingFlow:
+    """A FlowRecorder that keeps everything the relay reports, for assertions."""
+
+    def __init__(self):
+        self.frames: list[tuple[str, str, Message]] = []  # ("received" | "sent", peer, message)
+        self.decisions: list[Decision] = []
+        self.links: list[tuple[str, bool]] = []
+
+    def received(self, peer: str, message: Message) -> None:
+        self.frames.append(("received", peer, message))
+
+    def sent(self, peer: str, message: Message) -> None:
+        self.frames.append(("sent", peer, message))
+
+    def decided(self, peer: str, call: Call, reason: Reason, detail: object = None) -> None:
+        self.decisions.append(Decision(peer, call, reason, detail))
+
+    def link_changed(self, peer: str, up: bool) -> None:
+        self.links.append((peer, up))
+
+    def reasons(self) -> list[Reason]:
+        return [decision.reason for decision in self.decisions]
+
+    def with_reason(self, reason: Reason) -> list[Decision]:
+        return [decision for decision in self.decisions if decision.reason is reason]
+
+    def links_of(self, peer: str) -> list[bool]:
+        return [up for name, up in self.links if name == peer]
 
 
 class FakeCsms:

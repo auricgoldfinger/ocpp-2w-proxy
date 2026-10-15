@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import FakeCsms
+from fakes import FakeCsms, RecordingFlow
 
-from ocpp_2w_proxy import backoff
+from ocpp_2w_proxy import backoff, server
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.server import ProxyServer
 
@@ -20,6 +20,14 @@ SECONDARY_NAMES = ("tap", "stats", "beta", "gamma", "delta")
 def fast_reconnect(monkeypatch):
     monkeypatch.setattr(backoff, "MIN_RETRY_DELAY", 0.05)
     monkeypatch.setattr(backoff, "MAX_RETRY_DELAY", 0.1)
+
+
+@pytest.fixture
+def flow(monkeypatch):
+    """What the relay reports for every charger of a proxy started afterwards, recorded instead of logged."""
+    recording = RecordingFlow()
+    monkeypatch.setattr(server, "TrafficLog", lambda *args: recording)
+    return recording
 
 
 @pytest.fixture

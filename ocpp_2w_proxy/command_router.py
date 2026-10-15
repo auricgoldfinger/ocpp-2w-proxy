@@ -12,7 +12,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from .flow import FlowRecorder
 from .ocpp import Call, Reply, new_message_id
+from .reasons import Reason
+from .traffic_log import CHARGER
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,7 @@ class ReplyTarget(Protocol):
 class _Route:
     target: ReplyTarget
     original_id: str
-    action: str
+    sent: Call  # the command as it went to the charger
     created: float
 
 
@@ -37,26 +40,29 @@ class _Route:
 class RoutedReply:
     target: ReplyTarget
     reply: Reply
-    action: str
+    sent: Call
 
 
 class CommandRouter:
-    def __init__(self, ttl: float = DEFAULT_TTL_SECONDS, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self, flow: FlowRecorder, ttl: float = DEFAULT_TTL_SECONDS, clock: Callable[[], float] = time.monotonic
+    ):
+        self._flow = flow
         self._ttl = ttl
         self._clock = clock
         self._routes: dict[str, _Route] = {}
 
     def outbound(self, target: ReplyTarget, call: Call) -> Call:
         self._expire()
-        proxy_id = new_message_id()
-        self._routes[proxy_id] = _Route(target, call.id, call.action, self._clock())
-        return call.with_id(proxy_id)
+        sent = call.with_id(new_message_id())
+        self._routes[sent.id] = _Route(target, call.id, sent, self._clock())
+        return sent
 
     def take(self, reply: Reply) -> RoutedReply | None:
         route = self._routes.pop(reply.id, None)
         if route is None:
             return None
-        return RoutedReply(route.target, reply.with_id(route.original_id), route.action)
+        return RoutedReply(route.target, reply.with_id(route.original_id), route.sent)
 
     def discard(self, proxy_id: str) -> None:
         """Forget a command that never reached the charger."""
@@ -66,4 +72,5 @@ class CommandRouter:
         deadline = self._clock() - self._ttl
         for proxy_id in [pid for pid, route in self._routes.items() if route.created < deadline]:
             route = self._routes.pop(proxy_id)
-            logger.warning("charger never answered %s from %s backend", route.action, route.target.name)
+            logger.warning("charger never answered %s from %s backend", route.sent.action, route.target.name)
+            self._flow.decided(CHARGER, route.sent, Reason.CHARGER_NO_REPLY)
