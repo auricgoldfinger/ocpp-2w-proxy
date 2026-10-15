@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 import pytest
 from conftest import CHARGER_ID
 from fakes import FakeCharger
@@ -110,6 +113,21 @@ async def test_a_start_the_primary_did_not_confirm_is_withheld_from_the_secondar
         Reason.START_NOT_CONFIRMED,
     )
     await charger.close()
+
+
+async def test_a_live_call_the_primary_cannot_answer_closes_the_charger(primary, start_proxy, flow):
+    charger = await attached_charger(await start_proxy(primary.url, primary={"call_timeout": 1}))
+    await primary.stop()
+
+    await charger.send_raw(json.dumps([2, "start-1", "StartTransaction", START]))
+    await asyncio.wait_for(charger.ws.wait_closed(), 5)
+
+    [decision] = flow.decisions
+    assert (decision.peer, decision.call.id, decision.reason) == (
+        "primary",
+        "start-1",
+        Reason.PRIMARY_UNAVAILABLE_CLOSE,
+    )
 
 
 async def test_a_debug_command_the_charger_never_answers(primary, start_proxy, proxies, flow):

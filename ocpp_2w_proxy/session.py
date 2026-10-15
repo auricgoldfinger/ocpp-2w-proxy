@@ -197,6 +197,7 @@ class ChargerSession:
             # Unanswered, the charger keeps the message and resends it once back online
             # (OCPP 1.6 section 3.7); a substitute answer would make it act on a guess.
             logger.warning("%s %s; closing charger connection", self.charger_id, exc)
+            self._traffic.decided(self._primary.name, call, Reason.PRIMARY_UNAVAILABLE_CLOSE)
             await self._close_primary_unavailable()
 
     async def _relay_withheld(self, call: Call, withheld: Withheld) -> None:

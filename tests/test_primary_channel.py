@@ -5,13 +5,14 @@ from dataclasses import replace
 
 import pytest
 from conftest import CHARGER_ID, make_raw_config
-from fakes import FakeCsms
+from fakes import Decision, FakeCsms, RecordingFlow
 
 from ocpp_2w_proxy import backoff
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
 from ocpp_2w_proxy.primary_channel import PrimaryChannel, PrimaryUnavailable
+from ocpp_2w_proxy.reasons import Reason
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.traffic_log import TrafficLog
 
@@ -274,14 +275,14 @@ async def test_attach_during_backoff_sleep_is_served_and_drained(primary, tmp_pa
         await recovered.stop()
 
 
-async def _attached_channel(primary, tmp_path):
+async def _attached_channel(primary, tmp_path, traffic=None):
     config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
     charger = config.chargers[CHARGER_ID]
     channel = PrimaryChannel(
         config.primary,
         charger,
         StateStore.for_charger(config.proxy.state_dir, CHARGER_ID),
-        TrafficLog(CHARGER_ID, False),
+        traffic or TrafficLog(CHARGER_ID, False),
     )
 
     async def on_call(call: Call) -> None:
@@ -405,3 +406,107 @@ async def _eventually(predicate, timeout: float = 5) -> None:
             await asyncio.sleep(0.02)
 
     await asyncio.wait_for(poll(), timeout)
+
+
+def _offline_channel(tmp_path, flow, max_queue=10):
+    config = parse(make_raw_config("ws://127.0.0.1:1", None, tmp_path, primary={"auth": "none"}), {})
+    store = StateStore.for_charger(config.proxy.state_dir, CHARGER_ID)
+    return PrimaryChannel(replace(config.primary, max_queue=max_queue), config.chargers[CHARGER_ID], store, flow)
+
+
+@pytest.mark.parametrize(
+    ("action", "payload", "reason"),
+    [
+        ("StopTransaction", {"transactionId": 1}, Reason.QUEUED),
+        ("StatusNotification", {"connectorId": 1, "status": "Available"}, Reason.KEPT_LATEST),
+        ("Heartbeat", {}, Reason.HEARTBEAT_LOCAL),
+        ("MeterValues", {"connectorId": 1}, Reason.DROPPED_UNAVAILABLE),
+    ],
+)
+async def test_what_happens_to_a_call_the_primary_cannot_take(tmp_path, action, payload, reason):
+    flow = RecordingFlow()
+    channel = _offline_channel(tmp_path, flow)
+    call = Call("1", action, payload)
+    try:
+        channel._unavailable(call)
+    finally:
+        await channel.close()
+    [decision] = flow.decisions
+    assert (decision.peer, decision.call, decision.reason) == ("primary", call, reason)
+
+
+async def test_a_newer_status_supersedes_the_kept_one(tmp_path):
+    flow = RecordingFlow()
+    channel = _offline_channel(tmp_path, flow)
+    older = Call("a", "StatusNotification", {"connectorId": 1, "status": "Preparing"})
+    newer = Call("b", "StatusNotification", {"connectorId": 1, "status": "Charging"})
+    try:
+        channel._unavailable(older)
+        channel._unavailable(newer)
+        assert channel.queued_count == 1
+    finally:
+        await channel.close()
+    assert [(d.call, d.reason) for d in flow.decisions] == [
+        (older, Reason.KEPT_LATEST),
+        (older, Reason.SUPERSEDED),
+        (newer, Reason.KEPT_LATEST),
+    ]
+
+
+async def test_a_call_dropped_on_overflow_is_reported_after_it_was_queued(tmp_path):
+    flow = RecordingFlow()
+    channel = _offline_channel(tmp_path, flow, max_queue=2)
+    calls = [Call(message_id, "StopTransaction", {"transactionId": 1}) for message_id in ("one", "two", "three")]
+    try:
+        for call in calls:
+            channel._unavailable(call)
+        assert channel.queued_count == 2
+    finally:
+        await channel.close()
+    assert [(d.call.id, d.reason) for d in flow.decisions] == [
+        ("one", Reason.QUEUED),
+        ("two", Reason.QUEUED),
+        ("three", Reason.QUEUED),
+        ("one", Reason.QUEUE_OVERFLOW),
+    ]
+
+
+async def test_a_queued_call_the_primary_rejects(tmp_path):
+    flow = RecordingFlow()
+    channel = _offline_channel(tmp_path, flow)
+    call = Call("st", "StopTransaction", {"transactionId": 1})
+    try:
+        channel._log_rejection(call, CallError("x", "FormationViolation"))
+    finally:
+        await channel.close()
+    assert flow.decisions[-1] == Decision("primary", call, Reason.QUEUED_REJECTED, "FormationViolation")
+
+
+async def test_a_start_behind_an_undrained_queue_is_refused(primary, tmp_path):
+    primary.responder = lambda action, payload: (
+        None if action == "StopTransaction" else FakeCsms().responder(action, payload)
+    )
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow)
+    start = Call("new", "StartTransaction", START)
+    try:
+        channel._unavailable(Call("old", "StopTransaction", {"transactionId": 1, "meterStop": 5}))
+        await channel.call(start, timeout=0.3)
+    finally:
+        await channel.close()
+    assert flow.decisions[-1] == Decision("primary", start, Reason.START_REFUSED_CATCHING_UP)
+
+
+async def test_the_chargers_boot_answered_from_the_replay(primary, tmp_path):
+    boot = {"chargePointVendor": "Grubby"}
+    store = StateStore.for_charger(tmp_path, CHARGER_ID)
+    store.state.boot = boot
+    store.save()
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow)
+    call = Call("b1", "BootNotification", boot)
+    try:
+        await channel.call(call, timeout=3)
+    finally:
+        await channel.close()
+    assert flow.decisions == [Decision("primary", call, Reason.BOOT_FROM_REPLAY)]
