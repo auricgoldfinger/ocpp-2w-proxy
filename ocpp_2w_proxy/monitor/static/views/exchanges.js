@@ -20,7 +20,7 @@ const SKELETON = html`<section class="exchanges">
 <div data-part="filters"></div>
 <div class="list-status" data-part="pill-wrap"><button type="button" class="pill" data-part="pill" hidden></button></div>
 <div class="lanes" data-part="lanes">
-<div data-part="lane-head"></div>
+<div class="lanes-head-wrap" data-part="lane-head"></div>
 <ol class="rows" data-part="rows" aria-live="off" aria-label="Exchanges, newest first"></ol>
 </div>
 <div class="list-footer" data-part="footer"></div>

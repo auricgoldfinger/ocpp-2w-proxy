@@ -339,7 +339,7 @@ input {
 
 .list-status {
   position: sticky;
-  top: 3.25rem;
+  top: 5rem;
   z-index: 5;
   display: flex;
   justify-content: center;
@@ -371,10 +371,13 @@ input {
   align-items: center;
 }
 
-.lanes-head {
+.lanes-head-wrap {
   position: sticky;
   top: 3rem;
   z-index: 4;
+}
+
+.lanes-head {
   padding: var(--space-1) 0;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
