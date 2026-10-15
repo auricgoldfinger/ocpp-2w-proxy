@@ -1,8 +1,9 @@
 """The monitor never slows the relay (docs/plans/flow-monitor.md, "Performance budget" and "Verification").
 
-The default suite stresses it: a store whose every write takes 2 s, a live client that never reads, and a burst of
-1000 relayed messages. The relay must finish, no loop callback from monitor code may take 5 ms or more, and the
-events the monitor could not keep must show up as a gap and in the drop counters.
+The default suite stresses it: a store whose every write takes 0.5 s (far slower than events come in), a live
+client that never reads, and a burst of 1000 relayed messages. The relay must finish, no loop callback from monitor
+code may take 5 ms or more, and the events the monitor could not keep must show up as a gap and in the drop
+counters.
 
 ``-m perf`` compares the relay's p99 round trip with the monitor on and off, back to back with no idle time.
 """
@@ -26,7 +27,7 @@ from ocpp_2w_proxy.monitor import db
 from ocpp_2w_proxy.monitor import writer as writer_module
 from ocpp_2w_proxy.server import ProxyServer
 
-SLOW_WRITE_SECONDS = 2.0
+SLOW_WRITE_SECONDS = 0.5
 SLOW_CALLBACK_SECONDS = 0.005
 BURST = 1000
 # An asyncio "Executing <handle> took" warning names the task (if any), then the file its code runs in.
@@ -86,6 +87,7 @@ async def test_a_stalled_store_and_a_stuck_client_never_slow_the_relay(
     assert charger_monitor["dropped"] > 0 and charger_monitor["last_drop_at"] is not None
     gaps = await until_gap_stored(port)
     assert gaps[0]["charger_id"] == CHARGER_ID and gaps[0]["dropped"] > 0
+    monkeypatch.setattr(writer_module, "write_batch", db.write_batch)  # the store recovers: teardown flushes quickly
     stuck.close()
     await charger.close()
 
