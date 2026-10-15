@@ -1,11 +1,12 @@
-"""Uniform, redacted logging of OCPP frames flowing through the proxy."""
+"""Uniform, redacted logging of OCPP frames flowing through the proxy: the FlowRecorder that is always there."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
 
-from .ocpp import Message
+from .ocpp import Call, Message
+from .reasons import Reason
 from .redact import describe
 
 logger = logging.getLogger("ocpp_2w_proxy.traffic")
@@ -30,6 +31,12 @@ class TrafficLog:
 
     def sent(self, peer: str, message: Message) -> None:
         self._frame(PROXY, peer, message)
+
+    def decided(self, peer: str, call: Call, reason: Reason, detail: object = None) -> None:
+        """Decisions are logged where they are made, in the relay's own words."""
+
+    def link_changed(self, peer: str, up: bool) -> None:
+        """Link changes are logged where they happen."""
 
     def _frame(self, source: str, target: str, message: Message) -> None:
         direction = f"{source:>{self._width}} -> {target:<{self._width}}"

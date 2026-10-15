@@ -14,13 +14,13 @@ from .backoff import Backoff
 from .boot_replay import BootReplay
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
+from .flow import FlowRecorder
 from .message_classes import MessageClass, classify, latest_key
 from .ocpp import Call, CallError, CallResult, Reply, new_message_id, now_iso
 from .queue_overflow import pick_victim
 from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
-from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class PrimaryChannel:
         backend: BackendConfig,
         charger: ChargerConfig,
         store: StateStore,
-        traffic: TrafficLog,
+        traffic: FlowRecorder,
     ):
         self.name = backend.name
         self._backend = backend

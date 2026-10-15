@@ -10,8 +10,8 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 
 from .backend_auth import MissingChargerCredentials
+from .flow import FlowRecorder
 from .ocpp import Call, Message, ProtocolError, Reply, parse, protocol_error_reply, serialize, substitute_reply
-from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ async def send_reply(link: BackendLink | None, message: Reply, backend_name: str
 
 
 class BackendLink:
-    def __init__(self, name: str, ws: ClientConnection, traffic: TrafficLog):
+    def __init__(self, name: str, ws: ClientConnection, traffic: FlowRecorder):
         self.name = name
         self._ws = ws
         self._traffic = traffic
@@ -50,7 +50,7 @@ class BackendLink:
         url: str,
         headers: Mapping[str, str],
         user_agent: str | None,
-        traffic: TrafficLog,
+        traffic: FlowRecorder,
     ) -> BackendLink:
         ws = await connect(
             url,

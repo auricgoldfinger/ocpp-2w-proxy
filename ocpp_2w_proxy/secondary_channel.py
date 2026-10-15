@@ -25,6 +25,7 @@ from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import ChargerConfig, SecondaryConfig
+from .flow import FlowRecorder
 from .message_classes import is_secondary_durable
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id
 from .policy import CommandPolicy
@@ -33,7 +34,6 @@ from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
 from .synthetic_heartbeat import SyntheticHeartbeat
-from .traffic_log import TrafficLog
 from .transactions import TransactionMap
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class SecondaryChannel:
         charger: ChargerConfig,
         store: StateStore,
         transactions: TransactionMap,
-        traffic: TrafficLog,
+        traffic: FlowRecorder,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.name = config.name
