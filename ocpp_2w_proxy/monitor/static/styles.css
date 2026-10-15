@@ -849,6 +849,46 @@ body.drawer-open {
   color: var(--fg-muted);
 }
 
+.card caption {
+  padding: 0 var(--space-2) var(--space-1);
+  color: var(--fg);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.card tbody th {
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+.card__more {
+  margin-top: var(--space-3);
+}
+
+.card__more > summary {
+  color: var(--link);
+  cursor: pointer;
+}
+
+.card__more > summary ~ * {
+  margin-top: var(--space-3);
+}
+
+.meter-table td {
+  white-space: nowrap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

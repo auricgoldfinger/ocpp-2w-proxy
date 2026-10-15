@@ -1,9 +1,11 @@
 // Payload card per action, with the generic key/value card as the fallback.
 
 import { genericCard } from "./generic.js";
+import { meterValuesCard } from "./meter_values.js";
 import { startCard, stopCard } from "./transaction.js";
 
 const CARDS = {
+  MeterValues: meterValuesCard,
   StartTransaction: startCard,
   StopTransaction: stopCard,
 };

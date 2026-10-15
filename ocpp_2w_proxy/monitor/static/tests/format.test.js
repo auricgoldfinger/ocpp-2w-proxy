@@ -7,6 +7,7 @@ const {
   formatCount,
   formatDateTime,
   formatDuration,
+  formatKw,
   formatKwh,
   formatLatency,
   formatRate,
@@ -50,6 +51,13 @@ test("formatKwh converts watt-hours", () => {
   assert.equal(formatKwh(7400), "7.4 kWh");
   assert.equal(formatKwh(0), "0 kWh");
   assert.equal(formatKwh(undefined), "–");
+});
+
+test("formatKw converts watts", () => {
+  assert.equal(formatKw(7400), "7.4 kW");
+  assert.equal(formatKw(11050), "11.05 kW");
+  assert.equal(formatKw(0), "0 kW");
+  assert.equal(formatKw(null), "–");
 });
 
 test("trimNumericString turns padded numeric strings into numbers", () => {

@@ -63,6 +63,12 @@ export function formatKwh(wattHours) {
   return `${trimTrailingZeros((wattHours / 1000).toFixed(3))} kWh`;
 }
 
+/** Watts as kW with up to two decimals: 7400 → "7.4 kW". */
+export function formatKw(watts) {
+  if (watts === null || watts === undefined || Number.isNaN(watts)) return "–";
+  return `${trimTrailingZeros((watts / 1000).toFixed(2))} kW`;
+}
+
 function trimTrailingZeros(text) {
   return text.includes(".") ? text.replace(/\.?0+$/, "") : text;
 }

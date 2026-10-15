@@ -1,0 +1,76 @@
+{
+  "id": "4611686018427387921",
+  "charger_id": "99224881",
+  "origin": "charger",
+  "action": "MeterValues",
+  "started_at": 1760536931.21,
+  "last_at": 1760536931.30,
+  "outcome": "delivered",
+  "problem": false,
+  "incomplete": false,
+  "transaction_id": 10216,
+  "connector_id": 1,
+  "id_tag": null,
+  "headline": "7.4 kW · 1234.5 kWh",
+  "not_sent": [],
+  "legs": [
+    {"peer": "primary", "wire_id": "c0ffee-21", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760536931.22,
+     "replied_at": 1760536931.26, "rewritten": [], "late": false, "duplicate": false}
+  ],
+  "payload": {
+    "connectorId": 1,
+    "transactionId": 10216,
+    "meterValue": [
+      {"timestamp": "2025-10-15T14:01:11Z",
+       "sampledValue": [{"value": "1233900", "context": "Sample.Periodic"}]},
+      {"timestamp": "2025-10-15T14:02:11Z",
+       "sampledValue": [
+         {"value": " 1234.5", "context": "Sample.Periodic", "measurand": "Energy.Active.Import.Register", "unit": "kWh"},
+         {"value": "7400", "context": "Sample.Periodic", "measurand": "Power.Active.Import", "unit": "W"},
+         {"value": "10.7 ", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L1", "unit": "A"},
+         {"value": "10.6", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L2", "unit": "A"},
+         {"value": "10.8", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L3", "unit": "A"},
+         {"value": "231", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L1-N", "unit": "V"},
+         {"value": "229", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L2-N", "unit": "V"},
+         {"value": "230", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L3-N", "unit": "V"},
+         {"value": "34.5", "context": "Sample.Periodic", "measurand": "Temperature", "location": "Body", "unit": "Celsius"}
+       ]}
+    ]
+  },
+  "frames": [
+    {"at": 1760536931.21, "peer": "charger", "dir": "in", "msg_type": "call", "wire_id": "a1c3",
+     "payload": {"connectorId": 1, "transactionId": 10216, "meterValue": [
+       {"timestamp": "2025-10-15T14:01:11Z", "sampledValue": [{"value": "1233900", "context": "Sample.Periodic"}]},
+       {"timestamp": "2025-10-15T14:02:11Z", "sampledValue": [
+         {"value": " 1234.5", "context": "Sample.Periodic", "measurand": "Energy.Active.Import.Register", "unit": "kWh"},
+         {"value": "7400", "context": "Sample.Periodic", "measurand": "Power.Active.Import", "unit": "W"},
+         {"value": "10.7 ", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L1", "unit": "A"},
+         {"value": "10.6", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L2", "unit": "A"},
+         {"value": "10.8", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L3", "unit": "A"},
+         {"value": "231", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L1-N", "unit": "V"},
+         {"value": "229", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L2-N", "unit": "V"},
+         {"value": "230", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L3-N", "unit": "V"},
+         {"value": "34.5", "context": "Sample.Periodic", "measurand": "Temperature", "location": "Body", "unit": "Celsius"}]}]},
+     "same_as_origin": true, "error": null},
+    {"at": 1760536931.22, "peer": "primary", "dir": "out", "msg_type": "call", "wire_id": "c0ffee-21",
+     "payload": {"connectorId": 1, "transactionId": 10216, "meterValue": [
+       {"timestamp": "2025-10-15T14:01:11Z", "sampledValue": [{"value": "1233900", "context": "Sample.Periodic"}]},
+       {"timestamp": "2025-10-15T14:02:11Z", "sampledValue": [
+         {"value": " 1234.5", "context": "Sample.Periodic", "measurand": "Energy.Active.Import.Register", "unit": "kWh"},
+         {"value": "7400", "context": "Sample.Periodic", "measurand": "Power.Active.Import", "unit": "W"},
+         {"value": "10.7 ", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L1", "unit": "A"},
+         {"value": "10.6", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L2", "unit": "A"},
+         {"value": "10.8", "context": "Sample.Periodic", "measurand": "Current.Import", "phase": "L3", "unit": "A"},
+         {"value": "231", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L1-N", "unit": "V"},
+         {"value": "229", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L2-N", "unit": "V"},
+         {"value": "230", "context": "Sample.Periodic", "measurand": "Voltage", "phase": "L3-N", "unit": "V"},
+         {"value": "34.5", "context": "Sample.Periodic", "measurand": "Temperature", "location": "Body", "unit": "Celsius"}]}]},
+     "same_as_origin": true, "error": null},
+    {"at": 1760536931.26, "peer": "primary", "dir": "in", "msg_type": "result", "wire_id": "c0ffee-21",
+     "payload": {}, "same_as_origin": false, "error": null},
+    {"at": 1760536931.27, "peer": "charger", "dir": "out", "msg_type": "result", "wire_id": "a1c3",
+     "payload": {}, "same_as_origin": false, "error": null}
+  ],
+  "decisions": []
+}
