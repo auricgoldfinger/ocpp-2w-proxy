@@ -2,6 +2,9 @@
 short transaction under a 250 ms time limit, and returns the response body as JSON bytes built in that thread.
 
 Exchange ids appear as strings: they can exceed the integers JavaScript represents safely.
+
+``rebuild_projections`` is the one read the writer makes, in its own thread, for exchanges it continues after a
+restart or after evicting them from memory.
 """
 
 from __future__ import annotations
@@ -10,13 +13,13 @@ import json
 import sqlite3
 import time
 import zlib
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from .meter_values import ENERGY, latest_reading, number
-from .projection import DEFAULT_STALE_AFTER
+from .projection import DEFAULT_STALE_AFTER, ExchangeProjection
 from .replay import StoredDecision, StoredExchange, StoredFrame, decision_views, frame_views, origin_payload, project
 
 type Clock = Callable[[], float]
@@ -156,6 +159,19 @@ def links_report(
             "gaps": [{"charger_id": c, "from_at": f, "to_at": t, "dropped": d} for c, f, t, d in gaps],
         }
     )
+
+
+def rebuild_projections(
+    conn: sqlite3.Connection, exchange_ids: Collection[int], stale_after: float = DEFAULT_STALE_AFTER
+) -> list[ExchangeProjection]:
+    """The projections of those ``exchange_ids`` that are stored, rebuilt from their rows; unknown ids are skipped."""
+    if not exchange_ids:
+        return []
+    marks = ", ".join("?" * len(exchange_ids))
+    rows = conn.execute(
+        f"SELECT {_EXCHANGE_COLUMNS} FROM exchanges e WHERE e.exchange_id IN ({marks})", tuple(exchange_ids)
+    ).fetchall()
+    return [project(stored, stale_after) for stored in _load(conn, rows)]
 
 
 # --- time limit and transaction ----------------------------------------------------------
