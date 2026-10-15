@@ -29,6 +29,17 @@ log_payloads = false
 # default_timeout = 30     # seconds to wait for the charger's answer
 # max_timeout = 250        # upper limit for a per-request timeout
 
+# Optional Flow Monitor: a read-only web UI at http://<listen>:<port>/ that shows every message
+# exchange and each leg's fate (delivered, blocked, refused, queued, withheld, not sent...); see
+# "Flow Monitor" in the README. GET only, idTags and secrets masked, NO authentication: on any
+# address but loopback it logs a warning. It never slows relaying; under load it loses events instead.
+# [monitor]
+# enabled = false
+# listen = "127.0.0.1"     # in a container use "0.0.0.0" to reach it from the LAN (read-only)
+# port = 8323              # must differ from the [proxy] and [debug] ports
+# db_path = "/data/monitor.sqlite"   # defaults to <state_dir>/monitor.sqlite
+# retention_days = 90      # older exchanges are purged hourly; the file then stops growing
+
 # Allowlist: only these chargers may connect. The charger connects to <proxy-url>/<id>
 # and sends <id> as Basic-auth username.
 [[chargers]]
