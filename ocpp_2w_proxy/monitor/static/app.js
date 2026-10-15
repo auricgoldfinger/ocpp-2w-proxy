@@ -7,10 +7,11 @@ import { LiveStream } from "./live.js";
 import { initTheme } from "./theme.js";
 import { createDetailDrawer } from "./views/exchange_detail.js";
 import { mountExchanges } from "./views/exchanges.js";
+import { mountLinks } from "./views/links.js";
 
 // Both list states (#/exchanges and #/exchange/<id>) keep the list mounted.
 const VIEW_OF_ROUTE = { exchanges: "exchanges", exchange: "exchanges" };
-const MOUNTERS = { exchanges: mountExchanges };
+const MOUNTERS = { exchanges: mountExchanges, links: mountLinks };
 
 const viewElement = document.getElementById("view");
 const live = new LiveStream();

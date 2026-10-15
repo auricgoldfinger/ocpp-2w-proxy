@@ -115,4 +115,5 @@ def test_modules_stay_within_the_csp(module: Path) -> None:
     assert not re.search(r"""\sstyle=["']|\son[a-z]+=["']""", source), "inline style or handler in markup"
     assert "eval(" not in source and "new Function" not in source
     if module.name != "html.js":
-        assert "innerHTML" not in source, "assign markup through html.setHtml"
+        for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+            assert sink not in source, f"{sink}: assign markup through html.setHtml"
