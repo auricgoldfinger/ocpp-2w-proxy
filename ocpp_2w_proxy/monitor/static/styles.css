@@ -357,7 +357,7 @@ input {
 
 .lanes {
   --lanes: 5;
-  --columns: 5rem minmax(11rem, 1.6fr) repeat(var(--lanes), minmax(6.5rem, 1fr));
+  --columns: 4.75rem minmax(8rem, 1.6fr) repeat(var(--lanes), minmax(4.5rem, 1fr));
 
   background: var(--surface);
   border: 1px solid var(--border);
@@ -440,8 +440,9 @@ input {
 }
 
 .row__what {
+  min-width: 0;
   padding: var(--space-1) var(--space-2);
-  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .row__action {
@@ -460,6 +461,7 @@ input {
   justify-content: center;
   gap: 2px var(--space-1);
   align-self: stretch;
+  min-width: 0;
   padding: var(--space-1) 2px;
 }
 
@@ -514,12 +516,19 @@ input {
   border: 1px solid var(--tone);
   border-radius: 3px;
   background: color-mix(in srgb, var(--tone) 18%, var(--surface));
+  max-width: 100%;
   font-size: 0.8125rem;
   white-space: nowrap;
 }
 
 .badge__icon {
   font-weight: 700;
+}
+
+/* Narrow lanes cut long labels; the full text stays in the badge's title. */
+.badge__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tone-delivered { --tone: var(--tone-delivered); }
@@ -919,6 +928,9 @@ thead th {
 
 .state {
   font-weight: 400;
+}
+
+td .state {
   white-space: nowrap;
 }
 
