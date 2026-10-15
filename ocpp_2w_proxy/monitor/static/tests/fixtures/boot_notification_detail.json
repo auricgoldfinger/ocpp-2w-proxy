@@ -1,0 +1,46 @@
+{
+  "id": "4611686018427387923",
+  "charger_id": "99224881",
+  "origin": "charger",
+  "action": "BootNotification",
+  "started_at": 1760537100.00,
+  "last_at": 1760537100.40,
+  "outcome": "delivered",
+  "problem": false,
+  "incomplete": false,
+  "transaction_id": null,
+  "connector_id": null,
+  "id_tag": null,
+  "headline": "KEBA KC-P30 · 1.11.2",
+  "not_sent": [],
+  "legs": [
+    {"peer": "primary", "wire_id": "c0ffee-23", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760537100.01,
+     "replied_at": 1760537100.38, "rewritten": [], "late": false, "duplicate": false}
+  ],
+  "payload": {
+    "chargePointVendor": "KEBA",
+    "chargePointModel": "KC-P30",
+    "chargePointSerialNumber": "99224881",
+    "firmwareVersion": "1.11.2",
+    "meterType": "Phoenix EEM-350",
+    "iccid": "***"
+  },
+  "frames": [
+    {"at": 1760537100.00, "peer": "charger", "dir": "in", "msg_type": "call", "wire_id": "a1c5",
+     "payload": {"chargePointVendor": "KEBA", "chargePointModel": "KC-P30", "chargePointSerialNumber": "99224881",
+                 "firmwareVersion": "1.11.2", "meterType": "Phoenix EEM-350", "iccid": "***"},
+     "same_as_origin": true, "error": null},
+    {"at": 1760537100.01, "peer": "primary", "dir": "out", "msg_type": "call", "wire_id": "c0ffee-23",
+     "payload": {"chargePointVendor": "KEBA", "chargePointModel": "KC-P30", "chargePointSerialNumber": "99224881",
+                 "firmwareVersion": "1.11.2", "meterType": "Phoenix EEM-350", "iccid": "***"},
+     "same_as_origin": true, "error": null},
+    {"at": 1760537100.38, "peer": "primary", "dir": "in", "msg_type": "result", "wire_id": "c0ffee-23",
+     "payload": {"status": "Accepted", "currentTime": "2025-10-15T14:05:04Z", "interval": 300},
+     "same_as_origin": false, "error": null},
+    {"at": 1760537100.40, "peer": "charger", "dir": "out", "msg_type": "result", "wire_id": "a1c5",
+     "payload": {"status": "Accepted", "currentTime": "2025-10-15T14:05:04Z", "interval": 300},
+     "same_as_origin": false, "error": null}
+  ],
+  "decisions": []
+}

@@ -13,6 +13,9 @@ from typing import Any
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from ocpp_2w_proxy.ocpp import Call, Message
+from ocpp_2w_proxy.reasons import Reason
+
 Responder = Callable[[str, dict[str, Any]], dict[str, Any] | None]
 
 
@@ -34,6 +37,44 @@ class ErrorReply:
 
     code: str = "NotSupported"
     description: str = ""
+
+
+@dataclass(frozen=True)
+class Decision:
+    peer: str
+    call: Call
+    reason: Reason
+    detail: object = None
+
+
+class RecordingFlow:
+    """A FlowRecorder that keeps everything the relay reports, for assertions."""
+
+    def __init__(self):
+        self.frames: list[tuple[str, str, Message]] = []  # ("received" | "sent", peer, message)
+        self.decisions: list[Decision] = []
+        self.links: list[tuple[str, bool]] = []
+
+    def received(self, peer: str, message: Message) -> None:
+        self.frames.append(("received", peer, message))
+
+    def sent(self, peer: str, message: Message) -> None:
+        self.frames.append(("sent", peer, message))
+
+    def decided(self, peer: str, call: Call, reason: Reason, detail: object = None) -> None:
+        self.decisions.append(Decision(peer, call, reason, detail))
+
+    def link_changed(self, peer: str, up: bool) -> None:
+        self.links.append((peer, up))
+
+    def reasons(self) -> list[Reason]:
+        return [decision.reason for decision in self.decisions]
+
+    def with_reason(self, reason: Reason) -> list[Decision]:
+        return [decision for decision in self.decisions if decision.reason is reason]
+
+    def links_of(self, peer: str) -> list[bool]:
+        return [up for name, up in self.links if name == peer]
 
 
 class FakeCsms:
@@ -181,10 +222,28 @@ class FakeCharger:
         self._reader.cancel()
 
 
+@dataclass(frozen=True)
+class HttpReply:
+    status: int
+    headers: dict[str, str]  # names lowercased
+    body: bytes
+
+    def json(self) -> Any:
+        return json.loads(self.body)
+
+
 async def http_request(
     port: int, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
 ) -> tuple[int, Any]:
     """A bare-bones HTTP client for the debug endpoint: JSON body in (unless a str/bytes), JSON out."""
+    reply = await http_exchange(port, method, path, body, headers)
+    return reply.status, reply.json()
+
+
+async def http_exchange(
+    port: int, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
+) -> HttpReply:
+    """One request as http_request sends it, with the reply's status, headers and raw body."""
     payload = body if isinstance(body, bytes) else b"" if body is None else json.dumps(body).encode()
     sent = {"Host": "localhost", "Content-Length": str(len(payload))}
     if payload:
@@ -197,5 +256,10 @@ async def http_request(
         response = await asyncio.wait_for(reader.read(), 10)
     finally:
         writer.close()
-    status_line, _, rest = response.partition(b"\r\n")
-    return int(status_line.split(b" ")[1]), json.loads(rest.partition(b"\r\n\r\n")[2])
+    reply_head, _, reply_body = response.partition(b"\r\n\r\n")
+    status_line, *header_lines = reply_head.decode("latin-1").split("\r\n")
+    reply_headers = {}
+    for line in header_lines:
+        name, _, value = line.partition(":")
+        reply_headers[name.lower()] = value.strip()
+    return HttpReply(int(status_line.split(" ")[1]), reply_headers, reply_body)

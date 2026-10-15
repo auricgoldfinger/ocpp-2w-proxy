@@ -13,6 +13,9 @@ services:
       # Optional debug endpoint (needs [debug] enabled = true and listen = "0.0.0.0" in config.toml).
       # Unauthenticated: keep the host side on 127.0.0.1, never the LAN IP.
       # - "127.0.0.1:8322:8322"
+      # Optional Flow Monitor (needs [monitor] enabled = true and listen = "0.0.0.0" in config.toml).
+      # Read-only and masked, but unauthenticated: bind to the LAN IP, never forward it on your router.
+      # - "192.168.0.10:8323:8323"
     environment:
       - TZ=Europe/Brussels
       # - PRIMARY_PASSWORD=change-me      # Tap (primary): if [primary] uses auth = "basic"

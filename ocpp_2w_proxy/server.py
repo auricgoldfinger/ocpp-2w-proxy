@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import ssl
+import time
 import weakref
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -17,6 +18,8 @@ from .charger_auth import AuthRejected, ChargerIdentity, authenticate, parse_bas
 from .charger_context import ChargerContext
 from .config import ChargerConfig, Config
 from .debug_server import DebugServer
+from .flow import FanOut, FlowRecorder
+from .monitor.service import MonitorService
 from .primary_channel import PrimaryChannel
 from .redact import describe_credentials
 from .secondary_channel import SecondaryChannel
@@ -35,11 +38,14 @@ class _ActiveSession:
     ws: ServerConnection
     session: ChargerSession
     finished: asyncio.Event = field(default_factory=asyncio.Event)
+    connected_at: float = field(default_factory=time.time)
 
 
 class ProxyServer:
     def __init__(self, config: Config):
         self._config = config
+        # Before the contexts: each charger's flow reports to its monitor recorder.
+        self._monitor = MonitorService(config, self) if config.monitor.enabled else None
         self._chargers = {charger_id: self._build_context(charger) for charger_id, charger in config.chargers.items()}
         self._server: Server | None = None
         self._debug = DebugServer(config.debug, self) if config.debug.enabled else None
@@ -52,6 +58,8 @@ class ProxyServer:
 
     async def start(self) -> Server:
         proxy = self._config.proxy
+        if self._monitor is not None:
+            await self._monitor.start()  # before any charger connects, so no early flow is missed
         server = await serve(
             self._handle,
             proxy.listen,
@@ -76,6 +84,10 @@ class ProxyServer:
     def debug_port(self) -> int | None:
         return self._debug.port if self._debug is not None else None
 
+    @property
+    def monitor_port(self) -> int | None:
+        return self._monitor.port if self._monitor is not None else None
+
     async def close(self) -> None:
         if self._debug is not None:
             await self._debug.close()
@@ -84,6 +96,8 @@ class ProxyServer:
             await self._server.wait_closed()
             self._server = None
         await asyncio.gather(*(context.close() for context in self._chargers.values()))
+        if self._monitor is not None:
+            await self._monitor.close()  # last: it still records the channels closing
 
     def session_for(self, charger_id: str) -> ChargerSession | None:
         """The charger's live session, or None while it is not connected."""
@@ -93,10 +107,17 @@ class ProxyServer:
     def charger_ids(self) -> tuple[str, ...]:
         return tuple(self._config.chargers)
 
+    def charger_connected_since(self, charger_id: str) -> float | None:
+        active = self._sessions.get(charger_id)
+        return active.connected_at if active else None
+
+    def context_for(self, charger_id: str) -> ChargerContext:
+        return self._chargers[charger_id]
+
     def _build_context(self, charger: ChargerConfig) -> ChargerContext:
         store = StateStore.for_charger(self._config.proxy.state_dir, charger.id)
         peers = [self._config.primary.name, *(backend.name for backend in self._config.secondaries)]
-        traffic = TrafficLog(charger.id, self._config.proxy.log_payloads, peers)
+        traffic = self._flow_for(charger.id, TrafficLog(charger.id, self._config.proxy.log_payloads, peers))
         transactions = TransactionMap(store)
         secondaries = {
             backend.name: SecondaryChannel(backend, charger, store, transactions, traffic)
@@ -104,6 +125,12 @@ class ProxyServer:
         }
         primary = PrimaryChannel(self._config.primary, charger, store, traffic)
         return ChargerContext(primary=primary, secondaries=secondaries, transactions=transactions, traffic=traffic)
+
+    def _flow_for(self, charger_id: str, log: FlowRecorder) -> FlowRecorder:
+        """The traffic log alone, or fanned out to the monitor too when it is enabled."""
+        if self._monitor is None:
+            return log
+        return FanOut(log, self._monitor.recorder_for(charger_id))
 
     def _ssl_context(self) -> ssl.SSLContext | None:
         proxy = self._config.proxy

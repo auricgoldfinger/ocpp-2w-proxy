@@ -1,0 +1,39 @@
+{
+  "id": "4611686018427387922",
+  "charger_id": "99224881",
+  "origin": "charger",
+  "action": "StatusNotification",
+  "started_at": 1760537000.10,
+  "last_at": 1760537000.18,
+  "outcome": "delivered",
+  "problem": false,
+  "incomplete": false,
+  "transaction_id": null,
+  "connector_id": 1,
+  "id_tag": null,
+  "headline": "Faulted · GroundFailure",
+  "not_sent": [],
+  "legs": [
+    {"peer": "primary", "wire_id": "c0ffee-22", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760537000.11,
+     "replied_at": 1760537000.17, "rewritten": [], "late": false, "duplicate": false}
+  ],
+  "payload": {
+    "connectorId": 1,
+    "status": "Faulted",
+    "errorCode": "GroundFailure",
+    "info": "RCD tripped",
+    "timestamp": "2025-10-15T14:03:20Z",
+    "vendorId": "KEBA",
+    "vendorErrorCode": "0x0042"
+  },
+  "frames": [
+    {"at": 1760537000.10, "peer": "charger", "dir": "in", "msg_type": "call", "wire_id": "a1c4",
+     "payload": {"connectorId": 1, "status": "Faulted", "errorCode": "GroundFailure", "info": "RCD tripped",
+                 "timestamp": "2025-10-15T14:03:20Z", "vendorId": "KEBA", "vendorErrorCode": "0x0042"},
+     "same_as_origin": true, "error": null},
+    {"at": 1760537000.17, "peer": "primary", "dir": "in", "msg_type": "result", "wire_id": "c0ffee-22",
+     "payload": {}, "same_as_origin": false, "error": null}
+  ],
+  "decisions": []
+}

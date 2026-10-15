@@ -1,0 +1,9 @@
+{
+  "primary": "primary",
+  "secondaries": [
+    {"name": "homeassistant", "forward_actions": ["MeterValues", "StartTransaction", "StopTransaction", "StatusNotification"]},
+    {"name": "stats", "forward_actions": ["StartTransaction", "StopTransaction", "StatusNotification"]}
+  ],
+  "chargers": ["99224881"],
+  "retention_days": 90
+}

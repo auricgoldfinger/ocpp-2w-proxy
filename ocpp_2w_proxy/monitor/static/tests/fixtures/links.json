@@ -1,0 +1,20 @@
+{
+  "chargers": [
+    {"id": "99224881", "connected": true, "since": 1760500000.0,
+     "peers": [
+       {"name": "primary", "role": "primary", "up": true, "since": 1760500001.0, "queued": 0, "messages_last_hour": 1210},
+       {"name": "homeassistant", "role": "secondary", "up": true, "since": 1760500002.0, "queued": 0, "messages_last_hour": 980},
+       {"name": "stats", "role": "secondary", "up": false, "since": 1760536690.0, "queued": 14, "messages_last_hour": 35}
+     ],
+     "monitor": {"dropped": 37, "last_drop_at": 1760536924.0}}
+  ],
+  "monitor": {"fanout_failures": 0, "dropped_batches": 1},
+  "history": [
+    {"charger_id": "99224881", "peer": "stats", "at": 1760530000.0, "up": false},
+    {"charger_id": "99224881", "peer": "stats", "at": 1760530300.0, "up": true},
+    {"charger_id": "99224881", "peer": "primary", "at": 1760536300.0, "up": false},
+    {"charger_id": "99224881", "peer": "primary", "at": 1760536560.0, "up": true},
+    {"charger_id": "99224881", "peer": "stats", "at": 1760536690.0, "up": false}
+  ],
+  "gaps": [{"charger_id": "99224881", "from_at": 1760536922.0, "to_at": 1760536924.0, "dropped": 37}]
+}

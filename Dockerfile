@@ -36,6 +36,9 @@ EXPOSE 8321
 # Optional debug endpoint ([debug] enabled = true, listen = "0.0.0.0" in the container).
 # Off by default and unauthenticated: only publish it on the host's loopback (see compose.yaml).
 EXPOSE 8322
+# Optional Flow Monitor ([monitor] enabled = true, listen = "0.0.0.0" in the container): a read-only web UI with
+# masked data. Unauthenticated: publish it on the LAN only, never forward it on your router (see compose.yaml).
+EXPOSE 8323
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s \

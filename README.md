@@ -239,6 +239,48 @@ Inside the container the endpoint must listen on all interfaces (`listen = "0.0.
 only safe if you publish it on the host's loopback: use `"127.0.0.1:8322:8322"` in `ports` (the
 commented line in `compose.yaml`), never the LAN IP. Remove it again when you are done.
 
+## Flow Monitor
+
+An optional, read-only web UI that shows how every message travelled through the proxy, and above all
+why a message did **not** go somewhere. Each **exchange** (one logical message) is drawn as a swimlane row
+with one **leg** per peer:
+
+- **delivered**, or delivered late after an outage (**queued**, then delivered);
+- **blocked** (a policy answered with a canned CallResult) or **refused** (a proxy CallError);
+- **withheld** from the primary (unauthorized idTag), **dropped** (with the reason) or **failed**;
+- **not sent** to a secondary whose `forward_actions` lack the action;
+- rewrites: a transactionId (`⇄tx 10216 → 1791822333`), idTag or charging profile changed for a leg.
+
+Click a row for the sequence, the payloads per leg, the proxy's decisions and the raw JSON. The **Links**
+view shows each backend's connection history, queue depth and messages per hour, and the monitor's own
+health. It is off by default. Enable it in `config.toml` (see `config.example.toml`) and open
+`http://127.0.0.1:8323/`:
+
+```toml
+[monitor]
+enabled = true
+listen = "127.0.0.1"    # default; "0.0.0.0" in a container for LAN access
+port = 8323             # default; must differ from the [proxy] and [debug] ports
+retention_days = 90     # default
+```
+
+**Relaying always comes first.** The monitor records each message with a non-blocking enqueue and does
+everything else (correlating, masking, storing) later, in small slices and in its own threads. When it
+cannot keep up it loses events rather than slow the relay; the UI then shows a "monitor events lost" gap
+row, and relaying was unaffected. If its database cannot be opened, the proxy logs an error and runs
+without the monitor.
+
+**Security.** There is no authentication, but the monitor is read-only: `GET` only, cross-origin requests
+are refused, and nothing it serves can change anything. idTags, `AuthorizationKey` values and URL passwords
+are masked before they are stored, so neither the UI nor `monitor.sqlite` holds them in clear. Anyone who can
+reach the port can still read the message flow, so a warning is logged when it listens on anything but
+loopback. In Docker, use `listen = "0.0.0.0"` and publish the port on the NAS's LAN IP (the commented
+`8323` line in `compose.yaml`); never forward it on your router.
+
+**Storage and retention.** Exchanges are kept in SQLite at `<state_dir>/monitor.sqlite` (or `db_path`).
+An hourly purge deletes exchanges older than `retention_days`; freed pages are reused, so the file grows
+during the first period and then levels off. There is no size cap.
+
 ## Before you rely on it: Phase 0 checks
 
 1. **Find the backend OCPP endpoints.** Pointing the charger straight at only one backend
@@ -317,6 +359,7 @@ Uses [uv](https://docs.astral.sh/uv/) and Python 3.14.
 uv sync
 SECONDARY_PASSWORD=... uv run python -m ocpp_2w_proxy --config config.toml
 uv run pytest            # tests, with fake charger and backends
+uv run pytest -m perf    # timing comparisons (relay p99 with the monitor on and off); needs a quiet machine
 ```
 
 ## Deploy on TrueNAS SCALE

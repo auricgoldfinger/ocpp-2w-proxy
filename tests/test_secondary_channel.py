@@ -2,13 +2,14 @@ import asyncio
 from dataclasses import replace
 
 import pytest
-from fakes import FakeCsms
+from fakes import Decision, FakeCsms, RecordingFlow
 
 from ocpp_2w_proxy.backend_link import BackendUnavailable
 from ocpp_2w_proxy.backoff import Backoff
 from ocpp_2w_proxy.charger_auth import ChargerIdentity
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
+from ocpp_2w_proxy.reasons import Reason
 from ocpp_2w_proxy.secondary_channel import (
     MAX_CALL_ERROR_ATTEMPTS,
     MAX_TRANSIENT_QUEUE,
@@ -39,13 +40,14 @@ def make_config(*secondaries):
     return replace(config, secondaries=backends)
 
 
-def make_channel(config, backend_name, store):
+def make_channel(config, backend_name, store, traffic=None):
     async def on_call(call):  # pragma: no cover
         pass
 
     backend = next(b for b in config.secondaries if b.name == backend_name)
     charger = config.chargers["CH1"]
-    channel = SecondaryChannel(backend, charger, store, TransactionMap(store), TrafficLog("CH1", False))
+    traffic = traffic or TrafficLog("CH1", False)
+    channel = SecondaryChannel(backend, charger, store, TransactionMap(store), traffic)
     channel.attach(ChargerIdentity(charger, None, None), on_call)
     return channel
 
@@ -427,3 +429,97 @@ async def test_the_chargers_own_boot_is_retried_until_accepted(tmp_path):
     assert [call.action for call in link.sent] == ["BootNotification", "BootNotification"]
     assert delays == [30]  # the interval the backend asked for
     assert not channel._queue
+
+
+def _recorded_channel(tmp_path, **backend):
+    flow = RecordingFlow()
+    config = make_config({"name": "tap", "url": "ws://s", **backend})
+    return make_channel(config, "tap", StateStore(tmp_path / "CH1.json"), flow), flow
+
+
+async def test_a_live_call_is_not_sent_to_an_offline_secondary(tmp_path):
+    channel, flow = _recorded_channel(tmp_path)
+    heartbeat = Call("h", "Heartbeat", {})
+
+    channel.submit(heartbeat)
+
+    assert flow.decisions == [Decision("tap", heartbeat, Reason.SKIPPED_OFFLINE)]
+    assert channel.queued_count == 0
+
+
+async def test_a_call_dropped_from_a_full_queue(tmp_path):
+    channel, flow = _recorded_channel(tmp_path, max_queue=1)
+    first, second = (Call(i, "StartTransaction", {"connectorId": 1}) for i in ("1", "2"))
+
+    channel.submit(first, start_ref="a")
+    channel.submit(second, start_ref="b")
+
+    [decision] = flow.decisions
+    assert (decision.call.exchange_id, decision.reason) == (first.exchange_id, Reason.QUEUE_OVERFLOW)
+    assert channel.queued_count == 1
+
+
+async def test_live_calls_still_waiting_are_dropped_with_the_connection(tmp_path):
+    channel, flow = _recorded_channel(tmp_path)
+    heartbeat = Call("h", "Heartbeat", {})
+    channel._queue.append(_QueuedCall(heartbeat, durable=False))
+    channel._queue.append(_QueuedCall(Call("s", "StopTransaction", {"transactionId": 1}), durable=True))
+
+    channel._drop_transient()
+
+    assert flow.decisions == [Decision("tap", heartbeat, Reason.TRANSIENT_DROPPED)]
+
+
+@pytest.mark.parametrize(
+    ("call", "reason", "detail"),
+    [
+        (Call("m", "MeterValues", {"connectorId": 1}), Reason.NO_LONGER_FORWARDED, None),
+        (Call("s", "StopTransaction", {"transactionId": 555}), Reason.NO_TRANSACTION_LINK, 555),
+    ],
+)
+async def test_a_queued_call_that_cannot_be_sent_any_more(tmp_path, call, reason, detail):
+    channel, flow = _recorded_channel(tmp_path, forward_actions=["StopTransaction"])
+    channel._queue.append(_QueuedCall(call, durable=True))
+    link = _ScriptedLink(_accepted)
+
+    await channel._send_head(link)
+
+    assert flow.decisions == [Decision("tap", call, reason, detail)]
+    assert not link.sent
+
+
+async def test_a_call_rejected_too_often_is_dropped(tmp_path):
+    channel, flow = _recorded_channel(tmp_path)
+    _recording_sleep(channel)
+    meter = Call("m", "MeterValues", {"connectorId": 1})
+    channel._queue.append(_QueuedCall(meter, durable=True))
+    link = _ScriptedLink(_rejected)
+
+    for _ in range(MAX_CALL_ERROR_ATTEMPTS):
+        await channel._send_head(link)
+
+    assert flow.decisions == [Decision("tap", meter, Reason.MAX_ATTEMPTS)]
+
+
+async def test_the_cached_boot_is_resent_on_a_new_connection(tmp_path):
+    channel, flow = _recorded_channel(tmp_path)
+    channel._state.boot = {"chargePointVendor": "v"}
+    link = _ScriptedLink(lambda call: CallResult(call.id, {"status": "Accepted"}))
+
+    assert await channel._boot(link)
+
+    [decision] = flow.decisions
+    assert decision.reason is Reason.BOOT_FROM_CACHE
+    assert [call.exchange_id for call in link.sent] == [decision.call.exchange_id]
+
+
+async def test_the_chargers_own_boot_keeps_its_exchange(tmp_path):
+    channel, flow = _recorded_channel(tmp_path)
+    boot = Call("b", "BootNotification", {"chargePointVendor": "v"})
+    channel._queue.append(_QueuedCall(boot, durable=False))
+    link = _ScriptedLink(lambda call: CallResult(call.id, {"status": "Accepted"}))
+
+    assert await channel._boot(link)
+
+    assert flow.decisions == []
+    assert [call.exchange_id for call in link.sent] == [boot.exchange_id]

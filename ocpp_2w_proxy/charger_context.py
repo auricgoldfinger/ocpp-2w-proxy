@@ -10,21 +10,21 @@ import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from .flow import FlowRecorder
 from .primary_channel import PrimaryChannel
 from .secondary_channel import SecondaryChannel
-from .traffic_log import TrafficLog
 from .transactions import TransactionMap
 
 
 @dataclass(frozen=True)
 class ChargerContext:
-    """Everything the proxy owns per charger: its transaction map, one traffic log and
+    """Everything the proxy owns per charger: its transaction map, one flow recorder and
     one channel per backend."""
 
     primary: PrimaryChannel
     secondaries: Mapping[str, SecondaryChannel]
     transactions: TransactionMap
-    traffic: TrafficLog
+    traffic: FlowRecorder
 
     def start_background(self) -> None:
         self.primary.start_background()

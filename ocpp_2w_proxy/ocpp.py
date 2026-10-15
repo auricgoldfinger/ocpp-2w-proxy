@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import json
+import secrets
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -78,17 +80,24 @@ class ProtocolError(ValueError):
         return self.message_type in (MessageType.CALL_RESULT, MessageType.CALL_ERROR)
 
 
+# Opaque id tying every leg of one logical message together. The random base keeps ids
+# unique across restarts; a counter is far cheaper on the relay path than a uuid.
+next_exchange_id = itertools.count((secrets.randbits(30) << 32) + 1).__next__
+
+
 @dataclass(frozen=True)
 class Call:
     id: str
     action: str
     payload: dict[str, Any]
+    # Survives id and payload rewrites: every leg of the message carries the same one.
+    exchange_id: int = field(default_factory=next_exchange_id, compare=False, repr=False)
 
     def with_id(self, new_id: str) -> Call:
-        return Call(new_id, self.action, self.payload)
+        return Call(new_id, self.action, self.payload, exchange_id=self.exchange_id)
 
     def with_payload(self, payload: dict[str, Any]) -> Call:
-        return Call(self.id, self.action, payload)
+        return Call(self.id, self.action, payload, exchange_id=self.exchange_id)
 
 
 @dataclass(frozen=True)

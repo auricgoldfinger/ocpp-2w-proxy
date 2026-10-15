@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import FakeCsms
+from fakes import FakeCsms, RecordingFlow
 
-from ocpp_2w_proxy import backoff
+from ocpp_2w_proxy import backoff, server
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.server import ProxyServer
 
@@ -20,6 +20,14 @@ SECONDARY_NAMES = ("tap", "stats", "beta", "gamma", "delta")
 def fast_reconnect(monkeypatch):
     monkeypatch.setattr(backoff, "MIN_RETRY_DELAY", 0.05)
     monkeypatch.setattr(backoff, "MAX_RETRY_DELAY", 0.1)
+
+
+@pytest.fixture
+def flow(monkeypatch):
+    """What the relay reports for every charger of a proxy started afterwards, recorded instead of logged."""
+    recording = RecordingFlow()
+    monkeypatch.setattr(server, "TrafficLog", lambda *args: recording)
+    return recording
 
 
 @pytest.fixture
@@ -48,7 +56,12 @@ def make_raw_config(
     }
     if "debug" in overrides:  # the endpoint is off unless a test asks for it; port 0 = any free port
         raw["debug"] = {"enabled": True, "port": 0, **overrides.pop("debug")}
+    if "monitor" in overrides:  # likewise off unless asked for; its store defaults to <state_dir>/monitor.sqlite
+        raw["monitor"] = {"enabled": True, "port": 0, **overrides.pop("monitor")}
+    # One dict for every secondary, or a list with one dict per secondary.
     secondary_overrides = overrides.pop("secondary", {})
+    if isinstance(secondary_overrides, dict):
+        secondary_overrides = [secondary_overrides] * len(urls)
     entries = [
         {
             "name": SECONDARY_NAMES[i],
@@ -56,9 +69,9 @@ def make_raw_config(
             "auth": "basic",
             "password_env": "TAP_PASSWORD",
             "call_timeout": 2,
-            **secondary_overrides,
+            **entry_overrides,
         }
-        for i, url in enumerate(urls)
+        for i, (url, entry_overrides) in enumerate(zip(urls, secondary_overrides, strict=True))
     ]
     if entries:
         raw["secondary"] = entries

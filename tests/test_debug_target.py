@@ -1,4 +1,5 @@
 import pytest
+from fakes import RecordingFlow
 
 from ocpp_2w_proxy.command_router import CommandRouter
 from ocpp_2w_proxy.debug_target import ChargerGone, FutureReplyTarget
@@ -32,7 +33,7 @@ async def test_no_reply_times_out():
 
 
 async def test_the_router_hands_the_charger_reply_to_the_target():
-    router, target = CommandRouter(), FutureReplyTarget()
+    router, target = CommandRouter(RecordingFlow()), FutureReplyTarget()
     sent = router.outbound(target, Call("mine", "GetConfiguration", {}))
 
     routed = router.take(CallResult(sent.id, {"configurationKey": []}))

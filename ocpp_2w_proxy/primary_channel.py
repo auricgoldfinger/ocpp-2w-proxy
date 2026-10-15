@@ -14,13 +14,14 @@ from .backoff import Backoff
 from .boot_replay import BootReplay
 from .charger_auth import ChargerIdentity
 from .config import AuthMode, BackendConfig, ChargerConfig
+from .flow import FlowRecorder
 from .message_classes import MessageClass, classify, latest_key
 from .ocpp import Call, CallError, CallResult, Reply, new_message_id, now_iso
 from .queue_overflow import pick_victim
+from .reasons import Reason
 from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
-from .traffic_log import TrafficLog
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class PrimaryChannel:
         backend: BackendConfig,
         charger: ChargerConfig,
         store: StateStore,
-        traffic: TrafficLog,
+        traffic: FlowRecorder,
     ):
         self.name = backend.name
         self._backend = backend
@@ -122,6 +123,16 @@ class PrimaryChannel:
     def connected(self) -> bool:
         return self._connected.is_set()
 
+    @property
+    def connected_since(self) -> float | None:
+        link = self._link
+        return link.connected_since if link is not None else None
+
+    @property
+    def queued_count(self) -> int:
+        """Messages waiting for the primary: queued billing data and kept state reports."""
+        return len(self._queue) + len(self._latest)
+
     async def wait_connected(self, timeout: float) -> bool:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._connected.wait(), timeout)
@@ -146,6 +157,7 @@ class PrimaryChannel:
         if not await self._await_boot_replay(max(deadline - loop.time(), 0)):
             return self._unavailable(call)
         if call.action == "BootNotification" and (answer := self._answer_boot(call)) is not None:
+            self._traffic.decided(self.name, call, Reason.BOOT_FROM_REPLAY)
             return answer
         if call.action == "StartTransaction" and not await self._wait_drained(timeout):
             return self._refuse_start(call)
@@ -163,6 +175,7 @@ class PrimaryChannel:
         """The previous transaction's stop is still queued: the primary must see it first.
         Failing now makes the charger retry instead of overtaking it."""
         logger.warning("%s primary still has queued messages; refusing StartTransaction", self._charger.id)
+        self._traffic.decided(self.name, call, Reason.START_REFUSED_CATCHING_UP)
         return CallError(call.id, "GenericError", "primary backend still catching up")
 
     async def _send_live(self, call: Call, deadline: float) -> Reply:
@@ -200,26 +213,37 @@ class PrimaryChannel:
         match classify(call):
             case MessageClass.DURABLE:
                 self._queue.append(call)
+                # Before the limit is enforced: an overflow may drop this very call.
+                self._traffic.decided(self.name, call, Reason.QUEUED)
                 self._drained.clear()
                 self._enforce_queue_limit()
                 self._persist()
                 logger.warning("%s queued %s while the primary backend is unavailable", self._charger.id, call.action)
                 return self._queued_reply(call)
             case MessageClass.LATEST:
-                self._latest[latest_key(call)] = call
+                self._keep_latest(call)
                 self._persist()
                 logger.warning("%s kept %s for later: primary unavailable", self._charger.id, call.action)
+                self._traffic.decided(self.name, call, Reason.KEPT_LATEST)
                 return self._queued_reply(call)
             case MessageClass.DROPPABLE:
                 if call.action == "Heartbeat":
                     # The charger only asks to sync its clock; answer it locally instead of an
                     # error, so an outage does not make the charger treat it as a protocol fault.
                     logger.warning("%s answered Heartbeat locally: primary unavailable", self._charger.id)
+                    self._traffic.decided(self.name, call, Reason.HEARTBEAT_LOCAL)
                     return CallResult(call.id, {"currentTime": now_iso()})
                 logger.info("%s dropped %s: primary unavailable", self._charger.id, call.action)
+                self._traffic.decided(self.name, call, Reason.DROPPED_UNAVAILABLE)
                 return CallResult(call.id, {})
             case MessageClass.LIVE:
                 raise PrimaryUnavailable(f"primary backend cannot answer {call.action}")
+
+    def _keep_latest(self, call: Call) -> None:
+        key = latest_key(call)
+        if (superseded := self._latest.get(key)) is not None:
+            self._traffic.decided(self.name, superseded, Reason.SUPERSEDED)
+        self._latest[key] = call
 
     def _queued_reply(self, call: Call) -> Reply:
         self._queue_changed.set()
@@ -233,6 +257,7 @@ class PrimaryChannel:
                 break  # only the in-flight head is over the limit; its confirmation pops it
             self._queue.remove(victim)
             logger.error("primary queue full (%d); dropped queued %s", self._max_queue, victim.action)
+            self._traffic.decided(self.name, victim, Reason.QUEUE_OVERFLOW)
 
     def _sacrifice(self) -> Call | None:
         """The call to drop on overflow; never the head the drain is sending."""
@@ -396,3 +421,4 @@ class PrimaryChannel:
             logger.warning(
                 "%s primary rejected queued %s: %s %s", self._charger.id, call.action, reply.code, reply.description
             )
+            self._traffic.decided(self.name, call, Reason.QUEUED_REJECTED, reply.code)
