@@ -98,7 +98,8 @@ class MonitorWriter:
         deadline = loop.time() + self._flush_timeout
         while not self._queue.empty() and loop.time() < deadline:
             batch: list[tuple] = []
-            self._drain_into(batch)
+            self._slice.restart()
+            await self._drain_into(batch)
             await self._process(batch)
 
     # --- batching -----------------------------------------------------------------------------
@@ -110,30 +111,36 @@ class MonitorWriter:
                 first = await self._queue.get()
             finally:
                 self._waiting = False
+            self._slice.restart()
             await self._process(await self._collect(first))
 
     async def _collect(self, first: tuple) -> list[tuple]:
         """The first event plus what follows, until the batch is full or the window has passed. No wait per event."""
         batch = [first]
+        self._slice.spent()  # the event it woke up for is the slice's first item
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._batch_window
         while True:
-            self._drain_into(batch)
+            await self._drain_into(batch)
             remaining = deadline - loop.time()
             if len(batch) >= self._batch_size or remaining <= 0 or self._closing:
                 return batch
             await asyncio.sleep(min(POLL_INTERVAL, remaining))
+            self._slice.restart()
 
-    def _drain_into(self, batch: list[tuple]) -> None:
+    async def _drain_into(self, batch: list[tuple]) -> None:
+        """Take what is queued, up to a full batch; draining 500 events is a slice's worth of work by itself."""
+        loop_slice = self._slice
         with suppress(asyncio.QueueEmpty):
             while len(batch) < self._batch_size:
                 batch.append(self._queue.get_nowait())
+                if loop_slice.spent():
+                    await loop_slice.yield_to_loop()
 
     # --- one batch ----------------------------------------------------------------------------
 
     async def _process(self, raw_events: Sequence[tuple]) -> None:
         assembler = self._assembler
-        self._slice.restart()
         try:
             assembler.evict(self._clock())
             routed = []

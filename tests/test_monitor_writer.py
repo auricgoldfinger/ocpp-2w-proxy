@@ -95,6 +95,7 @@ async def test_each_changed_summary_and_each_link_change_is_published_once(store
 
 
 async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):
+    """Not while draining the queue either: taking 500 events off it is a slice's worth of work."""
     recorders = RecorderHub([CP])
     forwarded(recorders.recorder_for(CP), 250)  # 1000 events, two full batches
     ticks = 0
@@ -109,8 +110,15 @@ async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):
 
         monkeypatch.setattr(BatchAssembler, name, counted)
 
-    for name in ("correlate", "fold", "summarize"):
+    for name in ("correlate", "fold", "summarize", "record"):
         spy(name)
+    get_nowait = recorders.queue.get_nowait
+
+    def drained():
+        seen["drain", ticks] += 1
+        return get_nowait()
+
+    monkeypatch.setattr(recorders.queue, "get_nowait", drained)
 
     async def ticker():
         nonlocal ticks
@@ -125,6 +133,7 @@ async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):
         ticking.cancel()
 
     assert sum(count for (name, _), count in seen.items() if name == "fold") == 1000
+    assert sum(count for (name, _), count in seen.items() if name == "drain") >= 1000
     assert max(seen.values()) <= 50
 
 
