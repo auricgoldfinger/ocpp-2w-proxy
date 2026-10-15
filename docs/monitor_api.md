@@ -11,7 +11,8 @@ from its `Host` gets 403. Timestamps are Unix epoch seconds as floats.
 ## Names
 
 - **Peers:** `"charger"`, the primary backend's name, and each secondary backend's name.
-- **Origins:** `"charger"`, a backend name, `"proxy"` (replayed or synthetic) or `"debug"`.
+- **Origins:** `"charger"`, a backend name, `"proxy"` (replayed or synthetic) or `"debug"`. An orphan reply
+  (one that matched no known exchange) has `origin: null` and `action: null`.
 - **Outcomes:** `delivered`, `answered_by_proxy`, `queued`, `withheld`, `dropped`, `failed`, or `null`
   while a leg is still open.
 - **Reason codes:** the names of `ocpp_2w_proxy.reasons.Reason`.
@@ -73,16 +74,17 @@ Used in lists and in SSE `exchange` events:
 
 | Field | Meaning |
 |---|---|
-| `outcome` | The exchange's overall outcome: the worst leg outcome. |
+| `outcome` | The exchange's overall outcome: the worst leg outcome, ranked failed > dropped > withheld > queued > open (`null`) > answered_by_proxy > delivered. |
 | `problem` | True when any leg's reason `is_problem`, or a peer replied with a CallError. |
 | `incomplete` | The exchange was open during a monitor gap. |
 | `legs[].outcome` / `reason` | Where the leg ended. `null` while still open. |
 | `legs[].reply` | `"result"`, `"error"` or `null`. |
 | `legs[].replied_by` | `"peer"`, `"proxy"` or `null`. A proxy CallResult is shown as "blocked"; a proxy CallError as "refused". |
-| `legs[].rewritten[].field` | `"id"`, `"tx"` or `"profile"`. `to: null` means the field was removed. |
+| `legs[].rewritten[].field` | `"id"` (the idTag), `"tx"` or `"profile"`. `to: null` means the field was removed. Wire ids differ per leg by design and are not a rewrite. |
+| Unknown (monitor gap) | A leg with `outcome: null` and `reason_text: "Unknown (monitor gap)"`: the exchange is incomplete, or the leg has been open longer than 120 s. |
 
 For an exchange that originates from a backend, the leg toward the charger has `peer: "charger"`. When
-`origin` is `"proxy"`, the summary also has `"proxy_kind": "replay" | "synthetic"`.
+`origin` is `"proxy"`, the decisions say why the proxy sent it (e.g. `BOOT_FROM_CACHE`).
 
 ## Routes
 
@@ -115,7 +117,8 @@ Query parameters, all optional; a duplicate key gets 400:
 | `limit` | default 200, at most 200 |
 
 Returns `{"exchanges": [summary, …], "next": "<cursor>" | null}`, newest first. It also counts the
-Heartbeats that matched the other filters: `"hidden": {"Heartbeat": 312}`.
+Heartbeats that matched the other filters: `"hidden": {"Heartbeat": 312}`. That count is only bounded by
+`since`, so the UI always sends a time window.
 
 ### `GET /api/exchanges/{id}`
 Returns the summary plus the fields below; 404 when the id is unknown:
