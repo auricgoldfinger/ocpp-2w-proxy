@@ -6,7 +6,7 @@ from ocpp_2w_proxy.monitor.not_sent import NotSentMap
 RAW = {
     "chargers": [
         {"id": "CH1", "secondary_ids": {"ha": "ha-1", "stats": "st-1"}},
-        {"id": "CH2", "secondary_ids": {"stats": "st-2"}},
+        {"id": "CH2"},
     ],
     "primary": {"url": "wss://primary.example"},
     "secondary": [
@@ -25,12 +25,13 @@ def not_sent():
 @pytest.mark.parametrize(
     ("charger", "origin", "action", "expected"),
     [
-        ("CH1", "charger", "MeterValues", ()),
-        ("CH1", "charger", "StatusNotification", ("stats",)),
-        ("CH1", "charger", "Heartbeat", ("ha", "stats")),
-        ("CH2", "charger", "StatusNotification", ("stats",)),
-        ("CH2", "charger", "MeterValues", ()),
-        ("CH1", "charger", "NotAnAction", ("ha", "stats")),
+        ("CH1", "charger", "MeterValues", ("unused",)),
+        ("CH1", "charger", "StatusNotification", ("stats", "unused")),
+        ("CH1", "charger", "Heartbeat", ("ha", "stats", "unused")),
+        # secondary_ids only renames: a charger without any is relayed to every secondary
+        ("CH2", "charger", "StatusNotification", ("stats", "unused")),
+        ("CH2", "charger", "MeterValues", ("unused",)),
+        ("CH1", "charger", "NotAnAction", ("ha", "stats", "unused")),
         ("unknown", "charger", "Heartbeat", ()),
         # only charger-originated exchanges have a not_sent list
         ("CH1", "primary", "Heartbeat", ()),

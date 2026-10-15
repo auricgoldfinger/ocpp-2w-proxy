@@ -56,7 +56,12 @@ def make_raw_config(
     }
     if "debug" in overrides:  # the endpoint is off unless a test asks for it; port 0 = any free port
         raw["debug"] = {"enabled": True, "port": 0, **overrides.pop("debug")}
+    if "monitor" in overrides:  # likewise off unless asked for; its store defaults to <state_dir>/monitor.sqlite
+        raw["monitor"] = {"enabled": True, "port": 0, **overrides.pop("monitor")}
+    # One dict for every secondary, or a list with one dict per secondary.
     secondary_overrides = overrides.pop("secondary", {})
+    if isinstance(secondary_overrides, dict):
+        secondary_overrides = [secondary_overrides] * len(urls)
     entries = [
         {
             "name": SECONDARY_NAMES[i],
@@ -64,9 +69,9 @@ def make_raw_config(
             "auth": "basic",
             "password_env": "TAP_PASSWORD",
             "call_timeout": 2,
-            **secondary_overrides,
+            **entry_overrides,
         }
-        for i, url in enumerate(urls)
+        for i, (url, entry_overrides) in enumerate(zip(urls, secondary_overrides, strict=True))
     ]
     if entries:
         raw["secondary"] = entries

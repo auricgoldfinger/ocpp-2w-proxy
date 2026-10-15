@@ -4,3 +4,5 @@
 !.python-version
 !ocpp_2w_proxy/
 **/__pycache__
+# The monitor UI's own test suite (node --test) and its fixtures are never served.
+ocpp_2w_proxy/monitor/static/tests

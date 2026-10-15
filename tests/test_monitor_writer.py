@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import time
 import zlib
 from collections import Counter
 
@@ -284,3 +285,17 @@ async def test_a_thousand_event_burst_causes_no_slow_callback_in_writer_code(sto
     slow = [r.getMessage() for r in caplog.records if r.name == "asyncio" and "took" in r.getMessage()]
     assert [message for message in slow if "monitor" in message or "writer" in message.lower()] == []
     assert len(await exchanges(store)) == 200  # one page
+
+
+async def test_counts_the_frames_per_peer_for_the_last_hour(store):
+    recorders = RecorderHub([CP])
+    writer = new_writer(store, recorders)
+    recorder = recorders.recorder_for(CP)
+    forwarded(recorder, 3)
+    recorder.link_changed("primary", True)
+
+    await run_writer(writer)
+
+    now = time.time()
+    assert writer.rates.last_hour(CP, "charger", now) == 6
+    assert writer.rates.last_hour(CP, "primary", now) == 6
