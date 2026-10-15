@@ -8,16 +8,32 @@ import json
 import pytest
 
 from ocpp_2w_proxy import minihttp
-from ocpp_2w_proxy.minihttp import HttpError, Request, Response
+from ocpp_2w_proxy.minihttp import Content, HttpError, Request, Response
+
+STATIC = Content(
+    200,
+    b"<!doctype html>\n",
+    "text/html; charset=utf-8",
+    (("Content-Security-Policy", "default-src 'self'"), ("X-Content-Type-Options", "nosniff")),
+)
 
 
-async def echo(request: Request) -> Response:
+async def echo(request: Request) -> Response | Content:
+    if request.path == "/static":
+        return STATIC
     if request.path == "/boom":
         raise RuntimeError("boom")
     if request.path == "/refuse":
         raise HttpError(404, "nope", "not here")
     return Response(
-        200, {"method": request.method, "path": request.path, "headers": request.headers, "body": request.body.decode()}
+        200,
+        {
+            "method": request.method,
+            "path": request.path,
+            "query": dict(request.query),
+            "headers": request.headers,
+            "body": request.body.decode(),
+        },
     )
 
 
@@ -29,7 +45,7 @@ async def port():
     await server.wait_closed()
 
 
-async def exchange(port: int, raw: bytes) -> tuple[int, dict]:
+async def exchange_raw(port: int, raw: bytes) -> tuple[str, bytes]:
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(raw)
     try:
@@ -37,7 +53,12 @@ async def exchange(port: int, raw: bytes) -> tuple[int, dict]:
     finally:
         writer.close()
     head, _, body = response.partition(b"\r\n\r\n")
-    return int(head.split(b" ")[1]), json.loads(body)
+    return head.decode("ascii"), body
+
+
+async def exchange(port: int, raw: bytes) -> tuple[int, dict]:
+    head, body = await exchange_raw(port, raw)
+    return int(head.split(" ")[1]), json.loads(body)
 
 
 def post(body: bytes = b"{}", headers: str = "", path: str = "/x") -> bytes:
@@ -52,6 +73,29 @@ async def test_a_get_and_a_post_reach_the_handler(port):
     assert (status, body["method"], body["body"]) == (200, "POST", '{"a":1}')
 
 
+@pytest.mark.parametrize(
+    ("target", "query"),
+    [
+        ("/a", {}),
+        ("/a?", {}),
+        ("/a?x=1&y=two+words&z=%C3%A9", {"x": "1", "y": "two words", "z": "\u00e9"}),
+        ("/a?empty=", {"empty": ""}),
+    ],
+)
+async def test_the_query_string_is_parsed(port, target, query):
+    status, body = await exchange(port, f"GET {target} HTTP/1.1\r\n\r\n".encode())
+    assert (status, body["path"], body["query"]) == (200, "/a", query)
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["/a?x=1&x=2", "/a?x", "/a?x=1&&y=2", "/a?x=%ff", "/a?" + "&".join(f"k{i}=v" for i in range(33))],
+)
+async def test_a_malformed_or_ambiguous_query_is_refused(port, target):
+    status, body = await exchange(port, f"GET {target} HTTP/1.1\r\n\r\n".encode())
+    assert (status, body["error"]) == (400, "bad_request")
+
+
 async def test_the_response_is_json_and_closes_the_connection(port):
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(b"GET / HTTP/1.1\r\n\r\n")
@@ -59,6 +103,20 @@ async def test_the_response_is_json_and_closes_the_connection(port):
     writer.close()
     assert "Content-Type: application/json" in head
     assert "Connection: close" in head
+
+
+async def test_content_is_sent_as_is_with_its_type_and_extra_headers(port):
+    head, body = await exchange_raw(port, b"GET /static HTTP/1.1\r\n\r\n")
+    lines = head.split("\r\n")
+    assert lines[0] == "HTTP/1.1 200 OK"
+    assert body == STATIC.body
+    assert set(lines[1:]) == {
+        "Content-Type: text/html; charset=utf-8",
+        f"Content-Length: {len(STATIC.body)}",
+        "Content-Security-Policy: default-src 'self'",
+        "X-Content-Type-Options: nosniff",
+        "Connection: close",
+    }
 
 
 async def test_a_handler_refusal_keeps_its_status(port):
@@ -104,11 +162,25 @@ async def test_a_stalled_request_times_out(port, monkeypatch):
     assert (await exchange(port, b"POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc"))[0] == 408
 
 
-async def test_connections_beyond_the_limit_are_refused_with_503(port):
-    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(minihttp.MAX_CONNECTIONS)]
+async def test_connections_beyond_the_default_limit_are_refused_with_503(port):
+    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(minihttp.DEFAULT_MAX_CONNECTIONS)]
     await asyncio.sleep(0.1)  # let the server register them all
 
     assert (await exchange(port, b""))[0] == 503  # refused before it is even read
 
     for _, writer in held:
         writer.close()
+
+
+async def test_the_connection_limit_is_configurable():
+    server = await minihttp.serve(echo, "127.0.0.1", 0, max_connections=2)
+    port = server.sockets[0].getsockname()[1]
+    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(2)]
+    await asyncio.sleep(0.1)
+
+    assert (await exchange(port, b""))[0] == 503
+
+    for _, writer in held:
+        writer.close()
+    server.close()
+    await server.wait_closed()

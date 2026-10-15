@@ -15,6 +15,7 @@ from .command_assignments import validate_command_assignments, withhold_secondar
 from .config_error import ConfigError
 from .config_values import flag, number, reject_unknown_keys
 from .debug_config import DebugConfig, parse_debug
+from .monitor_config import MonitorConfig, parse_monitor
 from .ocpp import OCPP_ACTIONS
 from .policy import (
     PRIMARY_DEFAULT_RULE,
@@ -45,7 +46,7 @@ DEFAULT_SECONDARY_FORWARD_ACTIONS = [
 ]
 
 # Known keys per configuration section: a typo must fail loudly, not silently never match.
-TOP_LEVEL_KEYS = frozenset({"proxy", "logging", "chargers", "primary", "secondary", "debug"})
+TOP_LEVEL_KEYS = frozenset({"proxy", "logging", "chargers", "primary", "secondary", "debug", "monitor"})
 PROXY_KEYS = frozenset({"listen", "port", "state_dir", "tls_cert", "tls_key", "ping_interval", "ping_timeout"})
 LOGGING_KEYS = frozenset({"level", "log_payloads"})
 CHARGER_KEYS = frozenset({"id", "password_env", "primary_id", "secondary_ids"})
@@ -112,6 +113,7 @@ class Config:
     primary: PrimaryConfig
     secondaries: tuple[SecondaryConfig, ...]
     debug: DebugConfig = DebugConfig()
+    monitor: MonitorConfig = MonitorConfig()
 
 
 def load(path: Path, environ: Mapping[str, str] = os.environ) -> Config:
@@ -150,7 +152,8 @@ def parse(raw: Mapping[str, Any], environ: Mapping[str, str] = os.environ) -> Co
     primary = withhold_secondary_keys(primary, secondaries)
     proxy = _parse_proxy(raw.get("proxy", {}), raw.get("logging", {}))
     debug = parse_debug(raw.get("debug", {}), proxy.port)
-    return Config(proxy, chargers, primary, secondaries, debug)
+    monitor = parse_monitor(raw.get("monitor", {}), proxy.port, debug.port, proxy.state_dir)
+    return Config(proxy, chargers, primary, secondaries, debug, monitor)
 
 
 def _parse_secondaries(entries: Any, secrets: _Secrets) -> tuple[SecondaryConfig, ...]:
