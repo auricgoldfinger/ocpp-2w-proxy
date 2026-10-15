@@ -96,13 +96,18 @@ async def test_a_malformed_or_ambiguous_query_is_refused(port, target):
     assert (status, body["error"]) == (400, "bad_request")
 
 
-async def test_the_response_is_json_and_closes_the_connection(port):
+async def test_the_response_is_uncached_unsniffed_json_and_closes_the_connection(port):
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(b"GET / HTTP/1.1\r\n\r\n")
     head = (await asyncio.wait_for(reader.read(), 5)).partition(b"\r\n\r\n")[0].decode()
     writer.close()
-    assert "Content-Type: application/json" in head
-    assert "Connection: close" in head
+    for line in (
+        "Content-Type: application/json",
+        "X-Content-Type-Options: nosniff",
+        "Cache-Control: no-store",
+        "Connection: close",
+    ):
+        assert line in head.split("\r\n")
 
 
 async def test_content_is_sent_as_is_with_its_type_and_extra_headers(port):

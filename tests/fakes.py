@@ -222,10 +222,28 @@ class FakeCharger:
         self._reader.cancel()
 
 
+@dataclass(frozen=True)
+class HttpReply:
+    status: int
+    headers: dict[str, str]  # names lowercased
+    body: bytes
+
+    def json(self) -> Any:
+        return json.loads(self.body)
+
+
 async def http_request(
     port: int, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
 ) -> tuple[int, Any]:
     """A bare-bones HTTP client for the debug endpoint: JSON body in (unless a str/bytes), JSON out."""
+    reply = await http_exchange(port, method, path, body, headers)
+    return reply.status, reply.json()
+
+
+async def http_exchange(
+    port: int, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
+) -> HttpReply:
+    """One request as http_request sends it, with the reply's status, headers and raw body."""
     payload = body if isinstance(body, bytes) else b"" if body is None else json.dumps(body).encode()
     sent = {"Host": "localhost", "Content-Length": str(len(payload))}
     if payload:
@@ -238,5 +256,10 @@ async def http_request(
         response = await asyncio.wait_for(reader.read(), 10)
     finally:
         writer.close()
-    status_line, _, rest = response.partition(b"\r\n")
-    return int(status_line.split(b" ")[1]), json.loads(rest.partition(b"\r\n\r\n")[2])
+    reply_head, _, reply_body = response.partition(b"\r\n\r\n")
+    status_line, *header_lines = reply_head.decode("latin-1").split("\r\n")
+    reply_headers = {}
+    for line in header_lines:
+        name, _, value = line.partition(":")
+        reply_headers[name.lower()] = value.strip()
+    return HttpReply(int(status_line.split(" ")[1]), reply_headers, reply_body)
