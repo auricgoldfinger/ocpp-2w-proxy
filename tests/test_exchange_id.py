@@ -1,6 +1,7 @@
 """Every leg of one logical message carries the exchange id of the Call it came from."""
 
 from conftest import CHARGER_ID, make_raw_config
+from fakes import RecordingFlow
 from test_secondary_channel import make_channel, make_config
 
 from ocpp_2w_proxy.command_router import CommandRouter
@@ -48,7 +49,7 @@ def test_with_id_and_with_payload_keep_the_exchange_id():
 
 def test_exchange_id_survives_the_command_router():
     call = Call("1", "GetConfiguration", {})
-    assert CommandRouter().outbound(_Target(), call).exchange_id == call.exchange_id
+    assert CommandRouter(RecordingFlow()).outbound(_Target(), call).exchange_id == call.exchange_id
 
 
 def test_exchange_id_survives_the_policy_rewrite():

@@ -31,7 +31,7 @@ from websockets.exceptions import ConnectionClosed
 from .backend_link import CONNECT_ERRORS, BackendUnavailable
 from .charger_auth import ChargerIdentity
 from .charger_context import ChargerContext
-from .command_router import CommandRouter, ReplyTarget
+from .command_router import CommandRouter, ReplyTarget, RoutedReply
 from .config import Config
 from .debug_target import ChargerGone, CommandTimeout, FutureReplyTarget
 from .ocpp import (
@@ -48,9 +48,10 @@ from .ocpp import (
     serialize,
     substitute_reply,
 )
-from .policy import CANNED_ANSWERS, CommandPolicy, canned_answer
+from .policy import CANNED_ANSWERS, CommandPolicy, answer_reason, canned_answer
 from .primary_channel import PrimaryUnavailable
 from .primary_outage import outlast_grace
+from .reasons import Reason
 from .secondary_channel import SecondaryChannel
 from .traffic_log import CHARGER
 from .withheld_calls import Withheld, withhold
@@ -89,7 +90,7 @@ class ChargerSession:
         self._traffic = charger.traffic
         self._transactions = charger.transactions
         self._secondaries = dict(charger.secondaries)
-        self._router = CommandRouter()
+        self._router = CommandRouter(charger.traffic)
         self._relays: set[asyncio.Task] = set()
         self._debug_targets: set[FutureReplyTarget] = set()
         self.connected_since = now_iso()
@@ -97,6 +98,13 @@ class ChargerSession:
         self.remote = f"{address[0]}:{address[1]}" if address else None
 
     async def run(self) -> None:
+        self._traffic.link_changed(CHARGER, True)
+        try:
+            await self._serve()
+        finally:
+            self._traffic.link_changed(CHARGER, False)
+
+    async def _serve(self) -> None:
         try:
             token = await self._primary.attach(self._identity, self._on_primary_call)
         except CONNECT_ERRORS as exc:
@@ -151,7 +159,7 @@ class ChargerSession:
                         await self._send_to_charger(error)
                     elif (substitute := substitute_reply(exc)) is not None:
                         # The backend that issued the command must not wait for it forever.
-                        await self._route_charger_reply(substitute)
+                        await self._route_malformed_reply(substitute, exc)
                     continue
                 self._traffic.received(CHARGER, message)
                 if isinstance(message, Call):
@@ -194,6 +202,7 @@ class ChargerSession:
     async def _relay_withheld(self, call: Call, withheld: Withheld) -> None:
         """An unauthorized idTag's call: the secondaries see it, the primary never does."""
         logger.info("%s %s of an unauthorized idTag withheld from the primary", self.charger_id, call.action)
+        self._traffic.decided(self._primary.name, call, Reason.WITHHELD_UNAUTHORIZED)
         for channel in self._secondaries.values():
             channel.submit(call, start_ref=withheld.start_ref)
         await self._send_to_charger(withheld.reply)
@@ -223,19 +232,34 @@ class ChargerSession:
                 channel.submit(call, start_ref=start_ref)
         else:
             self._transactions.primary_start_failed(start_ref)
+            for channel in self._secondaries.values():
+                if channel.forwards(call.action):
+                    self._traffic.decided(channel.name, call, Reason.START_NOT_CONFIRMED)
         await self._send_to_charger(reply)
 
     async def _route_charger_reply(self, reply: Reply) -> None:
+        if (routed := self._take_charger_reply(reply)) is not None:
+            await self._return_reply(routed)
+
+    async def _route_malformed_reply(self, substitute: Reply, error: ProtocolError) -> None:
+        if (routed := self._take_charger_reply(substitute)) is not None:
+            self._traffic.decided(CHARGER, routed.sent, Reason.MALFORMED_FRAME, error)
+            await self._return_reply(routed)
+
+    def _take_charger_reply(self, reply: Reply) -> RoutedReply | None:
         routed = self._router.take(reply)
         if routed is None:
             logger.warning("%s charger replied to unknown message id %s; ignored", self.charger_id, reply.id)
-            return
+        return routed
+
+    async def _return_reply(self, routed: RoutedReply) -> None:
         try:
             await routed.target.reply(routed.reply)
         except BackendUnavailable:
             logger.warning(
-                "%s %s backend gone; reply to %s dropped", self.charger_id, routed.target.name, routed.action
+                "%s %s backend gone; reply to %s dropped", self.charger_id, routed.target.name, routed.sent.action
             )
+            self._traffic.decided(routed.target.name, routed.sent, Reason.BACKEND_GONE_REPLY_LOST)
 
     # --- backends -> charger --------------------------------------------------------------
 
@@ -256,6 +280,7 @@ class ChargerSession:
                 logger.warning(
                     "%s %s from %s refers to an unknown transaction", self.charger_id, call.action, origin.name
                 )
+                self._traffic.decided(origin.name, call, Reason.UNKNOWN_TRANSACTION)
                 decision = _rejection(call)
             else:
                 outbound = self._router.outbound(origin, translated)
@@ -264,9 +289,11 @@ class ChargerSession:
                 # The charger's socket closed under us: tell the backend now rather than
                 # leaving it to wait out its own timeout.
                 self._router.discard(outbound.id)
+                self._traffic.decided(CHARGER, outbound, Reason.CHARGER_DISCONNECTED)
                 decision = CallError(call.id, "GenericError", "charger is disconnected")
         else:
             logger.info("%s %s from %s answered by proxy (policy)", self.charger_id, call.action, origin.name)
+            self._traffic.decided(origin.name, call, answer_reason(decision))
         await origin.reply(decision)
 
     async def send_command(self, action: str, payload: dict, timeout: float) -> CommandReply:
@@ -278,11 +305,16 @@ class ChargerSession:
         sent = self._router.outbound(target, Call(new_message_id(), action, payload))
         self._debug_targets.add(target)
         started = time.monotonic()
+        self._traffic.decided(CHARGER, sent, Reason.DEBUG_COMMAND)
         try:
             if not await self._send_to_charger(sent):
                 raise ChargerGone
             reply = await target.wait(timeout)
+        except ChargerGone:
+            self._traffic.decided(CHARGER, sent, Reason.CHARGER_DISCONNECTED)
+            raise
         except TimeoutError:
+            self._traffic.decided(CHARGER, sent, Reason.CHARGER_NO_REPLY)
             raise CommandTimeout(sent) from None
         finally:
             self._debug_targets.discard(target)
