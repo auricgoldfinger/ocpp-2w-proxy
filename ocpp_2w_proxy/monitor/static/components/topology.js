@@ -35,8 +35,8 @@ function node({ x, y, w, label, sub, classes, href }) {
 
 function edge({ x1, y1, x2, y2, up, label }) {
   const midX = (x1 + x2) / 2;
-  const midY = (y1 + y2) / 2;
-  return html`<g class="edge edge--${stateClass(up)}"><path d="M${x1} ${y1} C${midX} ${y1} ${midX} ${y2} ${x2} ${y2}"></path><text class="edge__label" x="${midX}" y="${midY - 6}" text-anchor="middle">${label}</text></g>`;
+  // The label sits just before the target node, where the fanned-out edges no longer overlap.
+  return html`<g class="edge edge--${stateClass(up)}"><path d="M${x1} ${y1} C${midX} ${y1} ${midX} ${y2} ${x2} ${y2}"></path><text class="edge__label" x="${x2 - 6}" y="${y2 - 6}" text-anchor="end">${label}</text></g>`;
 }
 
 /**
