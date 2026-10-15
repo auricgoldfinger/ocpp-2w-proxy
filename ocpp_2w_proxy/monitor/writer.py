@@ -2,7 +2,8 @@
 
 It takes a batch (up to 500 events, or whatever arrived within 200 ms of the first), and works through it in
 slices of at most 50 events with a yield to the loop after each, so no callback of its own comes near the 5 ms
-budget. The assembler does the per-event work; compression and SQLite run in the write worker's thread.
+budget. The assembler does the per-event work; compression and SQLite run in the write worker's thread. The
+writer also counts the frames per peer (``rates``), so the relay path never has to.
 
 A failing database costs data, never the writer: the batch is counted in ``dropped_batches`` and the writer
 carries on with the next one.
@@ -21,8 +22,10 @@ from contextlib import suppress
 from ..log_throttle import LogThrottle
 from .batch_assembler import BatchAssembler
 from .db import write_batch
+from .events import EventKind
 from .gaps import GapDetector
 from .live_hub import LiveHub
+from .message_rates import MessageRates
 from .not_sent import NotSentMap
 from .queries import rebuild_projections
 from .recorder_hub import RecorderHub
@@ -36,6 +39,7 @@ BATCH_WINDOW = 0.2
 SLICE_SIZE = 50
 POLL_INTERVAL = 0.02
 FLUSH_TIMEOUT = 1.5
+_FRAME_KINDS = frozenset({EventKind.RECEIVED, EventKind.SENT})
 
 type Clock = Callable[[], float]
 
@@ -70,6 +74,7 @@ class MonitorWriter:
         self._waiting = False
         self._closing = False
         self.dropped_batches = 0
+        self.rates = MessageRates()
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="monitor-writer")
@@ -124,6 +129,7 @@ class MonitorWriter:
         try:
             assembler.evict(self._clock())
             routed = []
+            await self._sliced(raw_events, self._count_frame)
             await self._sliced(raw_events, lambda raw: routed.append(assembler.correlate(raw)))
             unknown = assembler.take_unknown()
             if unknown:
@@ -141,6 +147,11 @@ class MonitorWriter:
             return
         await self._write(batch)
         await self._publish(batch, exchange_frames)
+
+    def _count_frame(self, raw: tuple) -> None:
+        kind, at, charger_id, peer = raw[:4]
+        if kind in _FRAME_KINDS:
+            self.rates.count(charger_id, peer, at)
 
     async def _sliced[T](self, items: Sequence[T], step: Callable[[T], object]) -> None:
         """``step`` every item, yielding to the loop after each slice."""
