@@ -1,9 +1,9 @@
 """The monitor's one writer task: from the recorders' queue to the store and the live stream.
 
 It takes a batch (up to 500 events, or whatever arrived within 200 ms of the first), and works through it in
-slices of at most 50 events with a yield to the loop after each, so no callback of its own comes near the 5 ms
-budget. The assembler does the per-event work; compression and SQLite run in the write worker's thread. The
-writer also counts the frames per peer (``rates``), so the relay path never has to.
+slices of about 0.1 ms (at most 50 events) with a yield to the loop after each (see ``loop_slice``), so a relay
+callback never waits long behind it. The assembler does the per-event work; compression and SQLite run in the
+write worker's thread. The writer also counts the frames per peer (``rates``), so the relay path never has to.
 
 A failing database costs data, never the writer: the batch is counted in ``dropped_batches`` and the writer
 carries on with the next one.
@@ -20,11 +20,12 @@ from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
 
 from ..log_throttle import LogThrottle
-from .batch_assembler import BatchAssembler
+from .batch_assembler import BatchAssembler, Routed
 from .db import write_batch
 from .events import EventKind
 from .gaps import GapDetector
 from .live_hub import LiveHub
+from .loop_slice import SLICE_BUDGET, SLICE_MAX_ITEMS, LoopSlice
 from .message_rates import MessageRates
 from .not_sent import NotSentMap
 from .queries import rebuild_projections
@@ -36,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 500
 BATCH_WINDOW = 0.2
-SLICE_SIZE = 50
 POLL_INTERVAL = 0.02
 FLUSH_TIMEOUT = 1.5
 _FRAME_KINDS = frozenset({EventKind.RECEIVED, EventKind.SENT})
@@ -54,7 +54,8 @@ class MonitorWriter:
         *,
         batch_size: int = BATCH_SIZE,
         batch_window: float = BATCH_WINDOW,
-        slice_size: int = SLICE_SIZE,
+        slice_size: int = SLICE_MAX_ITEMS,
+        slice_budget: float = SLICE_BUDGET,
         flush_timeout: float = FLUSH_TIMEOUT,
         clock: Clock = time.time,
     ):
@@ -65,6 +66,7 @@ class MonitorWriter:
         self._batch_size = batch_size
         self._batch_window = batch_window
         self._slice_size = slice_size
+        self._slice = LoopSlice(slice_budget, slice_size)
         self._flush_timeout = flush_timeout
         self._clock = clock
         self._assembler = BatchAssembler(not_sent)
@@ -126,14 +128,15 @@ class MonitorWriter:
 
     async def _process(self, raw_events: Sequence[tuple]) -> None:
         assembler = self._assembler
+        self._slice.restart()
         try:
             assembler.evict(self._clock())
             routed = []
-            await self._sliced(raw_events, self._count_frame)
-            await self._sliced(raw_events, lambda raw: routed.append(assembler.correlate(raw)))
+            await self._sliced(raw_events, lambda raw: routed.append(self._correlate(raw)))
             unknown = assembler.take_unknown()
             if unknown:
                 assembler.adopt(await self._rebuild(unknown), self._clock())
+                self._slice.restart()
             await self._sliced(routed, assembler.fold)
             await self._observe_gaps()
             exchange_frames: list[bytes] = []
@@ -146,19 +149,22 @@ class MonitorWriter:
             self._dropped_batch("monitor writer failed on a batch")
             return
         await self._write(batch)
+        self._slice.restart()
         await self._publish(batch, exchange_frames)
 
-    def _count_frame(self, raw: tuple) -> None:
+    def _correlate(self, raw: tuple) -> Routed:
         kind, at, charger_id, peer = raw[:4]
         if kind in _FRAME_KINDS:
             self.rates.count(charger_id, peer, at)
+        return self._assembler.correlate(raw)
 
-    async def _sliced[T](self, items: Sequence[T], step: Callable[[T], object]) -> None:
-        """``step`` every item, yielding to the loop after each slice."""
-        for chunk in _chunks(items, self._slice_size):
-            for item in chunk:
-                step(item)
-            await asyncio.sleep(0)
+    async def _sliced[T](self, items: Iterable[T], step: Callable[[T], object]) -> None:
+        """``step`` every item, yielding to the loop whenever the current slice is spent."""
+        loop_slice = self._slice
+        for item in items:
+            step(item)
+            if loop_slice.spent():
+                await loop_slice.yield_to_loop()
 
     async def _rebuild(self, exchange_ids: set[int]) -> list:
         """Exchanges continued after a restart or eviction, projected again from their stored rows."""
@@ -176,7 +182,7 @@ class MonitorWriter:
         self._assembler.record_gaps(gaps, now)
         for chunk in _chunks(self._assembler.tracked(), self._slice_size):
             self._assembler.mark_incomplete(gaps, chunk)
-            await asyncio.sleep(0)
+            await self._slice.yield_to_loop()
 
     async def _write(self, batch: WriteBatch) -> None:
         try:
