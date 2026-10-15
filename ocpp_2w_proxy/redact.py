@@ -1,4 +1,5 @@
-"""Make OCPP traffic safe to log: mask RFID tags, never print credentials."""
+"""Make OCPP traffic safe to log and to store in the monitor: mask RFID tags and secrets, never print
+credentials."""
 
 from __future__ import annotations
 
@@ -11,6 +12,25 @@ from .ocpp import Call, CallError, CallResult, Message
 # Lower-case: configuration keys are matched case-insensitively, as in policy.py.
 _SECRET_CONFIG_KEYS = frozenset({"authorizationkey"})
 _VISIBLE_SUFFIX = 4
+
+# Every action whose Call or CallResult may carry a card tag, a secret configuration value, URL
+# credentials, SIM ids or opaque vendor data. Payloads of other actions are stored without a copy.
+REDACT_ACTIONS: frozenset[str] = frozenset(
+    {
+        "Authorize",
+        "BootNotification",
+        "ChangeConfiguration",
+        "DataTransfer",
+        "GetConfiguration",
+        "GetDiagnostics",
+        "RemoteStartTransaction",
+        "ReserveNow",
+        "SendLocalList",
+        "StartTransaction",
+        "StopTransaction",
+        "UpdateFirmware",
+    }
+)
 _HIDDEN = "***"
 
 
@@ -69,6 +89,14 @@ def redact_payload(value: Any) -> Any:
     if isinstance(value, list):
         return [redact_payload(item) for item in value]
     return value
+
+
+def redact_message_payload(action: str | None, payload: Any) -> Any:
+    """Payload safe to store: redacted for actions that may carry secrets and for unknown ones (``None``),
+    so it fails closed. Any other payload is returned as is, without a copy."""
+    if action is None or action in REDACT_ACTIONS:
+        return redact_payload(payload)
+    return payload
 
 
 def _redact_field(key: str, item: Any) -> Any:
