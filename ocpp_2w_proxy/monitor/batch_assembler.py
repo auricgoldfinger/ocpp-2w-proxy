@@ -10,7 +10,7 @@ The writer drives it in slices, in two passes over the batch:
    **not_sent** once on the first sight of the exchange, **project**, and add the frame or decision row. A leg
    payload equal to the origin's (``is``, then ``==``) is neither redacted again nor stored.
 
-Then ``summarize`` each changed exchange and ``take_batch``.
+Then ``summarize`` (or only ``record``) each changed exchange and ``take_batch``.
 """
 
 from __future__ import annotations
@@ -129,10 +129,14 @@ class BatchAssembler:
         return list(self._changed.values())
 
     def summarize(self, tracked: TrackedExchange) -> dict:
-        """The exchange's summary; its row joins the batch."""
+        """The exchange's summary, for the live stream; its row joins the batch."""
         summary = tracked.projection.summary()
         self._exchange_rows.append(ExchangeRow.from_summary(summary))
         return summary
+
+    def record(self, tracked: TrackedExchange) -> None:
+        """The exchange's row joins the batch; for when nobody follows the live stream, so no summary is needed."""
+        self._exchange_rows.append(ExchangeRow.from_summary(tracked.projection.overview()))
 
     def take_batch(self) -> WriteBatch:
         batch = WriteBatch(self._exchange_rows, self._frames, self._decisions, self._links, self._gaps)

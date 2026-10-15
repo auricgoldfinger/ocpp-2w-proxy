@@ -1,10 +1,11 @@
 """The monitor never slows the relay (docs/plans/flow-monitor.md, "Performance budget" and "Verification").
 
-The default suite stresses it: a store whose every write takes 2 s, a live client that never reads, and a burst of
-1000 relayed messages. The relay must finish, no loop callback from monitor code may take 5 ms or more, and the
-events the monitor could not keep must show up as a gap and in the drop counters.
+The default suite stresses it: a store whose every write takes 0.5 s (far slower than events come in), a live
+client that never reads, and a burst of 1000 relayed messages. The relay must finish, no loop callback from monitor
+code may take 5 ms or more, and the events the monitor could not keep must show up as a gap and in the drop
+counters.
 
-``-m perf`` compares the relay's p99 round-trip with the monitor on and off.
+``-m perf`` compares the relay's p99 round trip with the monitor on and off, back to back with no idle time.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ import logging
 import re
 import statistics
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
 from conftest import CHARGER_ID, make_raw_config
@@ -24,7 +27,7 @@ from ocpp_2w_proxy.monitor import db
 from ocpp_2w_proxy.monitor import writer as writer_module
 from ocpp_2w_proxy.server import ProxyServer
 
-SLOW_WRITE_SECONDS = 2.0
+SLOW_WRITE_SECONDS = 0.5
 SLOW_CALLBACK_SECONDS = 0.005
 BURST = 1000
 # An asyncio "Executing <handle> took" warning names the task (if any), then the file its code runs in.
@@ -84,6 +87,7 @@ async def test_a_stalled_store_and_a_stuck_client_never_slow_the_relay(
     assert charger_monitor["dropped"] > 0 and charger_monitor["last_drop_at"] is not None
     gaps = await until_gap_stored(port)
     assert gaps[0]["charger_id"] == CHARGER_ID and gaps[0]["dropped"] > 0
+    monkeypatch.setattr(writer_module, "write_batch", db.write_batch)  # the store recovers: teardown flushes quickly
     stuck.close()
     await charger.close()
 
@@ -143,15 +147,15 @@ async def until_gap_stored(port: int, timeout: float = 15) -> list[dict]:
 # --- -m perf ---------------------------------------------------------------------------------
 
 ROUND_TRIPS = 2000
+BLOCKS = 4
 WARM_UP = 200
-# 500 messages a second, still far beyond any charger. Back to back, with no idle time at all, the loop is
-# CPU-bound and every microsecond the writer spends shows up in the relay's latency; that measures throughput,
-# not the latency a charger sees.
-PACE_SECONDS = 0.002
+# The monitor-on proxy's writer finishes its last batch before the next monitor-off block starts.
+DRAIN_SECONDS = 0.3
 P99_MARGIN_SECONDS = 0.001
 
 
-async def relay_round_trips(primary_url: str, state_dir, monitor: bool) -> list[float]:
+@asynccontextmanager
+async def relayed_charger(primary_url: str, state_dir, monitor: bool) -> AsyncIterator[FakeCharger]:
     raw = make_raw_config(primary_url, None, state_dir, **({"monitor": {}} if monitor else {}))
     proxy = ProxyServer(parse(raw, {}))
     server = await proxy.start()
@@ -161,17 +165,21 @@ async def relay_round_trips(primary_url: str, state_dir, monitor: bool) -> list[
         charger = await FakeCharger.connect(url, CHARGER_ID)
         for _ in range(WARM_UP):
             await charger.call("Heartbeat", {})
-        durations = []
-        for _ in range(ROUND_TRIPS):
-            started = time.perf_counter()
-            await charger.call("Heartbeat", {})
-            durations.append(time.perf_counter() - started)
-            await asyncio.sleep(PACE_SECONDS)
-        return durations
+        yield charger
     finally:
         if charger is not None:
             await charger.close()
         await proxy.close()
+
+
+async def back_to_back(charger: FakeCharger, count: int) -> list[float]:
+    """Round trips with no pause in between: the loop is never idle, so every bit of monitor work shows."""
+    durations = []
+    for _ in range(count):
+        started = time.perf_counter()
+        await charger.call("Heartbeat", {})
+        durations.append(time.perf_counter() - started)
+    return durations
 
 
 def p99(durations: list[float]) -> float:
@@ -180,8 +188,19 @@ def p99(durations: list[float]) -> float:
 
 @pytest.mark.perf
 async def test_the_monitor_adds_at_most_a_millisecond_to_the_relay_p99(primary, tmp_path, caplog):
+    """Monitor off and on in alternating blocks, so a noisy moment on the machine hits both sides alike."""
     caplog.set_level(logging.WARNING)  # per-frame INFO logging would dominate both runs
-    off = await relay_round_trips(primary.url, tmp_path / "off", monitor=False)
-    on = await relay_round_trips(primary.url, tmp_path / "on", monitor=True)
+    off: list[float] = []
+    on: list[float] = []
+    async with (
+        relayed_charger(primary.url, tmp_path / "off", monitor=False) as plain,
+        relayed_charger(primary.url, tmp_path / "on", monitor=True) as monitored,
+    ):
+        for _ in range(BLOCKS):
+            off += await back_to_back(plain, ROUND_TRIPS // BLOCKS)
+            on += await back_to_back(monitored, ROUND_TRIPS // BLOCKS)
+            await asyncio.sleep(DRAIN_SECONDS)
 
-    assert p99(on) <= p99(off) + P99_MARGIN_SECONDS, f"p99 off {p99(off) * 1e3:.2f} ms, on {p99(on) * 1e3:.2f} ms"
+    report = f"p99 off {p99(off) * 1e3:.3f} ms, on {p99(on) * 1e3:.3f} ms"
+    print(report)
+    assert p99(on) <= p99(off) + P99_MARGIN_SECONDS, report

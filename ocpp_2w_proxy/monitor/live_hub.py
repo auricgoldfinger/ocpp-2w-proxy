@@ -90,6 +90,11 @@ class LiveHub:
             self._subscribers.add(subscription)
         return subscription
 
+    @property
+    def has_subscribers(self) -> bool:
+        """Whether anyone follows the stream; without subscribers the writer skips building what it would publish."""
+        return bool(self._subscribers)
+
     def unsubscribe(self, subscription: Subscription) -> None:
         self._subscribers.discard(subscription)
 

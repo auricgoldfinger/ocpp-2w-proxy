@@ -12,6 +12,7 @@ from typing import Any, NamedTuple
 
 from ..ocpp import Call, CallError, CallResult, Message
 from ..reasons import Reason
+from . import compact_json
 from .events import EventKind, FlowEvent
 from .gaps import Gap
 
@@ -101,7 +102,7 @@ def frame_row(exchange_id: int, event: FlowEvent, origin: Mapping[str, Any] | No
             msg_type, body = ERROR, {"code": code, "description": description, "details": details}
         case _:
             raise ValueError(f"not a frame event: {event.kind}")
-    text = None if body is None else json.dumps(body, separators=(",", ":"))
+    text = None if body is None else compact_json.dumps(body)
     return FrameRow(exchange_id, event.at, event.peer, _DIRECTIONS[event.kind], msg_type, message.id, text)
 
 

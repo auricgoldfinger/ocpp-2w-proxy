@@ -63,7 +63,7 @@ class OpenExchanges:
         self._tables: dict[bool, OrderedDict[int, TrackedExchange]] = {True: OrderedDict(), False: OrderedDict()}
 
     def __len__(self) -> int:
-        return sum(len(table) for table in self._tables.values())
+        return len(self._tables[True]) + len(self._tables[False])  # on every touch: no generator
 
     def __contains__(self, exchange_id: int) -> bool:
         return any(exchange_id in table for table in self._tables.values())

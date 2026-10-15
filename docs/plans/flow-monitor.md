@@ -42,7 +42,7 @@ Outcomes:
 | Are policy refusals `failed`? | **No.** `answered_by_proxy`. The UI shows **blocked** for a canned CallResult and **refused** for a proxy CallError. Neither raises the problem flag. |
 | Record "filtered" secondaries? | **Yes, compactly:** a `not_sent` column, **derived in the writer** from config. There is no hook on the relay path. |
 | Separate Live / History / Sessions views | **Merged.** One Exchanges view. A Session is a `?tx=` filter with a server-side summary header. |
-| Store every leg payload | Only when it differs from the origin (`is` fast path, `==` fallback), zlib-compressed in the worker thread. |
+| Store every leg payload | Only when it differs from the origin (`is` fast path, `==` fallback), zlib-compressed in the worker thread from 200 bytes up (smaller ones gain nothing). |
 | uuid vs counter exchange id (perf) | **Integer counter** with a random per-process base: about 50 ns, unique across restarts, opaque. |
 | Monitor event loss under load (perf) | Allowed, but **made visible**: a `monitor_gaps` table, an `incomplete` flag and a gap row in the UI. |
 
@@ -64,6 +64,14 @@ The relay path is everything between reading a frame and `ws.send`. The hooks on
   work, and run CPU-heavy work that releases the GIL (zlib, sqlite) in dedicated threads.
 - **Relay first, monitor second.** When the queue is full, events are dropped and counted. The relay
   never waits.
+
+**Measured on back-to-back round trips** (the loop never idle). The writer costs about 7 µs of loop
+time per event. Its tail cost came from two places. First, it ran a slice of up to 50 events in every
+loop iteration, and a round trip spans about ten iterations. Second, the write worker took the GIL back
+about 1300 times per batch, once per `executemany` row and once per zlib call; that stretched each
+write from about 2 ms to 30–50 ms, and the loop stalled behind those handoffs. Time-budgeted, paced
+slices and multi-row writes with small payloads left uncompressed brought the p99 gap from about
++1.5 ms to under +0.5 ms.
 
 The performance expert also found an existing stall unrelated to the monitor: `StateStore._write`
 runs `json.dumps` and `fsync` on the loop (`state.py:170-179`), on the StartTransaction path. It goes on
@@ -191,8 +199,10 @@ Command.
 **`MonitorWriter`** (one task):
 1. `await queue.get()`, then drain with `get_nowait` until it has 500 events or a 200 ms timer runs out.
    No `wait_for` per event.
-2. Process the events in **slices of at most 50**, with `await asyncio.sleep(0)` between slices. Each
-   slice is well under 1 ms. Per event, in this order:
+2. Process the events in **slices of about 0.1 ms** (at most 50 events; `monitor/loop_slice.py`). After
+   each slice the writer rests three times as long as the slice took, so it never takes more than a
+   quarter of the loop. `sleep(0)` alone is not enough: the writer would then run a slice in every loop
+   iteration, and one relay round trip spans about ten iterations. Per event, in this order:
    1. **Correlate.**
    2. **Redact.** Only actions in `redact.REDACT_ACTIONS`. Orphans, unknown actions and every
       CallError's `details` are always redacted, so redaction fails closed.
@@ -203,9 +213,14 @@ Command.
    5. **Project.**
 3. **Gaps:** when `recorder.dropped` has grown since the last batch, the writer adds a `monitor_gaps`
    row and marks the exchanges open in that window, and the orphans resolved in it, as `incomplete`.
-4. **Hand the rows to the write worker.** zlib and `executemany` run there, because both release the GIL.
-5. **Publish** the changed summaries to `LiveHub`. Each summary is serialized once to SSE bytes and
-   shared by all subscribers.
+4. **Hand the rows to the write worker.** SQLite and zlib run there, because both release the GIL. The
+   worker must also hold the GIL as little as possible, and take it back as rarely as possible: each
+   time it does, the loop can stall behind it. So exchanges, frames and decisions go in as multi-row
+   statements (not one `executemany` step per row), and payloads under 200 bytes are stored as plain
+   JSON text, not zlib-compressed (`monitor/payload_blob.py`).
+5. **Publish** the changed summaries to `LiveHub`, once per batch. Each summary is serialized once to SSE
+   bytes and shared by all subscribers. Without subscribers no summary is built at all: the exchange row
+   comes from the cheaper `ExchangeProjection.overview()`.
 
 **`SqliteWorker`**: a dedicated single-thread executor per connection, one for writing and one for
 reading (WAL mode). The default executor is never used, because it serves `getaddrinfo` for backend
@@ -322,6 +337,9 @@ Also update `config.example.toml`, `compose.yaml` (publish the port) and the REA
 | `monitor/sqlite_worker.py` | thread-bound connection executor |
 | `monitor/db.py` | schema, migrations, writes, queries, purge, query time limit |
 | `monitor/writer.py` | sliced loop: correlate → redact → not_sent → serialize → project → hand off → publish |
+| `monitor/loop_slice.py` | how long the writer holds the loop per slice (about 0.1 ms) and how long it then rests |
+| `monitor/payload_blob.py` | stored payload form: plain JSON text under 200 bytes, zlib from there |
+| `monitor/compact_json.py` | one shared compact JSON encoder for rows, the live stream and the API |
 | `monitor/live_hub.py` | SSE fan-out with bounded queues and shared bytes |
 | `monitor/api.py` | GET routes (dispatch table); bytes built in the reader thread |
 | `monitor/static_files.py` | whitelisted static assets |
@@ -488,16 +506,18 @@ missing. A Python test also checks that every asset referenced in `index.html` i
   - primary outage → queued, then delivered after reconnect;
   - SSE delivers the summary.
 - **Latency guard** (`tests/test_monitor_latency.py`). Set up:
-  - a fake write worker that sleeps 2 s per batch;
+  - a fake write worker that sleeps 0.5 s per batch;
   - an SSE client that never reads;
   - a 1000-message primary outbox drain.
 
   Then check:
   - **Default suite:** with `loop.set_debug(True)` and `slow_callback_duration=0.005`, no "Executing …
     took" warning comes from monitor code. Overflow produces a gap row, and relaying completes.
-  - **`-m perf`:** across 2000 relay round-trips, p99 is at most the monitor-off p99 plus 1 ms.
+  - **`-m perf`:** across 2000 relay round trips back to back (no idle time on the loop), p99 is at most
+    the monitor-off p99 plus 1 ms. Monitor off and on run in alternating blocks of 500, so machine
+    noise hits both alike.
   - **Micro-benchmarks:** each hook costs at most about 1 µs (median of 10⁵ calls), and `Call`
-    construction costs at most 0.3 µs.
+    construction costs at most 0.3 µs (measured about 0.21 µs; the default run guards 1 µs).
   - **Grep test:** no `json`, `copy`, `uuid` or `await` in `flow.py` or `monitor/recorder.py`.
 - **Frontend:** `node --test` on the pure modules.
 - **Manual:**

@@ -301,3 +301,21 @@ def test_a_proxy_reply_to_a_received_call_joins_its_exchange(peer):
     assert {f.exchange_id for f in batch.frames} == {call.exchange_id}
     assert [d.reason for d in batch.decisions] == ["POLICY_ANSWERED"]
     assert list(summaries) == [str(call.exchange_id)]
+
+
+def test_record_stores_the_same_exchange_row_as_summarize():
+    call = Call("w1", "MeterValues", METER)
+    events = [
+        received(1.0, "charger", call),
+        sent(1.1, "primary", call),
+        received(1.2, "primary", CallResult("w1", {})),
+    ]
+    summarized, recorded = assembler(), assembler()
+
+    summarized_batch, _, _ = run(summarized, events)
+    for item in [recorded.correlate(raw) for raw in events]:
+        recorded.fold(item)
+    for tracked in recorded.changed():
+        recorded.record(tracked)
+
+    assert recorded.take_batch().exchanges == summarized_batch.exchanges

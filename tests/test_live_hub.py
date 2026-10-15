@@ -90,6 +90,17 @@ def test_publishing_without_subscribers_does_nothing():
     LiveHub().publish("exchange", b"{}")
 
 
+async def test_has_subscribers_follows_the_subscriptions():
+    hub = LiveHub()
+    assert hub.has_subscribers is False
+
+    subscription = hub.subscribe()
+    assert hub.has_subscribers is True
+
+    await subscription.aclose()
+    assert hub.has_subscribers is False
+
+
 async def test_a_client_leaving_an_event_stream_gives_its_slot_back():
     hub = LiveHub(max_subscribers=1)
 

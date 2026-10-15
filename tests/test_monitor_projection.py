@@ -260,6 +260,14 @@ def test_summary_carries_the_scalar_fields():
     assert "proxy_kind" not in summary
 
 
+@pytest.mark.parametrize(("events", "expected", "expected_legs"), SCENARIOS.values(), ids=SCENARIOS)
+def test_the_overview_is_the_summary_without_its_legs(events, expected, expected_legs):
+    projection = project(events)
+    summary = projection.summary()
+
+    assert projection.overview() == {key: value for key, value in summary.items() if key not in ("legs", "proxy_kind")}
+
+
 def test_queued_then_delivered_after_a_restart_with_the_same_exchange_id():
     before = project([received(0.0, "charger", STOP), decided(0.1, "primary", Reason.QUEUED)], exchange_id=9)
     assert before.summary()["outcome"] == "queued"

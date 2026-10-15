@@ -9,7 +9,6 @@ page the operator happens to visit cannot read the API from a script.
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping
@@ -19,6 +18,7 @@ from urllib.parse import urlsplit
 
 from ..config import Config
 from ..minihttp import JSON_HEADERS, Content, EventStream, HttpError, Reply, Request
+from .compact_json import dumps_bytes
 from .exchange_filters import SQLITE_INTEGER_RANGE, parse_exchange_query
 from .live_hub import LiveHub, TooManySubscribers
 from .queries import InvalidCursor, exchange_detail, links_report, list_exchanges, session_summary
@@ -44,7 +44,7 @@ class MonitorApi:
         clock: Clock = time.time,
     ):
         self._charger_ids = tuple(config.chargers)
-        self._config_body = _encode(_config_view(config))
+        self._config_body = dumps_bytes(_config_view(config))
         self._reader = reader
         self._hub = hub
         self._live_snapshot = live_snapshot
@@ -64,7 +64,7 @@ class MonitorApi:
     async def _chargers(self, request: Request, match: re.Match[str]) -> Content:
         connected = self._connected_chargers()
         entries = [{"id": charger_id, "connected": charger_id in connected} for charger_id in self._charger_ids]
-        return _json(_encode({"chargers": entries}))
+        return _json(dumps_bytes({"chargers": entries}))
 
     async def _config(self, request: Request, match: re.Match[str]) -> Content:
         return _json(self._config_body)
@@ -146,10 +146,6 @@ def _found(body: bytes | None, kind: str) -> bytes:
     if body is None:
         raise HttpError(404, "not_found", f"no such {kind}")
     return body
-
-
-def _encode(body: object) -> bytes:
-    return json.dumps(body, separators=(",", ":")).encode()
 
 
 def _json(body: bytes) -> Content:

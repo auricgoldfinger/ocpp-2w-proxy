@@ -3,12 +3,11 @@ import json
 import logging
 import sqlite3
 import time
-import zlib
 from collections import Counter
 
 import pytest
 
-from ocpp_2w_proxy.monitor import db
+from ocpp_2w_proxy.monitor import db, payload_blob
 from ocpp_2w_proxy.monitor.batch_assembler import BatchAssembler
 from ocpp_2w_proxy.monitor.live_hub import LiveHub
 from ocpp_2w_proxy.monitor.not_sent import NotSentMap
@@ -51,7 +50,7 @@ async def exchanges(store):
 
 async def stored_payloads(store):
     blobs = await store.run(lambda conn: conn.execute("SELECT payload FROM frames ORDER BY rowid").fetchall())
-    return [None if blob is None else json.loads(zlib.decompress(blob)) for (blob,) in blobs]
+    return [None if blob is None else payload_blob.decode(blob) for (blob,) in blobs]
 
 
 def forwarded(recorder, n):
@@ -96,6 +95,7 @@ async def test_each_changed_summary_and_each_link_change_is_published_once(store
 
 
 async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):
+    """Not while draining the queue either: taking 500 events off it is a slice's worth of work."""
     recorders = RecorderHub([CP])
     forwarded(recorders.recorder_for(CP), 250)  # 1000 events, two full batches
     ticks = 0
@@ -110,8 +110,15 @@ async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):
 
         monkeypatch.setattr(BatchAssembler, name, counted)
 
-    for name in ("correlate", "fold", "summarize"):
+    for name in ("correlate", "fold", "summarize", "record"):
         spy(name)
+    get_nowait = recorders.queue.get_nowait
+
+    def drained():
+        seen["drain", ticks] += 1
+        return get_nowait()
+
+    monkeypatch.setattr(recorders.queue, "get_nowait", drained)
 
     async def ticker():
         nonlocal ticks
@@ -126,7 +133,21 @@ async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):
         ticking.cancel()
 
     assert sum(count for (name, _), count in seen.items() if name == "fold") == 1000
+    assert sum(count for (name, _), count in seen.items() if name == "drain") >= 1000
     assert max(seen.values()) <= 50
+
+
+async def test_without_live_subscribers_no_summary_is_built(store, monkeypatch):
+    recorders = RecorderHub([CP])
+    forwarded(recorders.recorder_for(CP), 2)
+    summarized = []
+    original = BatchAssembler.summarize
+    monkeypatch.setattr(BatchAssembler, "summarize", lambda self, tracked: summarized.append(original(self, tracked)))
+
+    await run_writer(new_writer(store, recorders))
+
+    assert summarized == []
+    assert len(await exchanges(store)) == 2
 
 
 async def test_reply_is_correlated_before_it_is_redacted(store):

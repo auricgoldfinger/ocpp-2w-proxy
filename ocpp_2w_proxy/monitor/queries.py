@@ -12,12 +12,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-import zlib
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from . import payload_blob
+from .compact_json import dumps_bytes
 from .meter_values import ENERGY, latest_reading, number
 from .projection import DEFAULT_STALE_AFTER, ExchangeProjection
 from .replay import StoredDecision, StoredExchange, StoredFrame, decision_views, frame_views, origin_payload, project
@@ -81,7 +82,7 @@ def list_exchanges(
                 f"SELECT count(*) FROM exchanges e {_where([*filters, 'e.action = ?'])}", (*params, HEARTBEAT)
             ).fetchone()[0]
     next_cursor = _cursor(page[-1]) if len(rows) > limit else None
-    return _json({"exchanges": summaries, "next": next_cursor, "hidden": hidden})
+    return dumps_bytes({"exchanges": summaries, "next": next_cursor, "hidden": hidden})
 
 
 def exchange_detail(
@@ -104,7 +105,7 @@ def exchange_detail(
     detail["payload"] = origin_payload(stored.frames)
     detail["frames"] = frame_views(stored.frames)
     detail["decisions"] = decision_views(stored.decisions)
-    return _json(detail)
+    return dumps_bytes(detail)
 
 
 def session_summary(conn: sqlite3.Connection, transaction_id: int, *, clock: Clock = time.monotonic) -> bytes | None:
@@ -125,7 +126,7 @@ def session_summary(conn: sqlite3.Connection, transaction_id: int, *, clock: Clo
     meter_end = number(stop_payload.get("meterStop"))
     if meter_end is None:
         meter_end = latest_reading(meter_payload, ENERGY)
-    return _json(
+    return dumps_bytes(
         {
             "transaction_id": transaction_id,
             "charger_id": charger_id,
@@ -152,7 +153,7 @@ def links_report(
             "SELECT charger_id, from_at, to_at, dropped FROM monitor_gaps WHERE to_at >= ? ORDER BY from_at, rowid",
             (since,),
         ).fetchall()
-    return _json(
+    return dumps_bytes(
         {
             **snapshot,
             "history": [{"charger_id": c, "peer": p, "at": at, "up": bool(up)} for c, p, at, up in history],
@@ -332,8 +333,4 @@ def _origin_payload_of(conn: sqlite3.Connection, row: tuple | None) -> dict[str,
 
 
 def _decompress(blob: bytes | None) -> Any:
-    return None if blob is None else json.loads(zlib.decompress(blob))
-
-
-def _json(body: object) -> bytes:
-    return json.dumps(body, separators=(",", ":")).encode()
+    return None if blob is None else payload_blob.decode(blob)
