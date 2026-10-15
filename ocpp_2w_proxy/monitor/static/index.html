@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>OCPP Flow Monitor</title>
+<link rel="stylesheet" href="styles.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="app-header">
+  <h1 class="brand">OCPP proxy <span class="brand__sub">Flow Monitor</span></h1>
+  <label class="charger-pick"><span class="sr-only">Charger</span><select id="charger-select"></select></label>
+  <nav class="tabs" aria-label="Views">
+    <a class="tab" href="#/exchanges" data-tab="exchanges">Exchanges</a>
+    <a class="tab" href="#/links" data-tab="links">Links</a>
+  </nav>
+  <span class="header-spacer"></span>
+  <span id="live-status" class="live-status" role="status">○ connecting</span>
+  <button id="theme-toggle" class="icon-button" type="button" aria-pressed="false" title="Switch theme">☾</button>
+</header>
+<div id="banner" class="banner" role="alert" hidden>Live stream disconnected. The data below stays visible; reconnecting…</div>
+<main id="view" class="view"></main>
+</body>
+</html>
