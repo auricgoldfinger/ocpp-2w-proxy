@@ -1,9 +1,10 @@
 // The fixtures follow docs/monitor_api.md exactly, so the UI is tested against the contract.
 
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { test } from "node:test";
 
-import { assertSummary } from "./contract_shapes.js";
+import { assertDetail, assertSummary } from "./contract_shapes.js";
 import { loadFixture } from "./fixture_loader.js";
 
 test("exchanges fixture follows the list contract", () => {
@@ -16,17 +17,15 @@ test("exchanges fixture follows the list contract", () => {
 
 test("exchange detail fixture is its list summary plus payload, frames and decisions", () => {
   const detail = loadFixture("exchange_detail");
+  assertDetail(detail);
   const { payload, frames, decisions, ...summary } = detail;
-  assertSummary(summary);
   assert.deepEqual(summary, loadFixture("exchanges").exchanges.find((exchange) => exchange.id === detail.id));
-  assert.equal(typeof payload, "object");
-  for (const frame of frames) {
-    assert.deepEqual(Object.keys(frame).sort(), ["at", "dir", "error", "msg_type", "payload", "peer", "same_as_origin", "wire_id"]);
-    assert.ok(["in", "out"].includes(frame.dir));
-    assert.ok(["call", "result", "error"].includes(frame.msg_type));
-    if (frame.same_as_origin) assert.deepEqual(frame.payload, payload);
-  }
-  for (const decision of decisions) assert.deepEqual(Object.keys(decision).sort(), ["at", "detail", "peer", "reason", "text"]);
+});
+
+test("every detail fixture follows the detail contract", () => {
+  const names = readdirSync(new URL("./fixtures/", import.meta.url)).filter((name) => name.endsWith("_detail.json"));
+  assert.ok(names.length > 0);
+  for (const name of names) assertDetail(loadFixture(name.replace(/\.json$/, "")));
 });
 
 test("session fixture follows the contract", () => {
