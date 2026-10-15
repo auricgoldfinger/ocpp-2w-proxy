@@ -62,10 +62,13 @@ export function laneHeader(lanes) {
   return html`<div class="lanes-head" aria-hidden="true"><span>time</span><span>action / headline</span>${heads}</div>`;
 }
 
-/** One exchange row; `href` opens its detail drawer. */
+/**
+ * One exchange row; `href` opens its detail drawer. The link wraps the action and headline only,
+ * so a row can hold other links; the view makes the rest of the row follow it on click.
+ */
 export function exchangeRow(row, href) {
-  const classes = `row${row.problem ? " row--problem" : ""}${row.incomplete ? " row--incomplete" : ""}`;
-  return html`<li class="${classes}" data-id="${row.id}"><a class="row__link" href="${href}"><span class="row__time">${formatTime(row.startedAt)}</span><span class="row__what"><span class="row__action">${row.action}</span> <span class="row__headline">${row.headline ?? ""}</span>${rowFlags(row)}</span>${row.cells.map(cell)}${strip(row.strip)}</a></li>`;
+  const classes = `row row--exchange${row.problem ? " row--problem" : ""}${row.incomplete ? " row--incomplete" : ""}`;
+  return html`<li class="${classes}" data-id="${row.id}"><span class="row__time">${formatTime(row.startedAt)}</span><span class="row__what"><a class="row__link" href="${href}"><span class="row__action">${row.action}</span> <span class="row__headline">${row.headline ?? ""}</span></a>${rowFlags(row)}</span>${row.cells.map(cell)}${strip(row.strip)}</li>`;
 }
 
 /** The separator for a monitor gap. */

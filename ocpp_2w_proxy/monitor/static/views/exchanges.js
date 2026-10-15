@@ -199,7 +199,15 @@ export function mountExchanges(container, { api, live, config, navigate }) {
     scheduleRender();
   }
 
+  // A click on a row outside its links opens it, unless the user is selecting text.
+  function openRow(event) {
+    const row = event.target.closest(".row--exchange");
+    if (!row || event.target.closest("a, button") || getSelection().toString()) return;
+    row.querySelector(".row__link")?.click();
+  }
+
   function onClick(event) {
+    openRow(event);
     const action = event.target.closest("[data-action]")?.dataset.action;
     if (action === "older") loadOlder();
     if (action === "retry" || action === "reload") loadFirstPage();

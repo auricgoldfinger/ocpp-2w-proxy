@@ -407,7 +407,7 @@ input {
 }
 
 .lanes-head,
-.row__link {
+.row--exchange {
   display: grid;
   grid-template-columns: var(--columns);
   align-items: center;
@@ -457,14 +457,24 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
-.row__link {
+/* The action is the row's link; a click anywhere else on the row follows it too (exchanges.js). */
+.row--exchange {
   min-height: 2.5rem;
+  cursor: pointer;
+}
+
+.row--exchange:hover {
+  background: var(--surface-2);
+}
+
+.row__link {
   color: inherit;
   text-decoration: none;
 }
 
-.row__link:hover {
-  background: var(--surface-2);
+.row__link:hover,
+.row__link:focus-visible {
+  text-decoration: underline;
 }
 
 .row--problem .row__time {
@@ -536,7 +546,7 @@ input {
   color: var(--fg);
 }
 
-.row__link:hover .marker {
+.row--exchange:hover .marker {
   background: var(--surface-2);
 }
 
@@ -1128,7 +1138,7 @@ td .state {
     display: none;
   }
 
-  .row__link {
+  .row--exchange {
     grid-template-columns: 4.5rem 1fr;
     padding-bottom: var(--space-1);
   }

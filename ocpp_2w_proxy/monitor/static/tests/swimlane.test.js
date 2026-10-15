@@ -85,7 +85,8 @@ test("the fan-out strip lists legs and not-sent peers in lane order", () => {
 
 test("an exchange row renders every outcome cell with an icon and a word", () => {
   const markup = String(exchangeRow(row("16"), "#/exchange/4611686018427387916"));
-  assert.match(markup, /href="#\/exchange\/4611686018427387916"/);
+  assert.match(markup, /<a class="row__link" href="#\/exchange\/4611686018427387916"><span class="row__action">[^<]*<\/span> <span class="row__headline">[^<]*<\/span><\/a>/);
+  assert.equal(markup.match(/<a /g).length, 1, "the row link wraps the action only, so rows can hold other links");
   assert.match(markup, /<span class="badge__icon" aria-hidden="true">⧗<\/span><span class="badge__label">queued<\/span>/);
   assert.match(markup, /badge__label">dropped</);
   assert.match(markup, /tag--problem/);
