@@ -2,7 +2,8 @@ import asyncio
 import json
 import os
 
-from ocpp_2w_proxy.state import FLUSH_DELAY, StateStore, restore_outbox
+from ocpp_2w_proxy.ocpp import Call
+from ocpp_2w_proxy.state import FLUSH_DELAY, StateStore, from_dict, restore_outbox, to_dict
 
 
 def test_restore_outbox_skips_unreadable_entries(tmp_path):
@@ -132,3 +133,25 @@ def test_disk_write_errors_are_logged_not_raised(tmp_path, monkeypatch):
     assert (tmp_path / "c.corrupt").read_text() == "{first"
     assert (tmp_path / "c.corrupt.1").read_text() == "{second"
     assert (tmp_path / "c.corrupt.2").read_text() == "{third"
+
+
+def test_queued_calls_keep_their_exchange_id_across_a_restart(tmp_path):
+    call = Call("st", "StopTransaction", {"transactionId": 1})
+    store = StateStore(tmp_path / "c.json")
+    store.state.primary_outbox = [to_dict(call)]
+    store.state.primary_latest = {"status:1": to_dict(call)}
+    store.state.outboxes["tap"] = [{"call": to_dict(call), "start_ref": None}]
+    store.save()
+    restored = StateStore(tmp_path / "c.json").state
+
+    for items in (restored.primary_outbox, list(restored.primary_latest.values()), restored.outboxes["tap"]):
+        [(again, _)] = restore_outbox(items)
+        assert again == call
+        assert again.exchange_id == call.exchange_id
+
+
+def test_a_call_queued_before_exchange_ids_gets_a_new_one():
+    entry = {"id": "st", "action": "StopTransaction", "payload": {}}
+    first, second = from_dict(entry), from_dict(entry)
+    assert isinstance(first.exchange_id, int)
+    assert first.exchange_id != second.exchange_id

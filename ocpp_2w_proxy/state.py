@@ -23,11 +23,15 @@ FLUSH_DELAY = 0.25
 
 def to_dict(call: Call) -> dict[str, Any]:
     """Representation used for persisting queued calls."""
-    return {"id": call.id, "action": call.action, "payload": call.payload}
+    return {"id": call.id, "action": call.action, "payload": call.payload, "exchange_id": call.exchange_id}
 
 
 def from_dict(data: dict[str, Any]) -> Call:
-    return Call(data["id"], data["action"], data["payload"])
+    exchange_id = data.get("exchange_id")
+    if not isinstance(exchange_id, int):
+        # Queued before exchange ids existed: it starts a new exchange.
+        return Call(data["id"], data["action"], data["payload"])
+    return Call(data["id"], data["action"], data["payload"], exchange_id=exchange_id)
 
 
 def _call_of_entry(item: dict[str, Any]) -> Call | None:
