@@ -239,6 +239,7 @@ export function mountExchanges(container, { api, live, config, navigate }) {
       clearInterval(linksInterval);
       clearTimeout(linksTimer);
       window.removeEventListener("scroll", onScroll);
+      container.removeEventListener("click", onClick);
       loadToken += 1;
     },
   };
