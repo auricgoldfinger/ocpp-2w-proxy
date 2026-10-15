@@ -6,7 +6,7 @@ import { formatDateTime, formatLatency, formatTime } from "../format.js";
 import { html } from "../html.js";
 import { notSentView, outcomeView } from "./badge.js";
 import { sequenceDiagram } from "./sequence.js";
-import { badge } from "./swimlane.js";
+import { badge, rewriteChip, txLink } from "./swimlane.js";
 import { replyTags, rewriteChips } from "./swimlane_model.js";
 
 function originText(detail) {
@@ -14,12 +14,13 @@ function originText(detail) {
   return detail.origin;
 }
 
-function header(detail) {
+function header(detail, txHref) {
+  const transaction = detail.transaction_id !== null && txHref ? txLink(detail.transaction_id, txHref) : detail.transaction_id;
   const facts = [
     ["charger", detail.charger_id],
     ["origin", originText(detail)],
     ["started", formatDateTime(detail.started_at)],
-    ["transaction", detail.transaction_id],
+    ["transaction", transaction],
     ["connector", detail.connector_id],
     ["idTag", detail.id_tag],
     ["exchange id", detail.id],
@@ -36,18 +37,21 @@ function replyText(leg) {
   return leg.reply === "error" ? `ERR ${leg.error_code ?? ""}${by}` : `result${by}`;
 }
 
-function legRow(leg, context) {
-  const extras = [...rewriteChips(leg), ...replyTags(leg)];
-  return html`<tr><th scope="row">${leg.peer}</th><td class="mono">${leg.wire_id ?? "–"}</td><td>${formatTime(leg.sent_at)}</td><td>${replyText(leg)}</td><td>${formatLatency(leg.sent_at, leg.replied_at)}</td><td>${badge(outcomeView(leg, context))}</td><td>${leg.reason_text ?? ""}</td><td>${extras.map((item) => html`<span class="${item.field ? "chip" : "tag"}" title="${item.title}">${item.label}</span>`)}</td></tr>`;
+function legRow(leg, context, txHref) {
+  const extras = [
+    ...rewriteChips(leg).map((chip) => rewriteChip(chip, txHref)),
+    ...replyTags(leg).map((tag) => html`<span class="tag" title="${tag.title}">${tag.label}</span>`),
+  ];
+  return html`<tr><th scope="row">${leg.peer}</th><td class="mono">${leg.wire_id ?? "–"}</td><td>${formatTime(leg.sent_at)}</td><td>${replyText(leg)}</td><td>${formatLatency(leg.sent_at, leg.replied_at)}</td><td>${badge(outcomeView(leg, context))}</td><td>${leg.reason_text ?? ""}</td><td>${extras}</td></tr>`;
 }
 
 /** The legs table: one row per leg, then the peers the action is not forwarded to. */
-export function legsTable(detail, now) {
+export function legsTable(detail, now, txHref = null) {
   const context = { startedAt: detail.started_at, incomplete: detail.incomplete, now };
   const notSent = detail.not_sent.map(
     (peer) => html`<tr><th scope="row">${peer}</th><td colspan="4"></td><td>${badge(notSentView())}</td><td>Not configured to forward ${detail.action}</td><td></td></tr>`,
   );
-  return html`<div class="table-scroll"><table class="legs"><thead><tr><th scope="col">peer</th><th scope="col">wire id</th><th scope="col">sent</th><th scope="col">reply</th><th scope="col">latency</th><th scope="col">outcome</th><th scope="col">reason</th><th scope="col">changes</th></tr></thead><tbody>${detail.legs.map((leg) => legRow(leg, context))}${notSent}</tbody></table></div>`;
+  return html`<div class="table-scroll"><table class="legs"><thead><tr><th scope="col">peer</th><th scope="col">wire id</th><th scope="col">sent</th><th scope="col">reply</th><th scope="col">latency</th><th scope="col">outcome</th><th scope="col">reason</th><th scope="col">changes</th></tr></thead><tbody>${detail.legs.map((leg) => legRow(leg, context, txHref))}${notSent}</tbody></table></div>`;
 }
 
 /** Proxy decisions with their human text. */
@@ -91,12 +95,12 @@ function section(id, title, body) {
   return html`<section class="detail-section" aria-labelledby="${id}"><h3 id="${id}">${title}</h3>${body}</section>`;
 }
 
-/** Everything inside the drawer below its title bar. */
-export function exchangeDetail({ detail, lanes, session = null, now }) {
-  return html`${header(detail)}
+/** Everything inside the drawer below its title bar; `txHref` (optional) links to the session. */
+export function exchangeDetail({ detail, lanes, session = null, now, txHref = null }) {
+  return html`${header(detail, txHref)}
 ${section("d-sequence", "Sequence", html`<div class="sequence-scroll">${sequenceDiagram(detail, lanes)}</div>`)}
 ${section("d-payload", "Payload", renderCard(detail.action, detail.payload, { detail, session, now }))}
-${section("d-legs", "Legs", legsTable(detail, now))}
+${section("d-legs", "Legs", legsTable(detail, now, txHref))}
 ${section("d-decisions", "Decisions", decisionsList(detail.decisions))}
 ${section("d-diff", "Legs compared with the origin", legDiffs(detail))}
 ${section("d-raw", "Raw JSON", html`<button type="button" class="button" data-action="copy">Copy JSON</button> <span class="muted" data-part="copy-status" role="status"></span><pre class="raw-json"><code>${rawJsonText(detail)}</code></pre>`)}`;

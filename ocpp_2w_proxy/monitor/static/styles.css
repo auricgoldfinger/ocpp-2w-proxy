@@ -625,6 +625,24 @@ input {
   font-family: var(--mono);
 }
 
+.chip--link {
+  border-color: var(--link);
+  color: var(--link);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.chip--link:hover {
+  text-decoration: underline;
+}
+
+.tx-link {
+  margin-left: var(--space-1);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
 .tag--warn,
 .tag--problem {
   margin-left: var(--space-1);

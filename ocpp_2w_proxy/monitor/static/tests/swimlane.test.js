@@ -93,6 +93,19 @@ test("an exchange row renders every outcome cell with an icon and a word", () =>
   assert.match(markup, /row__time">13:08:20</);
 });
 
+test("the transaction id and the ⇄tx chip link to the session", () => {
+  const markup = String(exchangeRow(row("05"), "#/exchange/4611686018427387905", "#/exchanges?tx=10216"));
+  assert.match(markup, /<a class="tx-link" href="#\/exchanges\?tx=10216" title="Show every exchange of transaction 10216">tx 10216<\/a>/);
+  assert.match(markup, /<a class="chip chip--link" href="#\/exchanges\?tx=10216" title="10216 → 1791822333 · show this session">⇄tx<\/a>/);
+  assert.equal(row("05").transactionId, 10216);
+});
+
+test("rows without a transaction have no session link", () => {
+  const model = rowModel({ ...exchangeById("4611686018427387905"), transaction_id: null }, lanes, 0);
+  assert.equal(model.transactionId, null);
+  assert.ok(!String(exchangeRow(model, "#", "#/exchanges?tx=x")).includes("tx-link"));
+});
+
 test("an incomplete exchange is tagged", () => {
   assert.match(String(exchangeRow(row("14"), "#")), /⚠ incomplete/);
 });

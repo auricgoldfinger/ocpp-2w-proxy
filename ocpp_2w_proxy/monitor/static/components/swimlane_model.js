@@ -122,6 +122,7 @@ export function rowModel(summary, lanes, now) {
     startedAt: summary.started_at,
     action: summary.action,
     headline: summary.headline,
+    transactionId: summary.transaction_id ?? null,
     outcome: summary.outcome,
     problem: summary.problem,
     incomplete: summary.incomplete,

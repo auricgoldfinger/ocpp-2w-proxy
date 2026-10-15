@@ -8,38 +8,45 @@ export function badge({ label, icon, tone, title }) {
   return html`<span class="badge tone-${tone}" title="${title ?? label}"><span class="badge__icon" aria-hidden="true">${icon}</span><span class="badge__label">${label}</span></span>`;
 }
 
-function chips(items) {
-  return items.map((chip) => html`<span class="chip" title="${chip.title}">${chip.label}</span>`);
+/** A ⇄ rewrite chip; a ⇄tx chip links to its session when `txHref` is given. */
+export function rewriteChip(chip, txHref = null) {
+  if (chip.field === "tx" && txHref) return html`<a class="chip chip--link" href="${txHref}" title="${chip.title} · show this session">${chip.label}</a>`;
+  return html`<span class="chip" title="${chip.title}">${chip.label}</span>`;
+}
+
+/** The transaction id as a link to its session (the ?tx= filter). */
+export function txLink(transactionId, txHref) {
+  return html`<a class="tx-link" href="${txHref}" title="Show every exchange of transaction ${transactionId}">tx ${transactionId}</a>`;
 }
 
 function tags(items) {
   return items.map((tag) => html`<span class="tag" title="${tag.title}">${tag.label}</span>`);
 }
 
-function legContent(leg) {
-  return html`${badge(leg.view)}${chips(leg.chips)}${tags(leg.tags)}`;
+function legContent(leg, txHref) {
+  return html`${badge(leg.view)}${leg.chips.map((chip) => rewriteChip(chip, txHref))}${tags(leg.tags)}`;
 }
 
-function originContent(cell) {
+function originContent(cell, txHref) {
   const marker = cell.lane === "proxy"
     ? html`<span class="marker marker--proxy-origin" aria-hidden="true">◇</span>`
     : html`<span class="marker marker--origin" aria-hidden="true">●</span>`;
   const tag = cell.tag
     ? html`<span class="tag tag--origin" title="${cell.tag.title}">${cell.tag.icon} ${cell.tag.label}</span>`
     : html`<span class="sr-only">origin</span>`;
-  return html`${marker}${tag}${cell.leg ? legContent(cell.leg) : ""}`;
+  return html`${marker}${tag}${cell.leg ? legContent(cell.leg, txHref) : ""}`;
 }
 
 const CELL_CONTENT = {
   origin: originContent,
-  leg: legContent,
+  leg: (cell, txHref) => legContent(cell, txHref),
   "not-sent": (cell) => badge(cell.view),
   relay: () => html`<span class="marker marker--relay" aria-hidden="true">◆</span>`,
   empty: () => html`<span class="marker marker--empty" aria-hidden="true">·</span>`,
 };
 
-function cell(model) {
-  return html`<span class="cell cell--${model.kind} path-${model.path}"><span class="sr-only">${model.laneLabel}:</span>${CELL_CONTENT[model.kind](model)}</span>`;
+function cell(model, txHref) {
+  return html`<span class="cell cell--${model.kind} path-${model.path}"><span class="sr-only">${model.laneLabel}:</span>${CELL_CONTENT[model.kind](model, txHref)}</span>`;
 }
 
 function strip(items) {
@@ -63,12 +70,13 @@ export function laneHeader(lanes) {
 }
 
 /**
- * One exchange row; `href` opens its detail drawer. The link wraps the action and headline only,
- * so a row can hold other links; the view makes the rest of the row follow it on click.
+ * One exchange row; `href` opens its detail drawer and `txHref` (optional) its session. The link
+ * wraps the action and headline only, so the row can hold the session links; the view makes the
+ * rest of the row follow the detail link on click.
  */
-export function exchangeRow(row, href) {
+export function exchangeRow(row, href, txHref = null) {
   const classes = `row row--exchange${row.problem ? " row--problem" : ""}${row.incomplete ? " row--incomplete" : ""}`;
-  return html`<li class="${classes}" data-id="${row.id}"><span class="row__time">${formatTime(row.startedAt)}</span><span class="row__what"><a class="row__link" href="${href}"><span class="row__action">${row.action}</span> <span class="row__headline">${row.headline ?? ""}</span></a>${rowFlags(row)}</span>${row.cells.map(cell)}${strip(row.strip)}</li>`;
+  return html`<li class="${classes}" data-id="${row.id}"><span class="row__time">${formatTime(row.startedAt)}</span><span class="row__what"><a class="row__link" href="${href}"><span class="row__action">${row.action}</span> <span class="row__headline">${row.headline ?? ""}</span></a>${txHref && row.transactionId !== null ? html` ${txLink(row.transactionId, txHref)}` : ""}${rowFlags(row)}</span>${row.cells.map((model) => cell(model, txHref))}${strip(row.strip)}</li>`;
 }
 
 /** The separator for a monitor gap. */

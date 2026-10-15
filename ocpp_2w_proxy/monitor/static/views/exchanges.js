@@ -5,7 +5,7 @@ import { exchangeRow, gapRow, laneHeader } from "../components/swimlane.js";
 import { lanesFor, rowModel } from "../components/swimlane_model.js";
 import { topology } from "../components/topology.js";
 import { ExchangeFeed } from "../exchange_feed.js";
-import { buildHash, exchangesQuery, isHiddenHeartbeat, matchesFilters } from "../filters.js";
+import { buildHash, exchangesQuery, isHiddenHeartbeat, matchesFilters, sessionHash } from "../filters.js";
 import { html, setHtml } from "../html.js";
 import { bindFilterBar, syncFilterBar } from "./filter_controls.js";
 import { createSessionPanel } from "./session_panel.js";
@@ -81,8 +81,9 @@ export function mountExchanges(container, { api, live, config, navigate }) {
     const at = now();
     const rows = feed.items().map((item) => {
       if (item.type === "gap") return gapRow(item.gap);
-      const href = buildHash({ view: "exchange", id: item.summary.id, filters });
-      return exchangeRow(rowModel(item.summary, lanes, at), href);
+      const { id, transaction_id: tx } = item.summary;
+      const href = buildHash({ view: "exchange", id, filters });
+      return exchangeRow(rowModel(item.summary, lanes, at), href, tx === null ? null : sessionHash(filters, tx));
     });
     setHtml(part("rows"), html`${rows}`);
   }

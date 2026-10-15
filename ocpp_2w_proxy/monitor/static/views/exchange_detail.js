@@ -5,6 +5,7 @@
 import { wantsSession } from "../cards/index.js";
 import { exchangeDetail, rawJsonText } from "../components/exchange_detail.js";
 import { lanesFor } from "../components/swimlane_model.js";
+import { sessionHash } from "../filters.js";
 import { html, setHtml } from "../html.js";
 
 const LIVE_RELOAD_MS = 500;
@@ -50,7 +51,8 @@ export function createDetailDrawer({ api, live, config, navigate }) {
       const lanes = lanesFor(config, [loaded]);
       const outcome = (loaded.outcome ?? "open").replaceAll("_", " ");
       const subtitle = `${loaded.headline ?? ""} · ${outcome}${loaded.problem ? " · problem" : ""}`;
-      render(exchangeDetail({ detail: loaded, lanes, session, now: Date.now() / 1000 }), loaded.action, subtitle);
+      const txHref = loaded.transaction_id === null ? null : sessionHash(filters, loaded.transaction_id);
+      render(exchangeDetail({ detail: loaded, lanes, session, now: Date.now() / 1000, txHref }), loaded.action, subtitle);
     } catch (error) {
       if (mine !== token) return;
       const message = error.status === 404

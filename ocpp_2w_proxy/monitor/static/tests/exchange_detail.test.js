@@ -57,6 +57,14 @@ test("the drawer has every section in the planned order", () => {
   assert.match(markup, />7.421 kWh</);
 });
 
+test("the transaction and the ⇄tx chips link to the session", () => {
+  const txHref = "#/exchanges?tx=10216";
+  const markup = String(exchangeDetail({ detail: detail(), lanes: lanesFor(loadFixture("config")), now, txHref }));
+  assert.match(markup, /<dt>transaction<\/dt><dd><a class="tx-link" href="#\/exchanges\?tx=10216"[^>]*>tx 10216<\/a><\/dd>/);
+  assert.equal(markup.match(/<a class="chip chip--link" href="#\/exchanges\?tx=10216"/g).length, 2);
+  assert.match(String(legsTable(detail(), now)), /<span class="chip" title="10216 → 1791822333">⇄tx<\/span>/, "no link without txHref");
+});
+
 test("an incomplete exchange explains the monitor gap", () => {
   const incomplete = { ...exchangeById("4611686018427387914"), frames: [], decisions: [], payload: {} };
   assert.match(String(exchangeDetail({ detail: incomplete, lanes: [], now })), /open during a monitor gap/);
