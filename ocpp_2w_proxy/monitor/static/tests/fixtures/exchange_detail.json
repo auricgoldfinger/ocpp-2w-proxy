@@ -1,0 +1,81 @@
+{
+  "id": "4611686018427387909",
+  "charger_id": "99224881",
+  "origin": "charger",
+  "action": "StopTransaction",
+  "started_at": 1760534412.00,
+  "last_at": 1760534664.30,
+  "outcome": "delivered",
+  "problem": false,
+  "incomplete": false,
+  "transaction_id": 10216,
+  "connector_id": 1,
+  "id_tag": "***4F2A",
+  "headline": "7.421 kWh · Local",
+  "not_sent": [],
+  "legs": [
+    {"peer": "primary", "wire_id": "c0ffee-9", "outcome": "delivered", "reason": "QUEUED",
+     "reason_text": "Queued for primary during an outage; acknowledged locally",
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760534664.00,
+     "replied_at": 1760534664.30, "rewritten": [], "late": false, "duplicate": false},
+    {"peer": "homeassistant", "wire_id": "7f3a09", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760534412.05,
+     "replied_at": 1760534412.20, "rewritten": [{"field": "tx", "from": 10216, "to": 1791822333}],
+     "late": false, "duplicate": false},
+    {"peer": "stats", "wire_id": "5a09", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760534412.06,
+     "replied_at": 1760534412.25, "rewritten": [{"field": "tx", "from": 10216, "to": null}],
+     "late": false, "duplicate": false}
+  ],
+  "payload": {
+    "transactionId": 10216,
+    "idTag": "***4F2A",
+    "timestamp": "2025-10-15T13:20:12Z",
+    "meterStop": 1234521,
+    "reason": "Local",
+    "transactionData": [
+      {"timestamp": "2025-10-15T12:06:40Z",
+       "sampledValue": [{"value": "1227100", "measurand": "Energy.Active.Import.Register", "unit": "Wh"}]},
+      {"timestamp": "2025-10-15T13:20:12Z",
+       "sampledValue": [{"value": " 1234.521", "measurand": "Energy.Active.Import.Register", "unit": "kWh"}]}
+    ]
+  },
+  "frames": [
+    {"at": 1760534412.00, "peer": "charger", "dir": "in", "msg_type": "call", "wire_id": "a1b2",
+     "payload": {"transactionId": 10216, "idTag": "***4F2A", "timestamp": "2025-10-15T13:20:12Z", "meterStop": 1234521, "reason": "Local",
+                 "transactionData": [
+                   {"timestamp": "2025-10-15T12:06:40Z", "sampledValue": [{"value": "1227100", "measurand": "Energy.Active.Import.Register", "unit": "Wh"}]},
+                   {"timestamp": "2025-10-15T13:20:12Z", "sampledValue": [{"value": " 1234.521", "measurand": "Energy.Active.Import.Register", "unit": "kWh"}]}]},
+     "same_as_origin": true, "error": null},
+    {"at": 1760534412.01, "peer": "charger", "dir": "out", "msg_type": "result", "wire_id": "a1b2",
+     "payload": {"idTagInfo": {"status": "Accepted"}}, "same_as_origin": false, "error": null},
+    {"at": 1760534412.05, "peer": "homeassistant", "dir": "out", "msg_type": "call", "wire_id": "7f3a09",
+     "payload": {"transactionId": 1791822333, "idTag": "***4F2A", "timestamp": "2025-10-15T13:20:12Z", "meterStop": 1234521, "reason": "Local",
+                 "transactionData": [
+                   {"timestamp": "2025-10-15T12:06:40Z", "sampledValue": [{"value": "1227100", "measurand": "Energy.Active.Import.Register", "unit": "Wh"}]},
+                   {"timestamp": "2025-10-15T13:20:12Z", "sampledValue": [{"value": " 1234.521", "measurand": "Energy.Active.Import.Register", "unit": "kWh"}]}]},
+     "same_as_origin": false, "error": null},
+    {"at": 1760534412.06, "peer": "stats", "dir": "out", "msg_type": "call", "wire_id": "5a09",
+     "payload": {"idTag": "***4F2A", "timestamp": "2025-10-15T13:20:12Z", "meterStop": 1234521, "reason": "Local",
+                 "transactionData": [
+                   {"timestamp": "2025-10-15T12:06:40Z", "sampledValue": [{"value": "1227100", "measurand": "Energy.Active.Import.Register", "unit": "Wh"}]},
+                   {"timestamp": "2025-10-15T13:20:12Z", "sampledValue": [{"value": " 1234.521", "measurand": "Energy.Active.Import.Register", "unit": "kWh"}]}]},
+     "same_as_origin": false, "error": null},
+    {"at": 1760534412.20, "peer": "homeassistant", "dir": "in", "msg_type": "result", "wire_id": "7f3a09",
+     "payload": {"idTagInfo": {"status": "Accepted"}}, "same_as_origin": false, "error": null},
+    {"at": 1760534412.25, "peer": "stats", "dir": "in", "msg_type": "result", "wire_id": "5a09",
+     "payload": {"idTagInfo": {"status": "Accepted"}}, "same_as_origin": false, "error": null},
+    {"at": 1760534664.00, "peer": "primary", "dir": "out", "msg_type": "call", "wire_id": "c0ffee-9",
+     "payload": {"transactionId": 10216, "idTag": "***4F2A", "timestamp": "2025-10-15T13:20:12Z", "meterStop": 1234521, "reason": "Local",
+                 "transactionData": [
+                   {"timestamp": "2025-10-15T12:06:40Z", "sampledValue": [{"value": "1227100", "measurand": "Energy.Active.Import.Register", "unit": "Wh"}]},
+                   {"timestamp": "2025-10-15T13:20:12Z", "sampledValue": [{"value": " 1234.521", "measurand": "Energy.Active.Import.Register", "unit": "kWh"}]}]},
+     "same_as_origin": true, "error": null},
+    {"at": 1760534664.30, "peer": "primary", "dir": "in", "msg_type": "result", "wire_id": "c0ffee-9",
+     "payload": {"idTagInfo": {"status": "Accepted"}}, "same_as_origin": false, "error": null}
+  ],
+  "decisions": [
+    {"at": 1760534412.00, "peer": "primary", "reason": "QUEUED",
+     "text": "Queued for primary during an outage; acknowledged locally", "detail": null}
+  ]
+}

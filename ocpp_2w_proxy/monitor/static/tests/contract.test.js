@@ -14,6 +14,27 @@ test("exchanges fixture follows the list contract", () => {
   assert.deepEqual(starts, [...starts].sort((a, b) => b - a), "newest first");
 });
 
+test("exchange detail fixture is its list summary plus payload, frames and decisions", () => {
+  const detail = loadFixture("exchange_detail");
+  const { payload, frames, decisions, ...summary } = detail;
+  assertSummary(summary);
+  assert.deepEqual(summary, loadFixture("exchanges").exchanges.find((exchange) => exchange.id === detail.id));
+  assert.equal(typeof payload, "object");
+  for (const frame of frames) {
+    assert.deepEqual(Object.keys(frame).sort(), ["at", "dir", "error", "msg_type", "payload", "peer", "same_as_origin", "wire_id"]);
+    assert.ok(["in", "out"].includes(frame.dir));
+    assert.ok(["call", "result", "error"].includes(frame.msg_type));
+    if (frame.same_as_origin) assert.deepEqual(frame.payload, payload);
+  }
+  for (const decision of decisions) assert.deepEqual(Object.keys(decision).sort(), ["at", "detail", "peer", "reason", "text"]);
+});
+
+test("session fixture follows the contract", () => {
+  assert.deepEqual(Object.keys(loadFixture("session")).sort(), [
+    "charger_id", "connector_id", "energy_wh", "exchanges", "id_tag", "problems", "started_at", "stopped_at", "transaction_id",
+  ]);
+});
+
 test("config fixture follows the contract", () => {
   const config = loadFixture("config");
   assert.deepEqual(Object.keys(config).sort(), ["chargers", "primary", "retention_days", "secondaries"]);

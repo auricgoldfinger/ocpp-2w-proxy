@@ -9,8 +9,12 @@ from pathlib import Path
 
 import pytest
 
+from ocpp_2w_proxy.reasons import Reason
+
 STATIC_DIR = Path(__file__).resolve().parent.parent / "ocpp_2w_proxy" / "monitor" / "static"
 APP_MODULES = sorted(path for path in STATIC_DIR.rglob("*.js") if "tests" not in path.relative_to(STATIC_DIR).parts)
+# Modules that branch on reason codes.
+REASON_MODULES = ["components/badge.js"]
 ALL_MODULES = sorted(STATIC_DIR.rglob("*.js"))
 IMPORT = re.compile(
     r"""(?:^|;|\n)\s*(?:import|export)\s(?:[^;'"]*?\sfrom\s*)?["']([^"']+)["']"""
@@ -87,6 +91,15 @@ def test_every_module_import_resolves(module: Path) -> None:
 
 def test_import_scanner_sees_imports() -> None:
     assert "./views/exchanges.js" in _imports(STATIC_DIR / "app.js")
+
+
+def test_reason_codes_in_the_ui_and_fixtures_exist() -> None:
+    sources = [(STATIC_DIR / module).read_text() for module in REASON_MODULES]
+    named = {code for source in sources for code in re.findall(r"""["']([A-Z][A-Z_]{3,})["']""", source)}
+    fixtures = [path.read_text() for path in (STATIC_DIR / "tests" / "fixtures").glob("*.json")]
+    named |= {code for text in fixtures for code in re.findall(r'"reason": "([A-Z_]+)"', text)}
+    assert named, "the scan found no reason codes"
+    assert named <= set(Reason.__members__), named - set(Reason.__members__)
 
 
 def test_index_html_needs_no_inline_script_or_style() -> None:
