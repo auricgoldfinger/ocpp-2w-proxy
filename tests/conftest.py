@@ -56,6 +56,8 @@ def make_raw_config(
     }
     if "debug" in overrides:  # the endpoint is off unless a test asks for it; port 0 = any free port
         raw["debug"] = {"enabled": True, "port": 0, **overrides.pop("debug")}
+    if "monitor" in overrides:  # likewise off unless asked for; its store defaults to <state_dir>/monitor.sqlite
+        raw["monitor"] = {"enabled": True, "port": 0, **overrides.pop("monitor")}
     secondary_overrides = overrides.pop("secondary", {})
     entries = [
         {
