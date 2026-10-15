@@ -7,15 +7,13 @@ no I/O, no JSON, no copying of payloads.
 from __future__ import annotations
 
 import logging
-import time
 from typing import Protocol
 
+from .log_throttle import LogThrottle
 from .ocpp import Call, Message
 from .reasons import Reason
 
 logger = logging.getLogger(__name__)
-
-_FAILURE_LOG_INTERVAL = 60.0
 
 
 class FlowRecorder(Protocol):
@@ -40,7 +38,7 @@ class FanOut:
         self._log = log
         self._monitor = monitor
         self.failures = 0
-        self._last_failure_log = -_FAILURE_LOG_INTERVAL
+        self._failure_log = LogThrottle()
 
     def received(self, peer: str, message: Message) -> None:
         self._log.received(peer, message)
@@ -72,7 +70,5 @@ class FanOut:
 
     def _failed(self) -> None:
         self.failures += 1
-        now = time.monotonic()
-        if now - self._last_failure_log >= _FAILURE_LOG_INTERVAL:
-            self._last_failure_log = now
+        if self._failure_log.ready():
             logger.exception("monitor recorder failed (%d failures so far); relaying continues", self.failures)

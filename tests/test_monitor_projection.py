@@ -320,6 +320,20 @@ def test_closed_legs_are_never_unknown():
     assert all(leg["reason_text"] is None for leg in projection.summary(now=1e9)["legs"])
 
 
+@pytest.mark.parametrize(
+    ("events", "settled"),
+    [
+        ([received(0.0, "charger", MV)], False),
+        ([received(0.0, "charger", MV), sent(0.1, "primary", MV)], False),
+        ([received(0.0, "charger", STOP), decided(0.1, "primary", Reason.QUEUED)], True),
+        (SCENARIOS["forwarded"][0], True),
+    ],
+    ids=["no legs", "open leg", "queued", "all replied"],
+)
+def test_settled_once_every_leg_has_ended(events, settled):
+    assert project(events).settled is settled
+
+
 class Pipeline:
     """Correlates like the writer: Calls carry their exchange id, replies are resolved by the correlator."""
 

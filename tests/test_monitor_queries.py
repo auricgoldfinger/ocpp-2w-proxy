@@ -15,6 +15,7 @@ from ocpp_2w_proxy.monitor.queries import (
     exchange_detail,
     links_report,
     list_exchanges,
+    rebuild_projections,
     session_summary,
 )
 from ocpp_2w_proxy.monitor.rows import ExchangeRow, LinkRow, WriteBatch, decision_row, frame_row
@@ -271,6 +272,20 @@ def test_queued_then_delivered_after_a_restart_continues_the_same_exchange(conn)
     primary = detail["legs"][0]
     assert (primary["outcome"], primary["reason"], primary["sent_at"]) == ("delivered", "QUEUED", 400.0)
     assert len(detail["frames"]) == 3
+
+
+def test_rebuild_projections_of_stored_exchanges_skips_unknown_ids(conn):
+    call = Call("s1", "StopTransaction", {"transactionId": 10216, "meterStop": 1241921})
+    store(conn, 9, [received(10.0, "charger", call), decided(10.1, "primary", Reason.QUEUED)], not_sent=("stats",))
+    store(conn, 10, heartbeat(20.0, 10))
+
+    (projection,) = rebuild_projections(conn, [9, 404])
+
+    assert projection.exchange_id == 9
+    assert (projection.origin, projection.action, projection.payload) == ("charger", "StopTransaction", call.payload)
+    assert projection.not_sent == ("stats",)
+    assert projection.summary()["legs"][0]["reason"] == "QUEUED"
+    assert rebuild_projections(conn, []) == []
 
 
 def test_open_leg_of_a_stored_incomplete_exchange_is_unknown(conn):
