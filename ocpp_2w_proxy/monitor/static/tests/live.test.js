@@ -71,6 +71,12 @@ test("a dropped stream shows as disconnected and re-fetches after the browser re
   assert.deepEqual(seen, [["status", true], ["status", false], ["status", true], ["resync"]]);
 });
 
+test("a stream that never opens shows as disconnected", () => {
+  const { sources, seen } = setup();
+  sources[0].fire("error");
+  assert.deepEqual(seen, [["status", false]]);
+});
+
 test("a stream the browser gave up on is restarted after a delay", () => {
   const { sources, timers } = setup();
   sources[0].readyState = 2;

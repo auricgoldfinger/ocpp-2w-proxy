@@ -13,7 +13,7 @@ export class LiveStream {
     this.timers = timers;
     this.listeners = new Set();
     this.source = null;
-    this.connected = false;
+    this.connected = null; // unknown until the first open or error
     this.openedBefore = false;
     this.retryTimer = null;
   }
