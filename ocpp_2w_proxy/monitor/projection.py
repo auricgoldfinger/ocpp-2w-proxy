@@ -80,6 +80,11 @@ class ExchangeProjection:
         """The origin payload, against which every leg's rewrites are measured."""
         return None if self._origin_call is None else self._origin_call.payload
 
+    @property
+    def settled(self) -> bool:
+        """Every leg has ended (a queued leg counts as ended); an exchange without legs is not settled."""
+        return bool(self._legs) and all(leg.outcome is not None for leg in self._legs.values())
+
     def summary(self, now: float | None = None) -> dict:
         """The exchange summary of ``docs/monitor_api.md``. ``now`` lets long-open legs show as unknown."""
         legs = list(self._legs.values())
