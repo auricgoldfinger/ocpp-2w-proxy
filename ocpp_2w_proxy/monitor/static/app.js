@@ -5,6 +5,7 @@ import { buildHash, parseHash } from "./filters.js";
 import { html, setHtml } from "./html.js";
 import { LiveStream } from "./live.js";
 import { initTheme } from "./theme.js";
+import { createDetailDrawer } from "./views/exchange_detail.js";
 import { mountExchanges } from "./views/exchanges.js";
 
 // Both list states (#/exchanges and #/exchange/<id>) keep the list mounted.
@@ -53,6 +54,8 @@ function route(context) {
     window.scrollTo(0, 0);
   }
   current.view.update(state);
+  if (state.view === "exchange") context.drawer.show(state.id, state.filters);
+  else context.drawer.hide();
   document.getElementById("charger-select").value = state.filters.charger;
   markTab(name);
 }
@@ -68,6 +71,7 @@ async function start() {
     return;
   }
   const context = { api, live, config, navigate };
+  context.drawer = createDetailDrawer(context);
   fillChargerPicker(config, parseHash(location.hash).filters);
   window.addEventListener("hashchange", () => route(context));
   route(context);
