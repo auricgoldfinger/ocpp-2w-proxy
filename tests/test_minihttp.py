@@ -17,7 +17,14 @@ async def echo(request: Request) -> Response:
     if request.path == "/refuse":
         raise HttpError(404, "nope", "not here")
     return Response(
-        200, {"method": request.method, "path": request.path, "headers": request.headers, "body": request.body.decode()}
+        200,
+        {
+            "method": request.method,
+            "path": request.path,
+            "query": dict(request.query),
+            "headers": request.headers,
+            "body": request.body.decode(),
+        },
     )
 
 
@@ -50,6 +57,29 @@ async def test_a_get_and_a_post_reach_the_handler(port):
 
     status, body = await exchange(port, post(b'{"a":1}'))
     assert (status, body["method"], body["body"]) == (200, "POST", '{"a":1}')
+
+
+@pytest.mark.parametrize(
+    ("target", "query"),
+    [
+        ("/a", {}),
+        ("/a?", {}),
+        ("/a?x=1&y=two+words&z=%C3%A9", {"x": "1", "y": "two words", "z": "\u00e9"}),
+        ("/a?empty=", {"empty": ""}),
+    ],
+)
+async def test_the_query_string_is_parsed(port, target, query):
+    status, body = await exchange(port, f"GET {target} HTTP/1.1\r\n\r\n".encode())
+    assert (status, body["path"], body["query"]) == (200, "/a", query)
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["/a?x=1&x=2", "/a?x", "/a?x=1&&y=2", "/a?x=%ff", "/a?" + "&".join(f"k{i}=v" for i in range(33))],
+)
+async def test_a_malformed_or_ambiguous_query_is_refused(port, target):
+    status, body = await exchange(port, f"GET {target} HTTP/1.1\r\n\r\n".encode())
+    assert (status, body["error"]) == (400, "bad_request")
 
 
 async def test_the_response_is_json_and_closes_the_connection(port):
@@ -104,11 +134,25 @@ async def test_a_stalled_request_times_out(port, monkeypatch):
     assert (await exchange(port, b"POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc"))[0] == 408
 
 
-async def test_connections_beyond_the_limit_are_refused_with_503(port):
-    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(minihttp.MAX_CONNECTIONS)]
+async def test_connections_beyond_the_default_limit_are_refused_with_503(port):
+    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(minihttp.DEFAULT_MAX_CONNECTIONS)]
     await asyncio.sleep(0.1)  # let the server register them all
 
     assert (await exchange(port, b""))[0] == 503  # refused before it is even read
 
     for _, writer in held:
         writer.close()
+
+
+async def test_the_connection_limit_is_configurable():
+    server = await minihttp.serve(echo, "127.0.0.1", 0, max_connections=2)
+    port = server.sockets[0].getsockname()[1]
+    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(2)]
+    await asyncio.sleep(0.1)
+
+    assert (await exchange(port, b""))[0] == 503
+
+    for _, writer in held:
+        writer.close()
+    server.close()
+    await server.wait_closed()

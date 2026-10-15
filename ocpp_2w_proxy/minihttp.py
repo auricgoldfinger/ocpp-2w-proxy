@@ -12,18 +12,20 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import parse_qsl
 
 logger = logging.getLogger(__name__)
 
 MAX_HEADER_BYTES = 16 * 1024
 MAX_HEADERS = 32
 MAX_BODY_BYTES = 64 * 1024
+MAX_QUERY_FIELDS = 32
 READ_TIMEOUT_SECONDS = 10
-MAX_CONNECTIONS = 8
+DEFAULT_MAX_CONNECTIONS = 8
 
 METHODS = frozenset({"GET", "POST"})
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -36,6 +38,7 @@ class Request:
     path: str  # without the query string
     headers: dict[str, str]  # names lowercased
     body: bytes
+    query: Mapping[str, str] = field(default_factory=dict)  # each key at most once
 
 
 @dataclass(frozen=True)
@@ -57,19 +60,22 @@ class HttpError(Exception):
         self.message = message
 
 
-async def serve(handler: Handler, host: str, port: int) -> asyncio.Server:
-    connections = _Connections(handler)
+async def serve(
+    handler: Handler, host: str, port: int, max_connections: int = DEFAULT_MAX_CONNECTIONS
+) -> asyncio.Server:
+    connections = _Connections(handler, max_connections)
     return await asyncio.start_server(connections.handle, host, port, limit=MAX_HEADER_BYTES)
 
 
 class _Connections:
-    def __init__(self, handler: Handler):
+    def __init__(self, handler: Handler, max_connections: int):
         self._handler = handler
+        self._max_connections = max_connections
         self._open = 0
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            if self._open >= MAX_CONNECTIONS:
+            if self._open >= self._max_connections:
                 await _write(writer, _error(HttpError(503, "too_many_connections", "too many open connections")))
                 return
             self._open += 1
@@ -105,11 +111,13 @@ async def _read_request(reader: asyncio.StreamReader) -> Request:
         head = await reader.readuntil(b"\r\n\r\n")
     except asyncio.LimitOverrunError:
         raise HttpError(431, "headers_too_large", f"the headers exceed {MAX_HEADER_BYTES} bytes") from None
-    method, path = _parse_request_line(head)
+    method, target = _parse_request_line(head)
+    path, _, raw_query = target.partition("?")
+    query = _parse_query(raw_query)
     headers = _parse_headers(head)
     if "transfer-encoding" in headers:
         raise HttpError(501, "not_implemented", "chunked and other transfer encodings are not supported")
-    return Request(method, path, headers, await _read_body(reader, method, headers))
+    return Request(method, path, headers, await _read_body(reader, method, headers), query)
 
 
 def _parse_request_line(head: bytes) -> tuple[str, str]:
@@ -122,7 +130,20 @@ def _parse_request_line(head: bytes) -> tuple[str, str]:
         raise HttpError(501, "not_implemented", f"method {method[:16]!r} is not supported")
     if not target.startswith("/"):
         raise HttpError(400, "bad_request", "the request target must be an absolute path")
-    return method, target.split("?", 1)[0]
+    return method, target
+
+
+def _parse_query(query: str) -> dict[str, str]:
+    try:
+        fields = parse_qsl(
+            query, keep_blank_values=True, strict_parsing=True, errors="strict", max_num_fields=MAX_QUERY_FIELDS
+        )
+    except ValueError:
+        raise HttpError(400, "bad_request", "malformed query string") from None
+    parameters = dict(fields)
+    if len(parameters) != len(fields):
+        raise HttpError(400, "bad_request", "a query parameter appears more than once")
+    return parameters
 
 
 def _parse_headers(head: bytes) -> dict[str, str]:
