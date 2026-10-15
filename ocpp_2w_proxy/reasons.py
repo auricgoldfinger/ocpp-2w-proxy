@@ -24,7 +24,7 @@ class Reason(Enum):
     # session / commands
     POLICY_ANSWERED = (Outcome.ANSWERED_BY_PROXY, "Answered by the proxy for {peer}; the charger never saw it")
     POLICY_REFUSED = (Outcome.ANSWERED_BY_PROXY, "Refused by the proxy for {peer} by command policy")
-    UNKNOWN_TRANSACTION = (Outcome.ANSWERED_BY_PROXY, "Refused: {peer} named an unknown transaction {detail}")
+    UNKNOWN_TRANSACTION = (Outcome.ANSWERED_BY_PROXY, "Refused: {peer} named a transaction the proxy does not know")
     CHARGER_DISCONNECTED = (Outcome.FAILED, "The charger is not connected")
     CHARGER_NO_REPLY = (Outcome.FAILED, "The charger did not reply in time")
     BACKEND_GONE_REPLY_LOST = (Outcome.DROPPED, "{peer} disconnected before the reply could be returned")
