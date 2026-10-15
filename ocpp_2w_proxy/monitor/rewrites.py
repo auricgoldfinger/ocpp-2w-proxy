@@ -24,6 +24,11 @@ def _transaction_id(payload: Payload) -> object:
     return _ABSENT
 
 
+def transaction_id(payload: Payload) -> object | None:
+    value = _transaction_id(payload)
+    return None if value is _ABSENT else value
+
+
 def _charging_profile(payload: Payload) -> object:
     """A RemoteStartTransaction's embedded profile, identified by its id when it has one."""
     profile = payload.get("chargingProfile", _ABSENT)
