@@ -44,6 +44,11 @@ function keyFigures(entries, connectorId) {
   ]);
 }
 
+/** "Energy.Active.Import.Register" may wrap after each dot on a phone, not mid-word. */
+function measurandLabel(measurand) {
+  return measurand.split(".").map((part, at) => html`${at > 0 ? html`.<wbr>` : ""}${part}`);
+}
+
 function cell(sample) {
   if (!sample) return html`<td class="muted">–</td>`;
   return html`<td><span class="num">${sample.value}</span> <span class="unit">${sample.unitLabel}</span></td>`;
@@ -59,7 +64,7 @@ function readingTable(entry) {
   const phases = phaseColumns(entry.samples);
   const heads = phases.map((phase) => html`<th scope="col">${phase || (phases.length > 1 ? "total" : "value")}</th>`);
   const rows = measurandRows(entry.samples).map(
-    (row) => html`<tr><th scope="row">${row.measurand}${row.location ? html` <span class="muted">(${row.location})</span>` : ""}</th>${phases.map((phase) => cell(row.cells[phase]))}</tr>`,
+    (row) => html`<tr><th scope="row">${measurandLabel(row.measurand)}${row.location ? html` <span class="muted">(${row.location})</span>` : ""}</th>${phases.map((phase) => cell(row.cells[phase]))}</tr>`,
   );
   return html`<div class="table-scroll"><table class="meter-table">${caption(entry)}<thead><tr><th scope="col">measurand</th>${heads}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }

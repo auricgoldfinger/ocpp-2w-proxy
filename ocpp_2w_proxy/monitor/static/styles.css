@@ -960,6 +960,10 @@ body.drawer-open {
   white-space: nowrap;
 }
 
+.meter-table tbody th {
+  overflow-wrap: normal;
+}
+
 .card__subhead {
   margin: var(--space-4) 0 var(--space-2);
   font-size: 0.8125rem;

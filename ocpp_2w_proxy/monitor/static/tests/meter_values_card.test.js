@@ -54,7 +54,7 @@ test("the card shows the key figures in kW, kWh, A, V and °C", () => {
 test("the latest reading is the table; earlier ones are collapsed", () => {
   const markup = card(payload());
   assert.match(markup, /<caption>2025-10-15 14:02:11 <span class="muted">· Sample.Periodic<\/span><\/caption>/);
-  assert.match(markup, /<th scope="row">Current.Import<\/th><td class="muted">–<\/td><td><span class="num">10.7<\/span> <span class="unit">A<\/span><\/td>/);
+  assert.match(markup, /<th scope="row">Current.<wbr>Import<\/th><td class="muted">–<\/td><td><span class="num">10.7<\/span> <span class="unit">A<\/span><\/td>/);
   assert.match(markup, /<th scope="row">Temperature <span class="muted">\(Body\)<\/span><\/th><td><span class="num">34.5<\/span> <span class="unit">°C<\/span>/);
   assert.match(markup, /<details class="card__more"><summary>1 earlier reading<\/summary>.*2025-10-15 14:01:11.*<th scope="col">value<\/th>/s);
   assert.ok(markup.indexOf("14:02:11") < markup.indexOf("<details"));
