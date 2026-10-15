@@ -1,0 +1,45 @@
+{
+  "id": "4611686018427387924",
+  "charger_id": "99224881",
+  "origin": "primary",
+  "action": "GetConfiguration",
+  "started_at": 1760537200.00,
+  "last_at": 1760537200.52,
+  "outcome": "delivered",
+  "problem": false,
+  "incomplete": false,
+  "transaction_id": null,
+  "connector_id": null,
+  "id_tag": null,
+  "headline": null,
+  "not_sent": [],
+  "legs": [
+    {"peer": "charger", "wire_id": "b7-24", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760537200.01,
+     "replied_at": 1760537200.50, "rewritten": [], "late": false, "duplicate": false}
+  ],
+  "payload": {"key": ["HeartbeatInterval", "AuthorizationKey", "NoSuchKey"]},
+  "frames": [
+    {"at": 1760537200.00, "peer": "primary", "dir": "in", "msg_type": "call", "wire_id": "b7-24",
+     "payload": {"key": ["HeartbeatInterval", "AuthorizationKey", "NoSuchKey"]}, "same_as_origin": true, "error": null},
+    {"at": 1760537200.01, "peer": "charger", "dir": "out", "msg_type": "call", "wire_id": "b7-24",
+     "payload": {"key": ["HeartbeatInterval", "AuthorizationKey", "NoSuchKey"]}, "same_as_origin": true, "error": null},
+    {"at": 1760537200.50, "peer": "charger", "dir": "in", "msg_type": "result", "wire_id": "b7-24",
+     "payload": {"configurationKey": [
+       {"key": "HeartbeatInterval", "readonly": false, "value": "300"},
+       {"key": "AuthorizationKey", "readonly": false, "value": "***"},
+       {"key": "NumberOfConnectors", "readonly": true, "value": "1"},
+       {"key": "SupportedFeatureProfiles", "readonly": true}
+     ], "unknownKey": ["NoSuchKey"]},
+     "same_as_origin": false, "error": null},
+    {"at": 1760537200.52, "peer": "primary", "dir": "out", "msg_type": "result", "wire_id": "b7-24",
+     "payload": {"configurationKey": [
+       {"key": "HeartbeatInterval", "readonly": false, "value": "300"},
+       {"key": "AuthorizationKey", "readonly": false, "value": "***"},
+       {"key": "NumberOfConnectors", "readonly": true, "value": "1"},
+       {"key": "SupportedFeatureProfiles", "readonly": true}
+     ], "unknownKey": ["NoSuchKey"]},
+     "same_as_origin": false, "error": null}
+  ],
+  "decisions": []
+}

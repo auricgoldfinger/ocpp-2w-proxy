@@ -1,6 +1,7 @@
 // Payload card per action, with the generic key/value card as the fallback.
 
 import { bootNotificationCard } from "./boot_notification.js";
+import { changeConfigurationCard, getConfigurationCard } from "./configuration.js";
 import { genericCard } from "./generic.js";
 import { meterValuesCard } from "./meter_values.js";
 import { statusNotificationCard } from "./status_notification.js";
@@ -8,6 +9,8 @@ import { startCard, stopCard } from "./transaction.js";
 
 const CARDS = {
   BootNotification: bootNotificationCard,
+  ChangeConfiguration: changeConfigurationCard,
+  GetConfiguration: getConfigurationCard,
   MeterValues: meterValuesCard,
   StatusNotification: statusNotificationCard,
   StartTransaction: startCard,

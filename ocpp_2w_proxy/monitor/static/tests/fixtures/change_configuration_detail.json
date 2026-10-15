@@ -1,0 +1,33 @@
+{
+  "id": "4611686018427387925",
+  "charger_id": "99224881",
+  "origin": "primary",
+  "action": "ChangeConfiguration",
+  "started_at": 1760537300.00,
+  "last_at": 1760537300.31,
+  "outcome": "delivered",
+  "problem": false,
+  "incomplete": false,
+  "transaction_id": null,
+  "connector_id": null,
+  "id_tag": null,
+  "headline": null,
+  "not_sent": [],
+  "legs": [
+    {"peer": "charger", "wire_id": "b7-25", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760537300.01,
+     "replied_at": 1760537300.30, "rewritten": [], "late": false, "duplicate": false}
+  ],
+  "payload": {"key": "HeartbeatInterval", "value": "600"},
+  "frames": [
+    {"at": 1760537300.00, "peer": "primary", "dir": "in", "msg_type": "call", "wire_id": "b7-25",
+     "payload": {"key": "HeartbeatInterval", "value": "600"}, "same_as_origin": true, "error": null},
+    {"at": 1760537300.01, "peer": "charger", "dir": "out", "msg_type": "call", "wire_id": "b7-25",
+     "payload": {"key": "HeartbeatInterval", "value": "600"}, "same_as_origin": true, "error": null},
+    {"at": 1760537300.30, "peer": "charger", "dir": "in", "msg_type": "result", "wire_id": "b7-25",
+     "payload": {"status": "RebootRequired"}, "same_as_origin": false, "error": null},
+    {"at": 1760537300.31, "peer": "primary", "dir": "out", "msg_type": "result", "wire_id": "b7-25",
+     "payload": {"status": "RebootRequired"}, "same_as_origin": false, "error": null}
+  ],
+  "decisions": []
+}

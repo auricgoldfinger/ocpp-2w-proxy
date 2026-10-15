@@ -906,6 +906,30 @@ body.drawer-open {
   font-size: 0.9375rem;
 }
 
+.config-table__access {
+  white-space: nowrap;
+}
+
+.config-table th.mono,
+.config-change .mono {
+  overflow-wrap: anywhere;
+}
+
+.config-change {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.config-unknown {
+  margin: var(--space-2) 0 0;
+}
+
+.masked {
+  font-family: var(--mono);
+  color: var(--fg-muted);
+  letter-spacing: 0.1em;
+}
+
 .status-card__state {
   display: flex;
   flex-wrap: wrap;
