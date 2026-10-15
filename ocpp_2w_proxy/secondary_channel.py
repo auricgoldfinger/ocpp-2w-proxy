@@ -30,6 +30,7 @@ from .message_classes import is_secondary_durable
 from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id
 from .policy import CommandPolicy
 from .queue_overflow import pick_victim
+from .reasons import Reason
 from .restartable_worker import RestartableWorker
 from .session_routing import OnCall, SessionRouting
 from .state import StateStore, restore_outbox, to_dict
@@ -135,6 +136,15 @@ class SecondaryChannel:
         return self._link is not None
 
     @property
+    def connected_since(self) -> float | None:
+        link = self._link
+        return link.connected_since if link is not None else None
+
+    @property
+    def queued_count(self) -> int:
+        return len(self._queue)
+
+    @property
     def policy(self) -> CommandPolicy:
         return self._config.policy
 
@@ -149,7 +159,9 @@ class SecondaryChannel:
         self._remember(call)
         durable = is_secondary_durable(call)
         if not durable and not self.connected:
-            return  # stale when replayed later; boot/status are re-sent from the cache instead
+            # Stale when replayed later; boot/status are re-sent from the cache instead.
+            self._traffic.decided(self.name, call, Reason.SKIPPED_OFFLINE)
+            return
         # Own message id: the charger's ids restart after a reboot and must not collide in the queue.
         self._queue.append(_QueuedCall(call.with_id(new_message_id()), durable, start_ref))
         if durable:
@@ -174,12 +186,14 @@ class SecondaryChannel:
                 break  # only the in-flight head is over the limit; its confirmation pops it
             self._queue.remove(victim)
             logger.error("%s queue full (%d); dropped queued %s", self.name, self._config.max_queue, victim.call.action)
+            self._traffic.decided(self.name, victim.call, Reason.QUEUE_OVERFLOW)
 
     def _enforce_transient_limit(self) -> None:
         while sum(not item.durable for item in self._queue) > MAX_TRANSIENT_QUEUE:
             victim = next(i for i in self._queue if not i.durable and i is not self._in_flight)
             self._queue.remove(victim)
             logger.warning("%s dropped stale %s: too many waiting calls", self.name, victim.call.action)
+            self._traffic.decided(self.name, victim.call, Reason.QUEUE_OVERFLOW)
 
     def _sacrifice(self) -> _QueuedCall | None:
         """The durable item to drop on overflow; never the head the sender is sending.
@@ -258,6 +272,9 @@ class SecondaryChannel:
         await self._routing.dispatch(call, self._link)
 
     def _drop_transient(self) -> None:
+        for item in self._queue:
+            if not item.durable:
+                self._traffic.decided(self.name, item.call, Reason.TRANSIENT_DROPPED)
         self._queue = deque(item for item in self._queue if item.durable)
 
     async def _sync_and_drain(self, link: BackendLink, booted: asyncio.Event) -> None:
@@ -288,19 +305,23 @@ class SecondaryChannel:
         if not self.forwards("BootNotification"):
             return True  # this backend is not configured to receive boots
         if self._queue and self._queue[0].call.action == "BootNotification":
-            # The charger just booted: its own boot is the cached one sent below.
-            self._complete(self._queue[0])
+            # The charger just booted: its own boot is the one just cached.
+            head = self._queue[0]
+            self._complete(head)
+            return await self._accept_boot(link, head.call)
         if self._state.boot is None:
             logger.warning("no BootNotification cached yet; %s gets none until the charger reboots", self.name)
             return True
-        return await self._accept_boot(link, self._state.boot)
+        boot = Call(new_message_id(), "BootNotification", self._state.boot)
+        self._traffic.decided(self.name, boot, Reason.BOOT_FROM_CACHE)
+        return await self._accept_boot(link, boot)
 
-    async def _accept_boot(self, link: BackendLink, payload: dict) -> bool:
+    async def _accept_boot(self, link: BackendLink, boot: Call) -> bool:
         """Send a boot until the backend accepts it (UC-006 A2), at the interval it names.
         False: it never did and nobody needs the connection any more."""
         while self._wanted():
             try:
-                reply = await link.call(Call(new_message_id(), "BootNotification", payload), self._timeout)
+                reply = await link.call(boot.with_id(new_message_id()), self._timeout)
             except TimeoutError:
                 await self._sleep(DEFAULT_BOOT_RETRY_INTERVAL)
                 continue
@@ -333,15 +354,19 @@ class SecondaryChannel:
             logger.warning(
                 "%s no longer forwards %s; queued message discarded (forwarding policy)", self.name, item.call.action
             )
+            self._traffic.decided(self.name, item.call, Reason.NO_LONGER_FORWARDED)
             self._complete(item)
             return
         if item.call.action == "BootNotification":
             # The charger rebooted while connected: the backend must accept it before anything else.
             self._complete(item)
-            await self._accept_boot(link, item.call.payload)
+            await self._accept_boot(link, item.call)
             return
         outgoing = self._transactions.rewrite_for_secondary(item.call, self.name)
         if outgoing is None:
+            self._traffic.decided(
+                self.name, item.call, Reason.NO_TRANSACTION_LINK, item.call.payload.get("transactionId")
+            )
             self._complete(item)
             return
         self._in_flight = item
@@ -375,6 +400,7 @@ class SecondaryChannel:
                 reply.code,
                 reply.description,
             )
+            self._traffic.decided(self.name, item.call, Reason.MAX_ATTEMPTS)
             return False
         delay = self._retry_backoff.next_delay()
         logger.warning(

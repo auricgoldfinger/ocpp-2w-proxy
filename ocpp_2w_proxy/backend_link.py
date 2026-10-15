@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Mapping
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -42,6 +43,7 @@ class BackendLink:
         self._ws = ws
         self._traffic = traffic
         self._pending: dict[str, asyncio.Future[Reply]] = {}
+        self.connected_since = time.time()
 
     @classmethod
     async def open(
@@ -63,6 +65,7 @@ class BackendLink:
         if ws.subprotocol != SUBPROTOCOL:
             logger.warning("%s backend negotiated subprotocol %r instead of %s", name, ws.subprotocol, SUBPROTOCOL)
         logger.info("connected to %s backend %s", name, url)
+        traffic.link_changed(name, True)
         return cls(name, ws, traffic)
 
     async def send(self, message: Message) -> None:
@@ -108,6 +111,7 @@ class BackendLink:
         except ConnectionClosed as exc:
             logger.warning("%s backend connection lost: %s", self.name, exc)
         finally:
+            self._traffic.link_changed(self.name, False)
             self._fail_pending()
 
     def _resolve(self, reply: Reply) -> None:

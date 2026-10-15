@@ -24,10 +24,10 @@ async def attached_charger(url, **kwargs) -> FakeCharger:
 
 async def test_the_charger_link_is_reported_up_and_down(primary, start_proxy, flow):
     charger = await attached_charger(await start_proxy(primary.url))
-    assert flow.links == [("charger", True)]
+    assert flow.links_of("charger") == [True]
 
     await charger.close()
-    await eventually(lambda: flow.links == [("charger", True), ("charger", False)])
+    await eventually(lambda: flow.links_of("charger") == [True, False])
 
 
 @pytest.mark.parametrize(
@@ -45,7 +45,7 @@ async def test_a_secondary_command_the_proxy_answers_itself(
 
     await secondary.call(action, payload)
 
-    [decision] = flow.decisions
+    [decision] = flow.with_reason(reason)
     assert (decision.peer, decision.call.action, decision.reason) == ("tap", action, reason)
     assert charger.received_calls == []
     await charger.close()
@@ -63,7 +63,7 @@ async def test_a_command_for_a_closed_charger_socket(primary, secondary, start_p
     monkeypatch.setattr(ChargerSession, "_send_to_charger", socket_closed_for_commands)
     await secondary.call("GetConfiguration", {"key": ["HeartbeatInterval"]})
 
-    [decision] = flow.decisions
+    [decision] = flow.with_reason(Reason.CHARGER_DISCONNECTED)
     assert (decision.peer, decision.call.action, decision.reason) == (
         "charger",
         "GetConfiguration",
@@ -78,7 +78,7 @@ async def test_a_malformed_charger_reply(primary, secondary, start_proxy, flow):
 
     await secondary.call("GetConfiguration", {"key": ["HeartbeatInterval"]})
 
-    [decision] = flow.decisions
+    [decision] = flow.with_reason(Reason.MALFORMED_FRAME)
     assert (decision.peer, decision.reason) == ("charger", Reason.MALFORMED_FRAME)
     assert decision.call.id == charger.received_calls[0][1]
     await charger.close()
@@ -89,7 +89,7 @@ async def test_an_unauthorized_id_tag_is_withheld_from_the_primary(primary, seco
 
     await charger.call("Authorize", {"idTag": "0000"})
 
-    [decision] = flow.decisions
+    [decision] = flow.with_reason(Reason.WITHHELD_UNAUTHORIZED)
     assert (decision.peer, decision.call.action, decision.reason) == (
         "primary",
         "Authorize",
@@ -106,7 +106,7 @@ async def test_a_start_the_primary_did_not_confirm_is_withheld_from_the_secondar
 
     await charger.call("StartTransaction", START)
 
-    [decision] = flow.decisions
+    [decision] = flow.with_reason(Reason.START_NOT_CONFIRMED)
     assert (decision.peer, decision.call.action, decision.reason) == (
         "tap",
         "StartTransaction",
@@ -122,7 +122,7 @@ async def test_a_live_call_the_primary_cannot_answer_closes_the_charger(primary,
     await charger.send_raw(json.dumps([2, "start-1", "StartTransaction", START]))
     await asyncio.wait_for(charger.ws.wait_closed(), 5)
 
-    [decision] = flow.decisions
+    [decision] = flow.with_reason(Reason.PRIMARY_UNAVAILABLE_CLOSE)
     assert (decision.peer, decision.call.id, decision.reason) == (
         "primary",
         "start-1",

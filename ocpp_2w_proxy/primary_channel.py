@@ -124,6 +124,11 @@ class PrimaryChannel:
         return self._connected.is_set()
 
     @property
+    def connected_since(self) -> float | None:
+        link = self._link
+        return link.connected_since if link is not None else None
+
+    @property
     def queued_count(self) -> int:
         """Messages waiting for the primary: queued billing data and kept state reports."""
         return len(self._queue) + len(self._latest)

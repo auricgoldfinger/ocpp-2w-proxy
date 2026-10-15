@@ -70,6 +70,12 @@ class RecordingFlow:
     def reasons(self) -> list[Reason]:
         return [decision.reason for decision in self.decisions]
 
+    def with_reason(self, reason: Reason) -> list[Decision]:
+        return [decision for decision in self.decisions if decision.reason is reason]
+
+    def links_of(self, peer: str) -> list[bool]:
+        return [up for name, up in self.links if name == peer]
+
 
 class FakeCsms:
     """Accepts proxy connections; answers Calls via `responder` (None = stay silent)."""
