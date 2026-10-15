@@ -283,6 +283,16 @@ def test_queued_then_delivered_after_a_restart_with_the_same_exchange_id():
     assert resumed.summary()["origin"] == "charger"
 
 
+def test_known_origin_wins_over_the_events_of_a_continued_exchange():
+    continued = project(
+        [sent(300.0, "primary", STOP), received(300.2, "primary", CallResult("s1", {}))], known_origin="charger"
+    )
+
+    summary = continued.summary()
+    assert summary["origin"] == "charger"
+    assert "proxy_kind" not in summary
+
+
 def test_not_sent_never_lists_a_peer_with_a_leg():
     projection = project([received(0.0, "charger", MV), sent(0.1, "ha", MV)], not_sent=("stats", "ha"))
 

@@ -36,6 +36,9 @@ class ExchangeProjection:
         self.not_sent: tuple[str, ...] = ()
         self.incomplete = False
         self.proxy_kind: str | None = None
+        # Set from the store before applying events: the origin the exchange's first write recorded wins, so an
+        # exchange continued after a restart (queued, then delivered) keeps its origin.
+        self.known_origin: str | None = None
         self._origin_peer: str | None = None  # the peer the origin Call was received from
         self._origin_call: Call | None = None
         self._from_debug = False
@@ -60,6 +63,8 @@ class ExchangeProjection:
     @property
     def origin(self) -> str | None:
         """Who started the exchange; None for an orphan reply, whose Call the monitor never saw."""
+        if self.known_origin is not None:
+            return self.known_origin
         if self._origin_peer is not None:
             return self._origin_peer
         if self._from_debug:
