@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import zlib
+from collections.abc import Sequence
 
 from .rows import WriteBatch
 
@@ -83,10 +84,10 @@ CREATE INDEX monitor_gaps_charger ON monitor_gaps (charger_id, from_at);
 MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1,)
 
 # A later write keeps what the first one decided: origin, started_at and not_sent.
-_UPSERT_EXCHANGE = """
+_UPSERT_EXCHANGES = """
 INSERT INTO exchanges (exchange_id, charger_id, origin, action, started_at, last_at, outcome, problem, incomplete,
                        transaction_id, connector_id, id_tag, not_sent, headline)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES {values}
 ON CONFLICT (exchange_id) DO UPDATE SET
     action = coalesce(exchanges.action, excluded.action),
     last_at = max(exchanges.last_at, excluded.last_at),
@@ -98,14 +99,20 @@ ON CONFLICT (exchange_id) DO UPDATE SET
     id_tag = coalesce(excluded.id_tag, exchanges.id_tag),
     headline = coalesce(excluded.headline, exchanges.headline)
 """
-_INSERT_FRAME = """
+# column1 keeps the batch order; a row whose exchange is not stored is skipped.
+_INSERT_FRAMES = """
 INSERT INTO frames (exchange_rowid, at, peer, dir, msg_type, wire_id, payload)
-SELECT id, ?, ?, ?, ?, ?, ? FROM exchanges WHERE exchange_id = ?
+SELECT e.id, v.column2, v.column3, v.column4, v.column5, v.column6, v.column7
+FROM (VALUES {values}) AS v JOIN exchanges AS e ON e.exchange_id = v.column8
+ORDER BY v.column1
 """
-_INSERT_DECISION = """
+_INSERT_DECISIONS = """
 INSERT INTO decisions (exchange_rowid, at, peer, reason, detail)
-SELECT id, ?, ?, ?, ? FROM exchanges WHERE exchange_id = ?
+SELECT e.id, v.column2, v.column3, v.column4, v.column5
+FROM (VALUES {values}) AS v JOIN exchanges AS e ON e.exchange_id = v.column6
+ORDER BY v.column1
 """
+MAX_ROWS_PER_STATEMENT = 500
 _INSERT_LINK = "INSERT INTO links (charger_id, peer, at, up) VALUES (?, ?, ?, ?)"
 _INSERT_GAP = "INSERT INTO monitor_gaps (charger_id, from_at, to_at, dropped) VALUES (?, ?, ?, ?)"
 _MARK_INCOMPLETE = "UPDATE exchanges SET incomplete = 1 WHERE exchange_id = ?"
@@ -132,20 +139,41 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 
 def write_batch(conn: sqlite3.Connection, batch: WriteBatch) -> None:
-    """One transaction per batch. Compression happens here, in the worker thread, since zlib releases the GIL."""
+    """One transaction per batch, in the worker thread. Compression happens here too, since zlib releases the GIL.
+
+    Exchanges, frames and decisions go in as multi-row statements, not ``executemany``: every row of the latter
+    is a step that releases the GIL and must take it back, and each time the worker takes it back the loop can
+    stall behind it. A few statements per batch keep the worker's share of the GIL short.
+    """
     with conn:
-        conn.executemany(
-            _UPSERT_EXCHANGE,
+        _insert_rows(
+            conn,
+            _UPSERT_EXCHANGES,
             [(*row[:12], json.dumps(list(row.not_sent)), row.headline) for row in batch.exchanges],
         )
-        conn.executemany(
-            _INSERT_FRAME,
-            [(*row[1:6], _compress(row.payload), row.exchange_id) for row in batch.frames],
+        _insert_rows(
+            conn,
+            _INSERT_FRAMES,
+            [(seq, *row[1:6], _compress(row.payload), row.exchange_id) for seq, row in enumerate(batch.frames)],
         )
-        conn.executemany(_INSERT_DECISION, [(*row[1:], row.exchange_id) for row in batch.decisions])
+        _insert_rows(
+            conn, _INSERT_DECISIONS, [(seq, *row[1:], row.exchange_id) for seq, row in enumerate(batch.decisions)]
+        )
         conn.executemany(_INSERT_LINK, batch.links)
         conn.executemany(_INSERT_GAP, batch.gaps)
         conn.executemany(_MARK_INCOMPLETE, [(exchange_id,) for exchange_id in batch.incomplete])
+
+
+def _insert_rows(conn: sqlite3.Connection, template: str, rows: Sequence[tuple]) -> None:
+    """``template`` with its ``{values}`` filled by as many rows per statement as SQLite's variable limit allows."""
+    if not rows:
+        return
+    width = len(rows[0])
+    placeholder = f"({','.join('?' * width)})"
+    per_statement = max(1, min(MAX_ROWS_PER_STATEMENT, conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) // width))
+    for start in range(0, len(rows), per_statement):
+        chunk = rows[start : start + per_statement]
+        conn.execute(template.format(values=",".join([placeholder] * len(chunk))), [v for row in chunk for v in row])
 
 
 def purge_chunk(conn: sqlite3.Connection, cutoff: float, limit: int = PURGE_CHUNK) -> int:

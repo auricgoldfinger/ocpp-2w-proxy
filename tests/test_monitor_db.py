@@ -122,6 +122,34 @@ def test_batch_writes_decisions_links_gaps_and_incomplete_marks(conn):
     assert conn.execute("SELECT exchange_id FROM exchanges WHERE incomplete").fetchall() == [(2,)]
 
 
+def test_rows_beyond_one_statement_keep_their_batch_order(conn, monkeypatch):
+    monkeypatch.setattr(db, "MAX_ROWS_PER_STATEMENT", 2)
+    frames = [frame(n % 3 + 1, payload=f'{{"n":{n}}}', at=10.0) for n in range(7)]
+    decisions = [DecisionRow(n % 3 + 1, 10.0, "primary", f"R{n}", None) for n in range(5)]
+
+    db.write_batch(conn, WriteBatch(exchanges=[exchange(1), exchange(2), exchange(3)], frames=frames))
+    db.write_batch(conn, WriteBatch(decisions=decisions))
+
+    blobs = conn.execute("SELECT payload FROM frames ORDER BY rowid").fetchall()
+    assert [json.loads(zlib.decompress(blob)) for (blob,) in blobs] == [{"n": n} for n in range(7)]
+    assert [r for (r,) in conn.execute("SELECT reason FROM decisions ORDER BY rowid")] == [f"R{n}" for n in range(5)]
+    assert scalar(conn, "SELECT count(*) FROM exchanges") == 3
+
+
+def test_frames_and_decisions_of_an_exchange_not_stored_are_skipped(conn):
+    db.write_batch(
+        conn,
+        WriteBatch(
+            exchanges=[exchange(1)],
+            frames=[frame(1), frame(2), frame(1, at=10.2)],
+            decisions=[DecisionRow(2, 10.1, "primary", "QUEUED", None)],
+        ),
+    )
+
+    assert conn.execute("SELECT at FROM frames ORDER BY rowid").fetchall() == [(10.0,), (10.2,)]
+    assert scalar(conn, "SELECT count(*) FROM decisions") == 0
+
+
 def test_a_failing_batch_writes_nothing(conn):
     bad = exchange(2, charger_id=None)
     with pytest.raises(sqlite3.IntegrityError):
