@@ -35,7 +35,7 @@ test("a charger message fans out with a path to every reached peer", () => {
     model.cells.map((cell) => cell.kind),
     ["origin", "relay", "leg", "leg", "not-sent"],
   );
-  assert.deepEqual(model.cells.map((cell) => cell.onPath), [true, true, true, true, false]);
+  assert.deepEqual(model.cells.map((cell) => cell.path), ["start", "through", "through", "end", "none"]);
   assert.equal(cellOf(model, "stats").view.label, "not sent");
   assert.deepEqual(cellOf(model, "homeassistant").chips, [{ field: "tx", label: "⇄tx", title: "10216 → 1791822333" }]);
 });
@@ -44,14 +44,15 @@ test("a blocked command stops at the proxy", () => {
   const model = row("06");
   assert.equal(cellOf(model, "homeassistant").kind, "origin");
   assert.equal(cellOf(model, "charger").view.label, "blocked");
-  assert.equal(cellOf(model, "charger").onPath, false);
-  assert.equal(cellOf(model, "proxy").onPath, true);
+  assert.equal(cellOf(model, "charger").path, "none");
+  assert.equal(cellOf(model, "proxy").path, "start");
+  assert.equal(cellOf(model, "homeassistant").path, "end");
 });
 
 test("a withheld leg is off the path while delivered secondaries are on it", () => {
   const model = row("08");
   assert.equal(cellOf(model, "primary").view.label, "withheld");
-  assert.equal(cellOf(model, "stats").onPath, true);
+  assert.equal(cellOf(model, "stats").path, "end");
 });
 
 test("proxy-originated exchanges start from the proxy lane with a replay or synthetic tag", () => {

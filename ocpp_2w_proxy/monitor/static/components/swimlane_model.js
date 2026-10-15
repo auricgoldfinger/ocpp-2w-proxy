@@ -78,6 +78,13 @@ function pathSpan(lanes, summary) {
   return [Math.min(...valid), Math.max(...valid)];
 }
 
+/** Where a lane sits on the drawn path: "start" and "end" are half lines from the lane centre. */
+function pathPart(at, first, last) {
+  if (at < first || at > last) return "none";
+  if (at === first) return "start";
+  return at === last ? "end" : "through";
+}
+
 function legCell(leg, context) {
   return { kind: "leg", view: outcomeView(leg, context), chips: rewriteChips(leg), tags: replyTags(leg) };
 }
@@ -107,7 +114,7 @@ export function rowModel(summary, lanes, now) {
   const cells = lanes.map((lane, at) => ({
     lane: lane.key,
     laneLabel: lane.label,
-    onPath: at >= first && at <= last,
+    path: pathPart(at, first, last),
     ...laneCell(lane, summary, context),
   }));
   return {

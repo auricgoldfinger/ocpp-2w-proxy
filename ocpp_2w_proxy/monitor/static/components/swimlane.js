@@ -39,8 +39,7 @@ const CELL_CONTENT = {
 };
 
 function cell(model) {
-  const path = model.onPath ? " on-path" : "";
-  return html`<span class="cell cell--${model.kind}${path}"><span class="sr-only">${model.laneLabel}:</span>${CELL_CONTENT[model.kind](model)}</span>`;
+  return html`<span class="cell cell--${model.kind} path-${model.path}"><span class="sr-only">${model.laneLabel}:</span>${CELL_CONTENT[model.kind](model)}</span>`;
 }
 
 function strip(items) {
