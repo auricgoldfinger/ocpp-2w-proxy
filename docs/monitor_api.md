@@ -78,6 +78,8 @@ Used in lists and in SSE `exchange` events:
 | `problem` | True when any leg's reason `is_problem`, or a peer replied with a CallError. |
 | `incomplete` | The exchange was open during a monitor gap. |
 | `legs[].outcome` / `reason` | Where the leg ended. `null` while still open. |
+| Delivered after queueing | A leg keeps its earlier reason when its reply arrives: `outcome: "delivered"` with `reason: "QUEUED"` (or `KEPT_LATEST`) means it was delivered late, after `sent_at − started_at`. |
+| Blocked / refused command | The proxy's answer sits on the `"charger"` leg of the backend's exchange, with `replied_by: "proxy"`. |
 | `legs[].reply` | `"result"`, `"error"` or `null`. |
 | `legs[].replied_by` | `"peer"`, `"proxy"` or `null`. A proxy CallResult is shown as "blocked"; a proxy CallError as "refused". |
 | `legs[].rewritten[].field` | `"id"` (the idTag), `"tx"` or `"profile"`. `to: null` means the field was removed. Wire ids differ per leg by design and are not a rewrite. |
