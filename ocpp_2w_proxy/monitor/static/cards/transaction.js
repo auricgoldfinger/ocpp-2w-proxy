@@ -3,6 +3,7 @@
 
 import { formatDuration, formatKwh, trimNumericString } from "../format.js";
 import { html } from "../html.js";
+import { figure, figures } from "./figure.js";
 import { payloadTree } from "./generic.js";
 
 const REGISTER = "Energy.Active.Import.Register";
@@ -54,17 +55,23 @@ export function startFigures(payload, session = null, now = Date.now() / 1000) {
   };
 }
 
-function figure(label, value) {
-  return html`<div class="figure"><span class="figure__value">${value}</span><span class="figure__label">${label}</span></div>`;
-}
-
 export function stopCard(payload, { session = null } = {}) {
   const { energyWh, durationS } = stopFigures(payload, session);
-  return html`<div class="card card--transaction"><div class="figures">${figure("delivered", formatKwh(energyWh))}${figure("duration", formatDuration(durationS))}${payload.reason ? figure("reason", payload.reason) : ""}</div>${payloadTree(payload)}</div>`;
+  const row = figures([
+    figure("delivered", formatKwh(energyWh)),
+    figure("duration", formatDuration(durationS)),
+    payload.reason && figure("reason", payload.reason),
+  ]);
+  return html`<div class="card card--transaction">${row}${payloadTree(payload)}</div>`;
 }
 
 export function startCard(payload, { session = null, now } = {}) {
   const { meterStartWh, energyWh, durationS, running } = startFigures(payload, session, now);
-  const durationLabel = running ? "running for" : "duration";
-  return html`<div class="card card--transaction"><div class="figures">${figure("meter at start", formatKwh(meterStartWh))}${energyWh !== null ? figure(running ? "so far" : "delivered", formatKwh(energyWh)) : ""}${figure(durationLabel, formatDuration(durationS))}${figure("connector", payload.connectorId ?? "–")}</div>${payloadTree(payload)}</div>`;
+  const row = figures([
+    figure("meter at start", formatKwh(meterStartWh)),
+    energyWh !== null && figure(running ? "so far" : "delivered", formatKwh(energyWh)),
+    figure(running ? "running for" : "duration", formatDuration(durationS)),
+    figure("connector", payload.connectorId ?? "–"),
+  ]);
+  return html`<div class="card card--transaction">${row}${payloadTree(payload)}</div>`;
 }

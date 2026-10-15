@@ -29,3 +29,20 @@ export function assertSummary(summary) {
     }
   }
 }
+
+const FRAME_KEYS = ["at", "dir", "error", "msg_type", "payload", "peer", "same_as_origin", "wire_id"];
+const DECISION_KEYS = ["at", "detail", "peer", "reason", "text"];
+
+/** GET /api/exchanges/{id}: the summary plus payload, frames and decisions. */
+export function assertDetail(detail) {
+  const { payload, frames, decisions, ...summary } = detail;
+  assertSummary(summary);
+  assert.equal(typeof payload, "object");
+  for (const frame of frames) {
+    assert.deepEqual(Object.keys(frame).sort(), FRAME_KEYS);
+    assert.ok(["in", "out"].includes(frame.dir));
+    assert.ok(["call", "result", "error"].includes(frame.msg_type));
+    if (frame.same_as_origin) assert.deepEqual(frame.payload, payload);
+  }
+  for (const decision of decisions) assert.deepEqual(Object.keys(decision).sort(), DECISION_KEYS);
+}
