@@ -87,9 +87,19 @@ class ExchangeProjection:
 
     def summary(self, now: float | None = None) -> dict:
         """The exchange summary of ``docs/monitor_api.md``. ``now`` lets long-open legs show as unknown."""
-        legs = list(self._legs.values())
+        summary = self.overview()
+        summary["legs"] = [
+            leg.view(self.payload, self._proxy_reply, self._unknown(leg, now)) for leg in self._legs.values()
+        ]
+        if self.origin == PROXY_ORIGIN:
+            summary["proxy_kind"] = self.proxy_kind
+        return summary
+
+    def overview(self) -> dict:
+        """The summary without its legs: all the exchange's stored row needs, and far cheaper to build."""
+        legs = self._legs.values()
         payload = self.payload or {}
-        summary = {
+        return {
             "id": str(self.exchange_id),
             "charger_id": self.charger_id,
             "origin": self.origin,
@@ -104,11 +114,7 @@ class ExchangeProjection:
             "id_tag": _str(payload.get("idTag")),
             "headline": headline(self.action, payload),
             "not_sent": [peer for peer in self.not_sent if peer not in self._legs],
-            "legs": [leg.view(self.payload, self._proxy_reply, self._unknown(leg, now)) for leg in legs],
         }
-        if self.origin == PROXY_ORIGIN:
-            summary["proxy_kind"] = self.proxy_kind
-        return summary
 
     # --- folding --------------------------------------------------------------------------
 

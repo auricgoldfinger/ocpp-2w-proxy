@@ -140,9 +140,12 @@ class MonitorWriter:
             await self._sliced(routed, assembler.fold)
             await self._observe_gaps()
             exchange_frames: list[bytes] = []
-            await self._sliced(
-                assembler.changed(), lambda tracked: exchange_frames.append(_encode(assembler.summarize(tracked)))
-            )
+            if self._live.has_subscribers:
+                await self._sliced(
+                    assembler.changed(), lambda tracked: exchange_frames.append(_encode(assembler.summarize(tracked)))
+                )
+            else:
+                await self._sliced(assembler.changed(), assembler.record)
             batch = assembler.take_batch()
         except Exception:
             assembler.take_batch()  # start the next batch clean

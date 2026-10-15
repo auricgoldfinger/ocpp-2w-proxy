@@ -129,6 +129,19 @@ async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):
     assert max(seen.values()) <= 50
 
 
+async def test_without_live_subscribers_no_summary_is_built(store, monkeypatch):
+    recorders = RecorderHub([CP])
+    forwarded(recorders.recorder_for(CP), 2)
+    summarized = []
+    original = BatchAssembler.summarize
+    monkeypatch.setattr(BatchAssembler, "summarize", lambda self, tracked: summarized.append(original(self, tracked)))
+
+    await run_writer(new_writer(store, recorders))
+
+    assert summarized == []
+    assert len(await exchanges(store)) == 2
+
+
 async def test_reply_is_correlated_before_it_is_redacted(store):
     recorders = RecorderHub([CP])
     recorder = recorders.recorder_for(CP)
