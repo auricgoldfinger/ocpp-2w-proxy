@@ -6,7 +6,7 @@ import { badge } from "../components/swimlane.js";
 import { formatDuration } from "../format.js";
 import { html } from "../html.js";
 import { figure, figures } from "./figure.js";
-import { errorView, replyFrame } from "./reply.js";
+import { replySection } from "./reply_section.js";
 import { statusView } from "./status_view.js";
 
 const IDENTITY_FIELDS = [
@@ -46,9 +46,7 @@ function identityTitle(payload) {
   return html`<p class="boot-card__name">${name || "Unnamed charger"}</p>`;
 }
 
-function replyBody(frame) {
-  if (!frame) return html`<p class="muted">No reply recorded yet.</p>`;
-  if (frame.msg_type === "error") return html`<p>${badge(errorView(frame))}</p>`;
+function registration(frame) {
   const reply = frame.payload ?? {};
   const skew = clockSkew(frame);
   return figures([
@@ -58,14 +56,8 @@ function replyBody(frame) {
   ]);
 }
 
-/** The reply part; left out when the card is rendered without the exchange detail. */
-function replySection(detail) {
-  if (!detail) return "";
-  return html`<h4 class="card__subhead">Reply</h4>${replyBody(replyFrame(detail))}`;
-}
-
 export function bootNotificationCard(payload, { detail = null } = {}) {
   const body = payload ?? {};
   const facts = IDENTITY_FIELDS.filter(([key]) => body[key] !== undefined && body[key] !== "");
-  return html`<div class="card card--boot">${identityTitle(body)}<dl class="kv">${facts.map(([key, label]) => html`<dt>${label}</dt><dd>${body[key]}</dd>`)}</dl>${replySection(detail)}</div>`;
+  return html`<div class="card card--boot">${identityTitle(body)}<dl class="kv">${facts.map(([key, label]) => html`<dt>${label}</dt><dd>${body[key]}</dd>`)}</dl>${replySection(detail, registration)}</div>`;
 }
