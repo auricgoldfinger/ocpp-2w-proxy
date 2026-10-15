@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-import zlib
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +13,7 @@ from conftest import CHARGER_ID
 from fakes import FakeCharger, FakeCsms, http_exchange
 
 from ocpp_2w_proxy.flow import FanOut
+from ocpp_2w_proxy.monitor import payload_blob
 from ocpp_2w_proxy.traffic_log import TrafficLog
 
 START = {"connectorId": 1, "idTag": "04A2B3C4D5", "meterStart": 0, "timestamp": "2026-01-01T10:00:00Z"}
@@ -214,4 +214,4 @@ def stored_payloads(path) -> list[bytes]:
     with sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True) as conn:
         rows = conn.execute("SELECT payload FROM frames WHERE payload IS NOT NULL").fetchall()
     assert rows  # at least the origin payloads are stored
-    return [zlib.decompress(blob) for (blob,) in rows]
+    return [json.dumps(payload_blob.decode(blob)).encode() for (blob,) in rows]

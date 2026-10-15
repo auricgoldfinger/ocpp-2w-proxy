@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import zlib
 from collections.abc import Sequence
 
+from . import payload_blob
 from .rows import WriteBatch
 
 # No auto_vacuum: with fixed retention freed pages are reused, so the file size levels off.
@@ -139,7 +139,7 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 
 def write_batch(conn: sqlite3.Connection, batch: WriteBatch) -> None:
-    """One transaction per batch, in the worker thread. Compression happens here too, since zlib releases the GIL.
+    """One transaction per batch, in the worker thread; large payloads are compressed here too (``payload_blob``).
 
     Exchanges, frames and decisions go in as multi-row statements, not ``executemany``: every row of the latter
     is a step that releases the GIL and must take it back, and each time the worker takes it back the loop can
@@ -186,4 +186,4 @@ def purge_chunk(conn: sqlite3.Connection, cutoff: float, limit: int = PURGE_CHUN
 
 
 def _compress(payload: str | None) -> bytes | None:
-    return None if payload is None else zlib.compress(payload.encode())
+    return None if payload is None else payload_blob.encode(payload)

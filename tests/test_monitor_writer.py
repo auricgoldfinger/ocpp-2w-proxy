@@ -3,12 +3,11 @@ import json
 import logging
 import sqlite3
 import time
-import zlib
 from collections import Counter
 
 import pytest
 
-from ocpp_2w_proxy.monitor import db
+from ocpp_2w_proxy.monitor import db, payload_blob
 from ocpp_2w_proxy.monitor.batch_assembler import BatchAssembler
 from ocpp_2w_proxy.monitor.live_hub import LiveHub
 from ocpp_2w_proxy.monitor.not_sent import NotSentMap
@@ -51,7 +50,7 @@ async def exchanges(store):
 
 async def stored_payloads(store):
     blobs = await store.run(lambda conn: conn.execute("SELECT payload FROM frames ORDER BY rowid").fetchall())
-    return [None if blob is None else json.loads(zlib.decompress(blob)) for (blob,) in blobs]
+    return [None if blob is None else payload_blob.decode(blob) for (blob,) in blobs]
 
 
 def forwarded(recorder, n):

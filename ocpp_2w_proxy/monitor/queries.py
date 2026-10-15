@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-import zlib
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from . import payload_blob
 from .meter_values import ENERGY, latest_reading, number
 from .projection import DEFAULT_STALE_AFTER, ExchangeProjection
 from .replay import StoredDecision, StoredExchange, StoredFrame, decision_views, frame_views, origin_payload, project
@@ -332,7 +332,7 @@ def _origin_payload_of(conn: sqlite3.Connection, row: tuple | None) -> dict[str,
 
 
 def _decompress(blob: bytes | None) -> Any:
-    return None if blob is None else json.loads(zlib.decompress(blob))
+    return None if blob is None else payload_blob.decode(blob)
 
 
 def _json(body: object) -> bytes:

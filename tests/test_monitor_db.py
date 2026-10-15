@@ -4,7 +4,7 @@ import zlib
 
 import pytest
 
-from ocpp_2w_proxy.monitor import db
+from ocpp_2w_proxy.monitor import db, payload_blob
 from ocpp_2w_proxy.monitor.gaps import Gap
 from ocpp_2w_proxy.monitor.rows import DecisionRow, ExchangeRow, FrameRow, LinkRow, WriteBatch
 
@@ -96,12 +96,15 @@ def test_upsert_never_moves_last_at_back_nor_clears_incomplete(conn):
     assert conn.execute("SELECT last_at, incomplete FROM exchanges").fetchone() == (50.0, 1)
 
 
-def test_frame_payload_is_compressed_or_null(conn):
-    db.write_batch(conn, WriteBatch(exchanges=[exchange()], frames=[frame(), frame(payload=None, at=10.1)]))
+def test_frame_payload_is_compressed_only_when_large_or_null(conn):
+    large = json.dumps({"a": "x" * payload_blob.COMPRESS_FROM})
+    frames = [frame(), frame(payload=large, at=10.1), frame(payload=None, at=10.2)]
+    db.write_batch(conn, WriteBatch(exchanges=[exchange()], frames=frames))
 
     payloads = [row[0] for row in conn.execute("SELECT payload FROM frames ORDER BY at")]
-    assert json.loads(zlib.decompress(payloads[0])) == {"a": 1}
-    assert payloads[1] is None
+    assert payloads[0] == b'{"a":1}'
+    assert json.loads(zlib.decompress(payloads[1])) == json.loads(large)
+    assert payloads[2] is None
 
 
 def test_batch_writes_decisions_links_gaps_and_incomplete_marks(conn):
@@ -131,7 +134,7 @@ def test_rows_beyond_one_statement_keep_their_batch_order(conn, monkeypatch):
     db.write_batch(conn, WriteBatch(decisions=decisions))
 
     blobs = conn.execute("SELECT payload FROM frames ORDER BY rowid").fetchall()
-    assert [json.loads(zlib.decompress(blob)) for (blob,) in blobs] == [{"n": n} for n in range(7)]
+    assert [payload_blob.decode(blob) for (blob,) in blobs] == [{"n": n} for n in range(7)]
     assert [r for (r,) in conn.execute("SELECT reason FROM decisions ORDER BY rowid")] == [f"R{n}" for n in range(5)]
     assert scalar(conn, "SELECT count(*) FROM exchanges") == 3
 

@@ -42,7 +42,7 @@ Outcomes:
 | Are policy refusals `failed`? | **No.** `answered_by_proxy`. The UI shows **blocked** for a canned CallResult and **refused** for a proxy CallError. Neither raises the problem flag. |
 | Record "filtered" secondaries? | **Yes, compactly:** a `not_sent` column, **derived in the writer** from config. There is no hook on the relay path. |
 | Separate Live / History / Sessions views | **Merged.** One Exchanges view. A Session is a `?tx=` filter with a server-side summary header. |
-| Store every leg payload | Only when it differs from the origin (`is` fast path, `==` fallback), zlib-compressed in the worker thread. |
+| Store every leg payload | Only when it differs from the origin (`is` fast path, `==` fallback), zlib-compressed in the worker thread from 200 bytes up (smaller ones gain nothing). |
 | uuid vs counter exchange id (perf) | **Integer counter** with a random per-process base: about 50 ns, unique across restarts, opaque. |
 | Monitor event loss under load (perf) | Allowed, but **made visible**: a `monitor_gaps` table, an `incomplete` flag and a gap row in the UI. |
 
