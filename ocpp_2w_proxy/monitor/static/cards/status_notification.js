@@ -3,6 +3,7 @@
 
 import { badge } from "../components/swimlane.js";
 import { html } from "../html.js";
+import { statusView } from "./status_view.js";
 
 const STATUS_VIEWS = {
   Available: { icon: "✓", tone: "up" },
@@ -23,10 +24,9 @@ const DETAIL_FIELDS = [
   ["timestamp", "timestamp"],
 ];
 
-/** The pill view of a status: {label, icon, tone}; unknown statuses get a neutral "?". */
-export function statusView(status) {
-  const label = typeof status === "string" && status.trim() ? status.trim() : "unknown";
-  return { label, ...(STATUS_VIEWS[label] ?? { icon: "?", tone: "unknown" }) };
+/** The pill view of a connector status: {label, icon, tone}. */
+export function connectorStatusView(status) {
+  return statusView(status, STATUS_VIEWS);
 }
 
 function connectorText(connectorId) {
@@ -43,5 +43,5 @@ export function statusNotificationCard(payload) {
   const body = payload ?? {};
   const facts = [["connector", connectorText(body.connectorId)]];
   for (const [key, label] of DETAIL_FIELDS) if (body[key] !== undefined && body[key] !== "") facts.push([label, body[key]]);
-  return html`<div class="card card--status"><p class="status-card__state"><span class="status-pill">${badge(statusView(body.status))}</span>${errorPart(body.errorCode)}</p><dl class="kv">${facts.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl></div>`;
+  return html`<div class="card card--status"><p class="status-card__state"><span class="status-pill">${badge(connectorStatusView(body.status))}</span>${errorPart(body.errorCode)}</p><dl class="kv">${facts.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl></div>`;
 }

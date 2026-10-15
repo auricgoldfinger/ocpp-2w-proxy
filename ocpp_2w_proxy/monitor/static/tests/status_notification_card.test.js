@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { renderCard } from "../cards/index.js";
-import { statusView } from "../cards/status_notification.js";
+import { connectorStatusView } from "../cards/status_notification.js";
 import { loadFixture } from "./fixture_loader.js";
 
 const card = (payload) => String(renderCard("StatusNotification", payload));
 
 test("every status has an icon and a word", () => {
-  assert.deepEqual(statusView("Charging"), { label: "Charging", icon: "⚡", tone: "delivered" });
-  assert.deepEqual(statusView("Faulted"), { label: "Faulted", icon: "✕", tone: "failed" });
-  assert.deepEqual(statusView("Bogus"), { label: "Bogus", icon: "?", tone: "unknown" });
-  assert.deepEqual(statusView(undefined), { label: "unknown", icon: "?", tone: "unknown" });
+  assert.deepEqual(connectorStatusView("Charging"), { label: "Charging", icon: "⚡", tone: "delivered" });
+  assert.deepEqual(connectorStatusView("Faulted"), { label: "Faulted", icon: "✕", tone: "failed" });
+  assert.deepEqual(connectorStatusView("Bogus"), { label: "Bogus", icon: "?", tone: "unknown" });
+  assert.deepEqual(connectorStatusView(undefined), { label: "unknown", icon: "?", tone: "unknown" });
 });
 
 test("a fault shows the status pill, the error code, info and vendor fields", () => {
