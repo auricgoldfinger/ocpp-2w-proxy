@@ -153,6 +153,16 @@ block the project.
   indefinitely with exponential backoff and jitter, and the per-Charger queue survives restarts
   with a limit of at least 10,000 calls.
 
+- [ ] **4.8 Move StateStore json/fsync off the event loop.**
+  *Problem:* `StateStore._write` runs `json.dumps` and `os.fsync` on the event loop
+  (`state.py:170-179`), on the StartTransaction path, so a slow disk stalls every relay of that
+  proxy. Found by the Flow Monitor performance review; unrelated to the monitor.
+  *Design:* snapshot the state on the loop, then serialize and write it in a dedicated
+  single-thread executor (not the default one, which serves `getaddrinfo`), keeping the atomic
+  tmp-file + `replace` (NFR-006) and the coalescing `_flush_later`.
+  *Done when:* a test with a slow fake write shows the loop is never blocked over 5 ms, and the
+  existing state round-trip and crash-safety tests still pass.
+
 ## Phase 5: Observability and operations
 
 - [ ] **5.1 Health endpoint.**
@@ -212,3 +222,26 @@ block the project.
   *Design and gate test:* see [plans/keba-udp-current-control.md](plans/keba-udp-current-control.md).
   *Done when:* HA can limit and pause charging through the proxy with the cable in and the Tap
   session open, within the plan's relay and flash guard.
+
+## Phase 9: Flow Monitor
+
+An optional, read-only web Monitor built into the proxy that shows every Exchange with its Legs and
+why a Leg was or was not delivered (FR-023…FR-028, NFR-013…NFR-016, C-005, UC-008). Relaying always
+wins: the monitor drops events rather than delay a frame.
+*Design:* see [plans/flow-monitor.md](plans/flow-monitor.md); HTTP contract in
+[monitor_api.md](monitor_api.md).
+
+- [ ] **9.1 Masking for logs and monitor** (plan §6): `REDACT_ACTIONS`, AuthorizationKey values,
+  URL credentials, ICCID/IMSI and DataTransfer data. Also fixes the AuthorizationKey log leak.
+- [ ] **9.2 Emission and correlation:** `Call.exchange_id`, `FanOut` with exception isolation, and
+  `decided`/`link_changed` at every decision site.
+- [ ] **9.3 Store and API:** recorder, writer, SQLite with 90-day retention, `minihttp` extensions,
+  SSE live hub and the GET-only `[monitor]` listener.
+- [ ] **9.4 Latency guard:** `tests/test_monitor_latency.py` and hook micro-benchmarks (NFR-016).
+- [ ] **9.5 Frontend MVP:** topology header, Exchanges list with live follow and gap rows, detail
+  drawer, Links view; no build step (C-005).
+- [ ] **9.6 Should / Could:** `?tx=` session header and the MeterValues, Status, Boot and
+  Configuration cards; then the SetChargingProfile chart, topology pulses and JSON export.
+
+*Done when:* the plan's Verification section passes, including the manual check that no unmasked
+idTag, AuthorizationKey or URL password appears in the UI or in `monitor.sqlite`.

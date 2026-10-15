@@ -25,3 +25,9 @@
 | Charging Profile  | A Command-supplied power limit for a Transaction or connector; a limit of zero pauses charging without ending the Transaction. | Power schedule |
 | Debug Endpoint    | An optional HTTP listener, disabled by default, that lets the Proxy Administrator send a Command directly to a connected Charger, bypassing every Command Policy, and returns the Charger's raw reply. | Admin API |
 | Debug Command     | A Command sent through the Debug Endpoint; it is never forwarded to a Backend and its transaction numbers are the Charger's own. | |
+| Monitor           | The optional, read-only web view built into the proxy that shows every Exchange, its Legs and the Decisions behind them. It never delays relaying. | Dashboard, Sniffer   |
+| Exchange          | One logical message from its origin (the Charger, a Backend, the proxy itself or the Debug Endpoint) together with all its Legs, until every Leg has ended. | Transaction, Flow    |
+| Leg               | The hop of one Exchange to one peer: the message as sent to that peer, its reply and its outcome (delivered, answered by the proxy, queued, withheld, dropped or failed). | Hop, Route           |
+| Flow Event        | An append-only fact the proxy records for the Monitor: a frame received or sent, a Decision, or a connection going up or down. | Log line             |
+| Decision          | The proxy's reason for ending a Leg the way it did, such as answering a Command itself or queueing a message during an outage; one of a closed list of reasons. | Verdict              |
+| Monitor Gap       | A period in which the Monitor lost Flow Events because it could not keep up; messages were relayed normally during it, and the Exchanges open in it are marked incomplete. | Outage               |
