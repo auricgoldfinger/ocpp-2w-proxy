@@ -7,25 +7,40 @@ from typing import Any
 from .ocpp import Call, CallError, CallResult, Message
 
 _ID_TAG_KEYS = frozenset({"idTag", "parentIdTag"})
+# Lower-case: configuration keys are matched case-insensitively, as in policy.py.
+_SECRET_CONFIG_KEYS = frozenset({"authorizationkey"})
 _VISIBLE_SUFFIX = 4
+_HIDDEN = "***"
 
 
 def mask(value: str) -> str:
     if len(value) <= _VISIBLE_SUFFIX:
-        return "***"
-    return "***" + value[-_VISIBLE_SUFFIX:]
+        return _HIDDEN
+    return _HIDDEN + value[-_VISIBLE_SUFFIX:]
 
 
 def redact_payload(value: Any) -> Any:
-    """Recursively copy a payload with every idTag / parentIdTag masked."""
+    """Recursively copy a payload with every idTag / parentIdTag and secret configuration value masked."""
     if isinstance(value, dict):
+        secret_value = _is_secret_config_entry(value)
         return {
-            key: mask(item) if key in _ID_TAG_KEYS and isinstance(item, str) else redact_payload(item)
-            for key, item in value.items()
+            key: _HIDDEN if secret_value and key == "value" else _redact_field(key, item) for key, item in value.items()
         }
     if isinstance(value, list):
         return [redact_payload(item) for item in value]
     return value
+
+
+def _redact_field(key: str, item: Any) -> Any:
+    if key in _ID_TAG_KEYS and isinstance(item, str):
+        return mask(item)
+    return redact_payload(item)
+
+
+def _is_secret_config_entry(entry: dict[str, Any]) -> bool:
+    """ChangeConfiguration payloads and GetConfiguration ``configurationKey`` entries share {key, value}."""
+    key = entry.get("key")
+    return isinstance(key, str) and key.lower() in _SECRET_CONFIG_KEYS
 
 
 def describe(message: Message, include_payload: bool) -> str:

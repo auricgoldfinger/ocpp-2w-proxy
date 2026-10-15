@@ -19,3 +19,15 @@ def test_redaction_masks_id_tags_everywhere():
 def test_credentials_never_printed():
     text = describe_credentials("CH1", "supersecret")
     assert "supersecret" not in text and "present" in text
+
+
+def test_authorization_key_value_is_hidden_case_insensitively():
+    change = redact_payload({"key": "AuthorizationKey", "value": "0011223344556677"})
+    listed = redact_payload({"configurationKey": [{"key": "authorizationkey", "readonly": False, "value": "secret"}]})
+    assert change == {"key": "AuthorizationKey", "value": "***"}
+    assert listed["configurationKey"][0] == {"key": "authorizationkey", "readonly": False, "value": "***"}
+
+
+def test_other_configuration_values_stay_visible():
+    payload = {"key": "HeartbeatInterval", "value": "300"}
+    assert redact_payload(payload) == payload
