@@ -29,6 +29,8 @@ DEFAULT_MAX_CONNECTIONS = 8
 # A comment line this often keeps idle event streams open through proxies and reveals dead clients.
 PING_INTERVAL_SECONDS = 15
 PING = b": ping\n\n"
+# JSON is never sniffed as something else, and never cached: it is live state.
+JSON_HEADERS = (("X-Content-Type-Options", "nosniff"), ("Cache-Control", "no-store"))
 
 METHODS = frozenset({"GET", "POST"})
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -217,7 +219,7 @@ async def _write(writer: asyncio.StreamWriter, reply: Reply, reader: asyncio.Str
 
 
 def _as_json(response: Response) -> Content:
-    return Content(response.status, json.dumps(response.body).encode(), "application/json")
+    return Content(response.status, json.dumps(response.body).encode(), "application/json", JSON_HEADERS)
 
 
 async def _write_content(writer: asyncio.StreamWriter, content: Content) -> None:
