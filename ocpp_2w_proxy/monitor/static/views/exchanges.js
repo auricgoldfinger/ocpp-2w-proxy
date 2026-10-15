@@ -8,6 +8,7 @@ import { ExchangeFeed } from "../exchange_feed.js";
 import { buildHash, exchangesQuery, isHiddenHeartbeat, matchesFilters } from "../filters.js";
 import { html, setHtml } from "../html.js";
 import { bindFilterBar, syncFilterBar } from "./filter_controls.js";
+import { createSessionPanel } from "./session_panel.js";
 
 const TOP_SLACK_PX = 48;
 const LINKS_REFRESH_MS = 60_000;
@@ -18,6 +19,7 @@ const now = () => Date.now() / 1000;
 const SKELETON = html`<section class="exchanges">
 <div class="topology-wrap" data-part="topology" aria-label="Topology"></div>
 <div data-part="filters"></div>
+<div data-part="session"></div>
 <div class="list-status" data-part="pill-wrap"><button type="button" class="pill" data-part="pill" hidden></button></div>
 <div class="lanes" data-part="lanes">
 <div class="lanes-head-wrap" data-part="lane-head"></div>
@@ -30,6 +32,7 @@ export function mountExchanges(container, { api, live, config, navigate }) {
   setHtml(container, SKELETON);
   const part = (name) => container.querySelector(`[data-part="${name}"]`);
   const feed = new ExchangeFeed();
+  const sessionPanel = createSessionPanel(part("session"), { api });
   const actions = new Set(config.secondaries.flatMap((secondary) => secondary.forward_actions));
   let filters = null;
   let frozen = false;
@@ -172,6 +175,7 @@ export function mountExchanges(container, { api, live, config, navigate }) {
 
   function onExchange(summary) {
     actions.add(summary.action);
+    sessionPanel.exchangeArrived(summary);
     if (!matchesFilters(summary, filters, now())) {
       const unhidden = { ...filters, heartbeats: true };
       if (isHiddenHeartbeat(summary, filters) && matchesFilters(summary, unhidden, now()) && !feed.has(summary.id)) {
@@ -221,6 +225,7 @@ export function mountExchanges(container, { api, live, config, navigate }) {
     resync: () => {
       loadLinks();
       loadFirstPage();
+      sessionPanel.reload();
     },
   });
   const linksInterval = setInterval(loadLinks, LINKS_REFRESH_MS);
@@ -233,11 +238,13 @@ export function mountExchanges(container, { api, live, config, navigate }) {
       renderTopology();
       if (linksData === null) loadLinks();
       loadFirstPage();
+      sessionPanel.show(filters);
     },
     unmount() {
       unsubscribe();
       clearInterval(linksInterval);
       clearTimeout(linksTimer);
+      sessionPanel.dispose();
       window.removeEventListener("scroll", onScroll);
       container.removeEventListener("click", onClick);
       loadToken += 1;

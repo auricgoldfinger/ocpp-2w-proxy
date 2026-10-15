@@ -54,6 +54,11 @@ export function buildHash({ view = "exchanges", id = null, filters = DEFAULT_FIL
   return `#/${path}${query ? `?${query}` : ""}`;
 }
 
+/** The Exchanges list of transaction `tx` (the session view) with the other filters kept; "" clears it. */
+export function sessionHash(filters, tx) {
+  return buildHash({ view: "exchanges", filters: { ...filters, tx: tx === null || tx === undefined ? "" : String(tx) } });
+}
+
 /** Query string for GET /api/exchanges. */
 export function exchangesQuery(filters, { now, before = null, limit = 200 } = {}) {
   const params = new URLSearchParams();
