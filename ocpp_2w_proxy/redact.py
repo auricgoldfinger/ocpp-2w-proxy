@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from .ocpp import Call, CallError, CallResult, Message
 
-_ID_TAG_KEYS = frozenset({"idTag", "parentIdTag"})
 # Lower-case: configuration keys are matched case-insensitively, as in policy.py.
 _SECRET_CONFIG_KEYS = frozenset({"authorizationkey"})
 _VISIBLE_SUFFIX = 4
@@ -19,8 +20,47 @@ def mask(value: str) -> str:
     return _HIDDEN + value[-_VISIBLE_SUFFIX:]
 
 
+def mask_url_credentials(url: str) -> str:
+    """Hide the user and password of a URL; a URL with an ``@`` outside a parsable authority is hidden whole."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return _HIDDEN
+    _, at, host = parts.netloc.rpartition("@")
+    if at:
+        return urlunsplit(parts._replace(netloc=f"{_HIDDEN}@{host}"))
+    # e.g. a password containing "/" or a scheme-less "user:pass@host": fail closed.
+    return _HIDDEN if "@" in url else url
+
+
+def _mask_text(item: Any) -> Any:
+    return mask(item) if isinstance(item, str) else redact_payload(item)
+
+
+def _mask_url(item: Any) -> Any:
+    return mask_url_credentials(item) if isinstance(item, str) else redact_payload(item)
+
+
+def _hide(item: Any) -> str:
+    # DataTransfer data is vendor-defined and opaque, so nothing in it is known to be safe.
+    return _HIDDEN
+
+
+# Field name -> how its value is masked. Each name belongs to one OCPP 1.6 field, except "location",
+# which in MeterValues is a word like "Outlet" and passes unchanged.
+_FIELD_MASKS: dict[str, Callable[[Any], Any]] = {
+    "idTag": _mask_text,
+    "parentIdTag": _mask_text,
+    "iccid": _mask_text,
+    "imsi": _mask_text,
+    "location": _mask_url,
+    "data": _hide,
+}
+
+
 def redact_payload(value: Any) -> Any:
-    """Recursively copy a payload with every idTag / parentIdTag and secret configuration value masked."""
+    """Recursively copy a payload with card tags, SIM ids, URL credentials, DataTransfer data and secret
+    configuration values masked."""
     if isinstance(value, dict):
         secret_value = _is_secret_config_entry(value)
         return {
@@ -32,9 +72,7 @@ def redact_payload(value: Any) -> Any:
 
 
 def _redact_field(key: str, item: Any) -> Any:
-    if key in _ID_TAG_KEYS and isinstance(item, str):
-        return mask(item)
-    return redact_payload(item)
+    return _FIELD_MASKS.get(key, redact_payload)(item)
 
 
 def _is_secret_config_entry(entry: dict[str, Any]) -> bool:
