@@ -2,10 +2,12 @@
 
 import { genericCard } from "./generic.js";
 import { meterValuesCard } from "./meter_values.js";
+import { statusNotificationCard } from "./status_notification.js";
 import { startCard, stopCard } from "./transaction.js";
 
 const CARDS = {
   MeterValues: meterValuesCard,
+  StatusNotification: statusNotificationCard,
   StartTransaction: startCard,
   StopTransaction: stopCard,
 };
