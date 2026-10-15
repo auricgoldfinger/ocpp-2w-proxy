@@ -13,7 +13,6 @@ carries on with the next one.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sqlite3
 import time
@@ -22,6 +21,7 @@ from contextlib import suppress
 
 from ..log_throttle import LogThrottle
 from .batch_assembler import BatchAssembler, Routed
+from .compact_json import dumps_bytes
 from .db import write_batch
 from .events import EventKind
 from .gaps import GapDetector
@@ -29,6 +29,7 @@ from .live_hub import LiveHub
 from .loop_slice import SLICE_BUDGET, SLICE_MAX_ITEMS, LoopSlice
 from .message_rates import MessageRates
 from .not_sent import NotSentMap
+from .open_exchanges import TrackedExchange
 from .queries import rebuild_projections
 from .recorder_hub import RecorderHub
 from .rows import WriteBatch
@@ -145,9 +146,8 @@ class MonitorWriter:
             await self._observe_gaps()
             exchange_frames: list[bytes] = []
             if self._live.has_subscribers:
-                await self._sliced(
-                    assembler.changed(), lambda tracked: exchange_frames.append(_encode(assembler.summarize(tracked)))
-                )
+                live_frame = self._live_frame
+                await self._sliced(assembler.changed(), lambda changed: exchange_frames.append(live_frame(changed)))
             else:
                 await self._sliced(assembler.changed(), assembler.record)
             batch = assembler.take_batch()
@@ -164,6 +164,9 @@ class MonitorWriter:
         if kind in _FRAME_KINDS:
             self.rates.count(charger_id, peer, at)
         return self._assembler.correlate(raw)
+
+    def _live_frame(self, tracked: TrackedExchange) -> bytes:
+        return dumps_bytes(self._assembler.summarize(tracked))
 
     async def _sliced[T](self, items: Iterable[T], step: Callable[[T], object]) -> None:
         """``step`` every item, yielding to the loop whenever the current slice is spent."""
@@ -199,9 +202,9 @@ class MonitorWriter:
 
     async def _publish(self, batch: WriteBatch, exchange_frames: Sequence[bytes]) -> None:
         for gap in batch.gaps:
-            self._live.publish("gap", _encode(gap._asdict()))
+            self._live.publish("gap", dumps_bytes(gap._asdict()))
         for link in batch.links:
-            self._live.publish("link", _encode(link._asdict()))
+            self._live.publish("link", dumps_bytes(link._asdict()))
         await self._sliced(exchange_frames, lambda data: self._live.publish("exchange", data))
 
     def _dropped_batch(self, what: str) -> None:
@@ -211,10 +214,6 @@ class MonitorWriter:
     def _failed(self, message: str) -> None:
         if self._error_log.ready():
             logger.exception(message)
-
-
-def _encode(body: object) -> bytes:
-    return json.dumps(body, separators=(",", ":")).encode()
 
 
 def _chunks[T](items: Sequence[T], size: int) -> Iterable[Sequence[T]]:
