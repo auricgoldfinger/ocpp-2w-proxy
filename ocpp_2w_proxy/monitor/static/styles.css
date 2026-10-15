@@ -890,6 +890,22 @@ body.drawer-open {
   white-space: nowrap;
 }
 
+.card__subhead {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: 0.8125rem;
+}
+
+.boot-card__name {
+  margin: 0 0 var(--space-2);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.figure .badge {
+  align-self: start;
+  font-size: 0.9375rem;
+}
+
 .status-card__state {
   display: flex;
   flex-wrap: wrap;

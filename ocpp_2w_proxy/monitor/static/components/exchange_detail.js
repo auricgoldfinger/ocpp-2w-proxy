@@ -95,7 +95,7 @@ function section(id, title, body) {
 export function exchangeDetail({ detail, lanes, session = null, now }) {
   return html`${header(detail)}
 ${section("d-sequence", "Sequence", html`<div class="sequence-scroll">${sequenceDiagram(detail, lanes)}</div>`)}
-${section("d-payload", "Payload", renderCard(detail.action, detail.payload, { session, now }))}
+${section("d-payload", "Payload", renderCard(detail.action, detail.payload, { detail, session, now }))}
 ${section("d-legs", "Legs", legsTable(detail, now))}
 ${section("d-decisions", "Decisions", decisionsList(detail.decisions))}
 ${section("d-diff", "Legs compared with the origin", legDiffs(detail))}
