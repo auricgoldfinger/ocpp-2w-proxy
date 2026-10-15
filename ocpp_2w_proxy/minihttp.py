@@ -129,7 +129,7 @@ class _Connections:
         except HttpError as exc:
             return _error(exc)
         except Exception:
-            logger.exception("debug request %s %s failed", request.method, request.path)
+            logger.exception("http request %s %s failed", request.method, request.path)
             return _error(HttpError(500, "internal_error", "the request could not be handled"))
 
 
