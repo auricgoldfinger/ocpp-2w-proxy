@@ -12,7 +12,7 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Any
@@ -26,6 +26,9 @@ MAX_BODY_BYTES = 64 * 1024
 MAX_QUERY_FIELDS = 32
 READ_TIMEOUT_SECONDS = 10
 DEFAULT_MAX_CONNECTIONS = 8
+# A comment line this often keeps idle event streams open through proxies and reveals dead clients.
+PING_INTERVAL_SECONDS = 15
+PING = b": ping\n\n"
 
 METHODS = frozenset({"GET", "POST"})
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -57,7 +60,18 @@ class Content:
     headers: tuple[tuple[str, str], ...] = ()  # extra (name, value) pairs, e.g. security headers
 
 
-Reply = Response | Content
+@dataclass(frozen=True)
+class EventStream:
+    """A Server-Sent Events response: each chunk from `source` is written as is, until it ends.
+
+    The stream also ends when the client goes away, and then `source` is cancelled or closed, so a
+    generator's `finally` runs. Close lingering streams on shutdown with `asyncio.Server.close_clients()`.
+    """
+
+    source: AsyncIterator[bytes]
+
+
+Reply = Response | Content | EventStream
 Handler = Callable[[Request], Awaitable[Reply]]
 
 
@@ -87,11 +101,13 @@ class _Connections:
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             if self._open >= self._max_connections:
-                await _write(writer, _error(HttpError(503, "too_many_connections", "too many open connections")))
+                await _write(
+                    writer, _error(HttpError(503, "too_many_connections", "too many open connections")), reader
+                )
                 return
             self._open += 1
             try:
-                await _write(writer, await self._respond(reader))
+                await _write(writer, await self._respond(reader), reader)
             finally:
                 self._open -= 1
         except ConnectionError, asyncio.IncompleteReadError:
@@ -190,12 +206,14 @@ def _error(error: HttpError) -> Response:
     return Response(error.status, {"error": error.code, "message": error.message})
 
 
-async def _write(writer: asyncio.StreamWriter, reply: Reply) -> None:
+async def _write(writer: asyncio.StreamWriter, reply: Reply, reader: asyncio.StreamReader) -> None:
     match reply:
         case Response():
             await _write_content(writer, _as_json(reply))
         case Content():
             await _write_content(writer, reply)
+        case EventStream():
+            await _write_event_stream(writer, reply.source, reader)
 
 
 def _as_json(response: Response) -> Content:
@@ -214,3 +232,56 @@ async def _write_content(writer: asyncio.StreamWriter, content: Content) -> None
     )
     writer.write(head.encode("ascii") + content.body)
     await writer.drain()
+
+
+async def _write_event_stream(
+    writer: asyncio.StreamWriter, source: AsyncIterator[bytes], reader: asyncio.StreamReader
+) -> None:
+    writer.write(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+    )
+    await writer.drain()
+    client_gone = asyncio.create_task(_until_closed(reader))
+    pending: asyncio.Task[bytes | None] | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.create_task(_next_chunk(source))
+            await asyncio.wait({pending, client_gone}, timeout=PING_INTERVAL_SECONDS, return_when="FIRST_COMPLETED")
+            if client_gone.done():
+                return
+            if pending.done():
+                chunk, pending = pending.result(), None
+                if chunk is None:
+                    return
+                writer.write(chunk)
+            else:
+                writer.write(PING)
+            await writer.drain()
+    finally:
+        client_gone.cancel()
+        await _stop(source, pending)
+
+
+async def _until_closed(reader: asyncio.StreamReader) -> None:
+    while await reader.read(1024):
+        pass  # a client has nothing more to say on an event stream; discard it
+
+
+async def _next_chunk(source: AsyncIterator[bytes]) -> bytes | None:
+    """The next chunk, or None once the source has ended (or failed, which is logged)."""
+    try:
+        return await anext(source, None)
+    except Exception:
+        logger.exception("event stream source failed")
+        return None
+
+
+async def _stop(source: AsyncIterator[bytes], pending: asyncio.Task[bytes | None] | None) -> None:
+    """Let the source clean up: cancel a read in progress, or close a generator suspended at a yield."""
+    if pending is not None and not pending.done():
+        pending.cancel()
+        return
+    aclose = getattr(source, "aclose", None)
+    if aclose is not None:
+        await aclose()
