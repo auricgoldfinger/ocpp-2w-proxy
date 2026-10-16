@@ -11,15 +11,15 @@ const session = () => loadFixture("session");
 test("unknown actions fall back to the generic card", () => {
   const markup = String(renderCard("DataTransfer", { vendorId: "KEBA", data: " 1.20" }));
   assert.match(markup, /card--generic/);
-  assert.match(markup, /<dt>vendorId<\/dt><dd><span class="kv-str">KEBA<\/span><\/dd>/);
+  assert.match(markup, /<dt title="vendorId">vendor<\/dt><dd><span class="kv-str">KEBA<\/span><\/dd>/);
   assert.match(markup, /<span class="kv-num">1.2<\/span>/, "numeric strings are trimmed");
 });
 
 test("the generic card renders nested arrays, empties and nulls", () => {
   const markup = String(renderCard("X", { list: [{ a: null }], none: [], obj: {} }));
-  assert.match(markup, /<ol class="kv-list" start="0"><li><dl class="kv"><dt>a<\/dt><dd><span class="kv-null">null<\/span>/);
-  assert.match(markup, /<dt>none<\/dt><dd><span class="kv-null">\[ \]<\/span>/);
-  assert.match(markup, /<dt>obj<\/dt><dd><span class="kv-null">\{ \}<\/span>/);
+  assert.match(markup, /<ol class="kv-list" start="0"><li><dl class="kv"><dt title="a">a<\/dt><dd><span class="kv-null">null<\/span>/);
+  assert.match(markup, /<dt title="none">none<\/dt><dd><span class="kv-null">\[ \]<\/span>/);
+  assert.match(markup, /<dt title="obj">obj<\/dt><dd><span class="kv-null">\{ \}<\/span>/);
 });
 
 test("payload keys and values are escaped", () => {
