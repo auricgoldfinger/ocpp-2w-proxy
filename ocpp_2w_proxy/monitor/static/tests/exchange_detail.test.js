@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { decisionsList, exchangeDetail, legDiffs, legsTable, rawJsonText } from "../components/exchange_detail.js";
+import { decisionsList, exchangeDetail, legsTable, rawJsonText } from "../components/exchange_detail.js";
 import { lanesFor } from "../components/swimlane_model.js";
 import { exchangeById, loadFixture } from "./fixture_loader.js";
 
@@ -33,13 +33,6 @@ test("decisions show code and human text", () => {
   const markup = String(decisionsList(detail().decisions));
   assert.match(markup, /<span class="tag">QUEUED<\/span> Queued for primary during an outage; acknowledged locally/);
   assert.match(String(decisionsList([])), /no decisions/);
-});
-
-test("the diff compares each outgoing call with the origin", () => {
-  const markup = String(legDiffs(detail()));
-  assert.match(markup, /→ homeassistant.*<tr class="diff--changed"><th scope="row" class="mono">transactionId<\/th><td>changed<\/td><td class="mono diff__from">10216<\/td><td class="mono diff__to">1791822333<\/td>/s);
-  assert.match(markup, /→ stats.*<tr class="diff--removed"><th scope="row" class="mono">transactionId<\/th>/s);
-  assert.match(markup, /→ primary.*Identical to the origin/s);
 });
 
 test("raw JSON is the whole detail, escaped in the drawer", () => {

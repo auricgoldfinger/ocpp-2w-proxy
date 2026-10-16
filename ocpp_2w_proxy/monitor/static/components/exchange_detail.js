@@ -1,10 +1,10 @@
 // Markup of the exchange detail drawer. Pure: the GET /api/exchanges/{id} body in, SafeHtml out.
 
 import { renderCard } from "../cards/index.js";
-import { diffPaths } from "../diff.js";
 import { formatDateTime, formatLatency, formatTime } from "../format.js";
 import { html } from "../html.js";
 import { notSentView, outcomeView } from "./badge.js";
+import { legDiffs } from "./leg_diff.js";
 import { sequenceDiagram } from "./sequence.js";
 import { badge, rewriteChip, txLink } from "./swimlane.js";
 import { replyTags, rewriteChips } from "./swimlane_model.js";
@@ -62,28 +62,6 @@ export function decisionsList(decisions) {
     return html`<li><span class="mono muted">${formatTime(decision.at)}</span> <span class="tag">${decision.reason}</span> ${decision.text}${detailText}</li>`;
   });
   return html`<ol class="decisions">${items}</ol>`;
-}
-
-function showJson(value) {
-  return value === undefined ? "–" : JSON.stringify(value);
-}
-
-function legDiff(frame, origin) {
-  const title = html`<h4>→ ${frame.peer} <span class="mono muted">${frame.wire_id ?? ""}</span></h4>`;
-  if (frame.same_as_origin) return html`${title}<p class="muted">Identical to the origin.</p>`;
-  const changes = diffPaths(origin, frame.payload);
-  if (changes.length === 0) return html`${title}<p class="muted">Equal to the origin.</p>`;
-  const rows = changes.map(
-    (change) => html`<tr class="diff--${change.kind}"><th scope="row" class="mono">${change.path}</th><td>${change.kind}</td><td class="mono diff__from">${showJson(change.from)}</td><td class="mono diff__to">${showJson(change.to)}</td></tr>`,
-  );
-  return html`${title}<div class="table-scroll"><table class="diff"><thead><tr><th scope="col">path</th><th scope="col">change</th><th scope="col">origin</th><th scope="col">this leg</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-/** Each outgoing call compared with the origin payload. */
-export function legDiffs(detail) {
-  const calls = detail.frames.filter((frame) => frame.dir === "out" && frame.msg_type === "call");
-  if (calls.length === 0) return html`<p class="muted">No calls were sent on.</p>`;
-  return html`${calls.map((frame) => legDiff(frame, detail.payload))}`;
 }
 
 /** Pretty JSON of the whole detail, for the copy button. */
