@@ -105,7 +105,7 @@ test("a proxy-made exchange has no requester to answer", () => {
 
 test("blocks point at their frames for the sequence arrows", () => {
   const markup = fromFixture("exchange_detail");
-  for (const index of [0, 1, 2, 6, 7]) assert.match(markup, new RegExp(`data-frame-target="${index}" tabindex="-1"`));
+  for (const index of [0, 1, 2, 6, 7]) assert.match(markup, new RegExp(`data-frame-target="${index}" data-key="frame-${index}" tabindex="-1"`));
 });
 
 test("the readable view holds no JSON", () => {

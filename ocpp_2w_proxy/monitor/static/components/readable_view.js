@@ -21,7 +21,7 @@ function section(id, title, body) {
 
 /** A focusable target for the sequence arrow of frame `index`; no target without a frame. */
 function frameTarget(entry) {
-  return entry ? html` data-frame-target="${entry.index}" tabindex="-1"` : "";
+  return entry ? html` data-frame-target="${entry.index}" data-key="frame-${entry.index}" tabindex="-1"` : "";
 }
 
 function decisionItems(decisions) {

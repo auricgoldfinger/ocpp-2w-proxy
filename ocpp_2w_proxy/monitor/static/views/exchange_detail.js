@@ -13,6 +13,7 @@ import { captureDrawerState, restoreDrawerState } from "./drawer_state.js";
 import { createViewMode, modeForKey } from "./view_mode.js";
 
 const LIVE_RELOAD_MS = 500;
+const TARGET_HIGHLIGHT_MS = 1600;
 const FOCUSABLE = "a[href], button:not([disabled]), input, select, [tabindex]:not([tabindex='-1'])";
 
 function titleBar(title, subtitle) {
@@ -102,6 +103,16 @@ export function createDetailDrawer({ api, live, config, navigate }) {
     }
   }
 
+  // A sequence arrow jumps to the Readable block of its frame and outlines it for a moment.
+  function jumpToFrame(index) {
+    const target = drawer.querySelector(`[data-frame-target="${CSS.escape(index)}"]`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+    target.classList.add("is-frame-target");
+    setTimeout(() => target.classList.remove("is-frame-target"), TARGET_HIGHLIGHT_MS);
+  }
+
   function trapFocus(event) {
     const items = [...drawer.querySelectorAll(FOCUSABLE)];
     if (items.length === 0) return;
@@ -122,10 +133,14 @@ export function createDetailDrawer({ api, live, config, navigate }) {
     if (action === "copy" && shown) copy(control.dataset.copy);
     const view = event.target.closest("[data-view]")?.dataset.view;
     if (view) selectView(view);
+    const frame = event.target.closest("[data-frame]")?.dataset.frame;
+    if (frame !== undefined) jumpToFrame(frame);
   });
   drawer.addEventListener("keydown", (event) => {
     if (event.key === "Escape") close();
     if (event.key === "Tab") trapFocus(event);
+    const frame = event.target.closest?.("[data-frame]")?.dataset.frame;
+    if (event.key === "Enter" && frame !== undefined) jumpToFrame(frame);
     const next = event.target.closest?.('[role="tab"]') ? modeForKey(event.key, viewMode.mode) : null;
     if (next) {
       event.preventDefault();

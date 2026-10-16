@@ -39,3 +39,10 @@ test("only participants that took part are drawn", () => {
   assert.deepEqual(actors(svg), ["proxy", "homeassistant"]);
   assert.match(svg, /No frames recorded/);
 });
+
+test("each arrow is a keyboard link to its frame", () => {
+  const svg = String(sequenceDiagram(detail(), lanes));
+  const frames = [...svg.matchAll(/<g class="seq-msg [^"]*" data-frame="(\d+)" data-key="seq-\d+" tabindex="0" role="link">/g)].map((match) => Number(match[1]));
+  assert.deepEqual([...frames].sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.match(svg, /<svg class="sequence"[^>]*role="group"/, "a group, so its links are not hidden as an image");
+});
