@@ -34,6 +34,13 @@
   --tone-up: var(--oi-green);
   --tone-down: var(--oi-vermillion);
 
+  --json-key: #005a8c;
+  --json-str: #1d6b2f;
+  --json-num: #8a4500;
+  --json-bool: #7a3a8f;
+  --json-null: var(--fg-muted);
+  --json-punct: var(--fg-muted);
+
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -59,6 +66,10 @@
     --link: var(--oi-sky);
     --tone-delivered: var(--oi-sky);
     --tone-queued: var(--oi-yellow);
+    --json-key: #7cc4f0;
+    --json-str: #8fd19e;
+    --json-num: #f0b860;
+    --json-bool: #e0a3d0;
     color-scheme: dark;
   }
 }
@@ -75,6 +86,10 @@
   --link: var(--oi-sky);
   --tone-delivered: var(--oi-sky);
   --tone-queued: var(--oi-yellow);
+  --json-key: #7cc4f0;
+  --json-str: #8fd19e;
+  --json-num: #f0b860;
+  --json-bool: #e0a3d0;
   color-scheme: dark;
 }
 
@@ -1067,6 +1082,32 @@ thead th {
   border-radius: var(--radius);
   font-family: var(--mono);
   font-size: 0.75rem;
+}
+
+/* JSON tokens (components/json_highlight.js); each colour is at least 4.5:1 on --surface-2. */
+.j-key {
+  color: var(--json-key);
+}
+
+.j-str {
+  color: var(--json-str);
+}
+
+.j-num {
+  color: var(--json-num);
+}
+
+.j-bool {
+  color: var(--json-bool);
+}
+
+.j-null {
+  color: var(--json-null);
+  font-style: italic;
+}
+
+.j-punct {
+  color: var(--json-punct);
 }
 
 /* ---- links view ---- */
