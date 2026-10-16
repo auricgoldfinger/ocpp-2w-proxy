@@ -123,3 +123,15 @@ test("keys unknown to the charger are listed", () => {
   frame.payload.unknownKey = [];
   assert.ok(!String(responseView("GetConfiguration", frame)).includes("Unknown to the charger"));
 });
+
+test("a StartTransaction reply without idTagInfo still shows its transaction", () => {
+  const markup = view("StartTransaction", { transactionId: 42 });
+  assert.match(markup, /<dt>transaction<\/dt><dd>42<\/dd>/);
+  assert.ok(!markup.includes("Unexpected"));
+});
+
+test("structured DataTransfer data is a tree, not [object Object]", () => {
+  const markup = view("DataTransfer", { status: "Accepted", data: { level: 3 } });
+  assert.match(markup, /<dt title="level">level<\/dt>/);
+  assert.ok(!markup.includes("[object Object]"));
+});

@@ -46,9 +46,23 @@ test("a backend origin's request and reply are that backend's frames", () => {
   assert.deepEqual(indexes(story.legs[0].replies), [2]);
 });
 
+test("the story tells every frame of the fixtures", () => {
+  for (const name of ["exchange_detail", "call_error_detail", "change_configuration_detail", "meter_values_fanout_detail"]) {
+    const detail = loadFixture(name);
+    assert.deepEqual([...exchangeStory(detail).told].sort((a, b) => a - b), detail.frames.map((_, index) => index), name);
+  }
+});
+
+test("a frame the story does not tell is left out of `told`", () => {
+  const detail = loadFixture("change_configuration_detail");
+  detail.frames.push({ ...detail.frames[1], at: detail.frames[1].at + 1 });
+  assert.ok(!exchangeStory(detail).told.has(4), "a second call to the same peer");
+});
+
 test("a proxy or debug origin has no requester", () => {
   for (const origin of ["proxy", "debug"]) {
     const story = exchangeStory({ ...loadFixture("change_configuration_detail"), origin });
+    assert.equal(story.hasRequester, false);
     assert.equal(story.request, null);
     assert.equal(story.requesterReply, null);
   }

@@ -7,7 +7,11 @@ const BUILDERS = {
   error: (frame) => [4, frame.wire_id, frame.error?.code ?? "", frame.error?.description ?? "", frame.payload ?? {}],
 };
 
-/** [2, id, action, payload], [3, id, payload] or [4, id, code, description, details]. */
+/**
+ * [2, id, action, payload], [3, id, payload] or [4, id, code, description, details]; a frame of
+ * a type the UI does not know yet is shown as [type, id, payload] rather than failing the view.
+ */
 export function ocppArray(frame, action) {
-  return BUILDERS[frame.msg_type](frame, action);
+  const build = BUILDERS[frame.msg_type] ?? ((unknown) => [unknown.msg_type, unknown.wire_id, unknown.payload]);
+  return build(frame, action);
 }

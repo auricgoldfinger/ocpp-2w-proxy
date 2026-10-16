@@ -13,8 +13,6 @@ import { sequenceDiagram } from "./sequence.js";
 import { badge, rewriteChip } from "./swimlane.js";
 import { replyTags, rewriteChips } from "./swimlane_model.js";
 
-const PROXY_ORIGINS = new Set(["proxy", "debug"]);
-
 function section(id, title, body) {
   return html`<section class="detail-section story" aria-labelledby="${id}"><h3 id="${id}">${title}</h3>${body}</section>`;
 }
@@ -92,9 +90,9 @@ function requesterBody(story, action) {
 export function readableView({ detail, lanes, session = null, now, txHref = null }) {
   const story = exchangeStory(detail);
   const context = { startedAt: detail.started_at, incomplete: detail.incomplete, now };
-  const fromProxy = PROXY_ORIGINS.has(detail.origin);
+  const fromProxy = !story.hasRequester;
   const requester = fromProxy ? "" : section("r-back", `3 · What ${detail.origin} got back`, requesterBody(story, detail.action));
-  return html`${section("r-sequence", "Sequence", html`<div class="sequence-scroll" data-key="sequence">${sequenceDiagram(detail, lanes)}</div>`)}
+  return html`${section("r-sequence", "Sequence", html`<div class="sequence-scroll" data-key="sequence">${sequenceDiagram(detail, lanes, story.told)}</div>`)}
 ${section("r-request", fromProxy ? `1 · Request from the ${detail.origin}` : `1 · Request from ${detail.origin}`, requestBody(story, detail, session, now))}
 ${section("r-legs", fromProxy ? "2 · Sent to" : "2 · Forwarded to", legsBody(story, detail, context, txHref))}
 ${requester}`;

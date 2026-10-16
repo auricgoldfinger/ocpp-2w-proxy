@@ -2,7 +2,8 @@
 // answered, and what the requester got back. Frames keep their index in `detail.frames` so the
 // views can link a block to its arrow in the sequence diagram.
 
-const PROXY_ORIGINS = new Set(["proxy", "debug"]);
+import { PROXY_ORIGINS } from "./swimlane_model.js";
+
 const REPLY_TYPES = new Set(["result", "error"]);
 
 function indexed(frames) {
@@ -20,20 +21,30 @@ function legStory(leg, frames, decisions) {
   };
 }
 
+// The indexes of the frames the story tells, so only their arrows link to a block.
+function toldFrames({ request, legs, requesterReply }) {
+  const entries = [request, requesterReply, ...legs.flatMap((leg) => [leg.call, ...leg.replies])];
+  return new Set(entries.filter(Boolean).map((entry) => entry.index));
+}
+
 /**
- * {request, legs: [{peer, leg, call, replies, decisions}], notSent, requesterReply, otherDecisions};
- * `request`, `call` and each reply are {frame, index} or null. A proxy or debug origin has no
- * requester. `otherDecisions` are those about a peer without a leg (the requester, say).
+ * {hasRequester, request, legs: [{peer, leg, call, replies, decisions}], notSent, requesterReply,
+ * otherDecisions, told}; `request`, `call` and each reply are {frame, index} or null. A proxy or
+ * debug origin has no requester. `otherDecisions` are those about a peer without a leg (the
+ * requester, say); `told` is the set of frame indexes the story shows.
  */
 export function exchangeStory(detail) {
   const frames = indexed(detail.frames);
   const legPeers = new Set(detail.legs.map((leg) => leg.peer));
-  const fromRequester = PROXY_ORIGINS.has(detail.origin) ? [] : frames.filter(({ frame }) => frame.peer === detail.origin);
-  return {
+  const hasRequester = !PROXY_ORIGINS.has(detail.origin);
+  const fromRequester = hasRequester ? frames.filter(({ frame }) => frame.peer === detail.origin) : [];
+  const story = {
+    hasRequester,
     request: fromRequester.find(({ frame }) => frame.dir === "in" && frame.msg_type === "call") ?? null,
     legs: detail.legs.map((leg) => legStory(leg, frames, detail.decisions)),
     notSent: detail.not_sent,
     requesterReply: fromRequester.find(({ frame }) => frame.dir === "out" && REPLY_TYPES.has(frame.msg_type)) ?? null,
     otherDecisions: detail.decisions.filter((decision) => !legPeers.has(decision.peer)),
   };
+  return { ...story, told: toldFrames(story) };
 }

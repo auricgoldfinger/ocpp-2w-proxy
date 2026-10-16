@@ -23,3 +23,7 @@ test("an error is [4, id, code, description, details]", () => {
 test("an error without code, description or details still has five slots", () => {
   assert.deepEqual(ocppArray(frame({ msg_type: "error", payload: null, error: null }), "Reset"), [4, "b7-25", "", "", {}]);
 });
+
+test("an unknown frame type is shown as [type, id, payload]", () => {
+  assert.deepEqual(ocppArray(frame({ msg_type: "callresulterror", payload: { a: 1 } }), "Reset"), ["callresulterror", "b7-25", { a: 1 }]);
+});

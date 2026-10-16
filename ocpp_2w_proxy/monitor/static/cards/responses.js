@@ -30,19 +30,25 @@ function status(frame) {
   return html`<p class="reply-status">${statusPill(frame.payload?.status)}</p>`;
 }
 
-/** Authorize, StartTransaction and StopTransaction: the idTag's status and what came with it. */
+/**
+ * Authorize, StartTransaction and StopTransaction: the idTag's status and what came with it. A
+ * StopTransaction reply may leave idTagInfo out, which acknowledges the stop.
+ */
 function idTagInfo(frame) {
   const info = frame.payload?.idTagInfo;
-  if (!info) return acknowledged(frame);
-  return html`<p class="reply-status">${statusPill(info.status)}</p>${facts([
+  if (!info && isEmpty(frame.payload)) return acknowledged(frame);
+  const pill = info ? html`<p class="reply-status">${statusPill(info.status)}</p>` : "";
+  return html`${pill}${facts([
     ["transaction", frame.payload.transactionId],
-    ["expires", info.expiryDate && formatIsoDateTime(info.expiryDate)],
-    ["parent idTag", info.parentIdTag],
+    ["expires", info?.expiryDate && formatIsoDateTime(info.expiryDate)],
+    ["parent idTag", info?.parentIdTag],
   ])}`;
 }
 
+// DataTransfer's data is vendor-defined: usually text, sometimes a structure.
 function dataTransfer(frame) {
-  return html`${status(frame)}${facts([["data", frame.payload?.data]])}`;
+  const data = frame.payload?.data;
+  return html`${status(frame)}${data !== null && typeof data === "object" ? payloadTree(data) : facts([["data", data]])}`;
 }
 
 // GetLocalListVersion's special versions: the charger has no local list support, or no list.

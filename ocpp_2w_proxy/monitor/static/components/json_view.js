@@ -18,7 +18,7 @@ export function frameHeading(detail, index) {
   const frame = detail.frames[index];
   const [from, to] = frame.dir === "in" ? [frame.peer, "proxy"] : ["proxy", frame.peer];
   const offset = formatDuration(frame.at - detail.frames[0].at);
-  return `${index + 1} · ${from} → ${to} · ${TYPE_NAMES[frame.msg_type]} · ${frame.wire_id ?? "–"} · +${offset}`;
+  return `${index + 1} · ${from} → ${to} · ${TYPE_NAMES[frame.msg_type] ?? frame.msg_type} · ${frame.wire_id ?? "–"} · +${offset}`;
 }
 
 function frameJson(detail, index) {
