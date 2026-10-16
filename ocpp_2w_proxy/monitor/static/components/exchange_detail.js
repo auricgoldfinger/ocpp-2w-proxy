@@ -5,6 +5,13 @@ import { html } from "../html.js";
 import { jsonView } from "./json_view.js";
 import { readableView } from "./readable_view.js";
 import { txLink } from "./swimlane.js";
+import { viewPanel } from "./view_tabs.js";
+
+// Only the active view is built, so a live reload never renders the hidden one.
+const PANELS = {
+  readable: readableView,
+  json: ({ detail }) => jsonView(detail),
+};
 
 function originText(detail) {
   if (detail.origin === "proxy") return `proxy (${detail.proxy_kind})`;
@@ -28,7 +35,10 @@ function header(detail, txHref) {
   return html`<dl class="facts">${facts.map(([label, value]) => html`<div><dt>${label}</dt><dd>${value}</dd></div>`)}</dl>${incomplete}`;
 }
 
-/** Everything inside the drawer below its title bar; `txHref` (optional) links to the session. */
-export function exchangeDetail({ detail, lanes, session = null, now, txHref = null }) {
-  return html`${header(detail, txHref)}${readableView({ detail, lanes, session, now, txHref })}${jsonView(detail)}`;
+/**
+ * The drawer body: the facts, then the `mode` view ("readable" or "json") in its tab panel.
+ * `txHref` (optional) links to the session.
+ */
+export function exchangeDetail({ mode = "readable", ...context }) {
+  return html`${header(context.detail, context.txHref)}${viewPanel(mode, PANELS[mode](context))}`;
 }

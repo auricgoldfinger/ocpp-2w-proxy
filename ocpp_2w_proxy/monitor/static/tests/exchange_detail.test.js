@@ -11,10 +11,22 @@ const detail = () => loadFixture("exchange_detail");
 const lanes = lanesFor(loadFixture("config"));
 const now = 1760534700;
 
+test("the drawer shows only the active view in its panel", () => {
+  const readable = String(exchangeDetail({ detail: detail(), lanes, now }));
+  assert.match(readable, /<div role="tabpanel" class="view-panel" id="drawer-panel-readable"/);
+  assert.match(readable, /<svg class="sequence"/);
+  assert.ok(!readable.includes("json-view"));
+  const json = String(exchangeDetail({ detail: detail(), lanes, now, mode: "json" }));
+  assert.match(json, /id="drawer-panel-json"/);
+  assert.match(json, /<pre class="json-view"/);
+  assert.ok(!json.includes("<svg"));
+  assert.match(json, /<dt>charger<\/dt>/, "the facts stay on top of both views");
+});
+
 test("payload text is escaped in the drawer", () => {
   const evil = { ...detail(), headline: "</code><script>x</script>" };
   evil.frames[0].payload = { idTag: "<script>y</script>" };
-  assert.ok(!String(exchangeDetail({ detail: evil, lanes, now })).includes("<script>"));
+  for (const mode of ["readable", "json"]) assert.ok(!String(exchangeDetail({ detail: evil, lanes, now, mode })).includes("<script>"));
 });
 
 test("the transaction and the ⇄tx chips link to the session", () => {
