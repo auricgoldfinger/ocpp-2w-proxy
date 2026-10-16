@@ -4,6 +4,7 @@ import { renderCard } from "../cards/index.js";
 import { formatDateTime, formatLatency, formatTime } from "../format.js";
 import { html } from "../html.js";
 import { notSentView, outcomeView } from "./badge.js";
+import { rawJsonText } from "./json_view.js";
 import { legDiffs } from "./leg_diff.js";
 import { sequenceDiagram } from "./sequence.js";
 import { badge, rewriteChip, txLink } from "./swimlane.js";
@@ -64,11 +65,6 @@ export function decisionsList(decisions) {
   return html`<ol class="decisions">${items}</ol>`;
 }
 
-/** Pretty JSON of the whole detail, for the copy button. */
-export function rawJsonText(detail) {
-  return JSON.stringify(detail, null, 2);
-}
-
 function section(id, title, body) {
   return html`<section class="detail-section" aria-labelledby="${id}"><h3 id="${id}">${title}</h3>${body}</section>`;
 }
@@ -81,5 +77,5 @@ ${section("d-payload", "Payload", renderCard(detail.action, detail.payload, { de
 ${section("d-legs", "Legs", legsTable(detail, now, txHref))}
 ${section("d-decisions", "Decisions", decisionsList(detail.decisions))}
 ${section("d-diff", "Legs compared with the origin", legDiffs(detail))}
-${section("d-raw", "Raw JSON", html`<button type="button" class="button" data-action="copy">Copy JSON</button> <span class="muted" data-part="copy-status" data-key="copy-status" role="status"></span><pre class="raw-json"><code>${rawJsonText(detail)}</code></pre>`)}`;
+${section("d-raw", "Raw JSON", html`<button type="button" class="button" data-action="copy" data-copy="record">Copy JSON</button> <span class="muted" data-part="copy-status" data-key="copy-status" role="status"></span><pre class="raw-json" data-copy-source="record"><code>${rawJsonText(detail)}</code></pre>`)}`;
 }

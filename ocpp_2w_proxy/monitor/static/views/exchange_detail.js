@@ -3,7 +3,8 @@
 // navigating back to the list so the URL always says what is open.
 
 import { wantsSession } from "../cards/index.js";
-import { exchangeDetail, rawJsonText } from "../components/exchange_detail.js";
+import { exchangeDetail } from "../components/exchange_detail.js";
+import { copyText } from "../components/json_view.js";
 import { lanesFor } from "../components/swimlane_model.js";
 import { sessionHash } from "../filters.js";
 import { html, setHtml } from "../html.js";
@@ -67,14 +68,18 @@ export function createDetailDrawer({ api, live, config, navigate }) {
     if (!quiet) drawer.querySelector("#drawer-title")?.focus();
   }
 
-  async function copy() {
+  // `target` is a frame index, "all" or "record" (see copyText); without clipboard access the
+  // matching block is selected instead, for Ctrl+C.
+  async function copy(target) {
     const status = drawer.querySelector('[data-part="copy-status"]');
     try {
-      await navigator.clipboard.writeText(rawJsonText(detail));
+      await navigator.clipboard.writeText(copyText(detail, target));
       status.textContent = "Copied.";
     } catch {
+      const source = drawer.querySelector(`[data-copy-source="${CSS.escape(target)}"]`);
+      if (!source) return;
       const range = document.createRange();
-      range.selectNodeContents(drawer.querySelector(".raw-json"));
+      range.selectNodeContents(source);
       getSelection().removeAllRanges();
       getSelection().addRange(range);
       status.textContent = "Selected; press Ctrl+C to copy.";
@@ -95,9 +100,10 @@ export function createDetailDrawer({ api, live, config, navigate }) {
   }
 
   drawer.addEventListener("click", (event) => {
-    const action = event.target.closest("[data-action]")?.dataset.action;
+    const control = event.target.closest("[data-action]");
+    const action = control?.dataset.action;
     if (action === "close") close();
-    if (action === "copy" && detail) copy();
+    if (action === "copy" && detail) copy(control.dataset.copy);
   });
   drawer.addEventListener("keydown", (event) => {
     if (event.key === "Escape") close();

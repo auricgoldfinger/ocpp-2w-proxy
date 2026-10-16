@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { decisionsList, exchangeDetail, legsTable, rawJsonText } from "../components/exchange_detail.js";
+import { decisionsList, exchangeDetail, legsTable } from "../components/exchange_detail.js";
+import { rawJsonText } from "../components/json_view.js";
 import { lanesFor } from "../components/swimlane_model.js";
 import { exchangeById, loadFixture } from "./fixture_loader.js";
 
