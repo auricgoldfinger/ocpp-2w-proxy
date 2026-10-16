@@ -103,5 +103,5 @@ ${section("d-payload", "Payload", renderCard(detail.action, detail.payload, { de
 ${section("d-legs", "Legs", legsTable(detail, now, txHref))}
 ${section("d-decisions", "Decisions", decisionsList(detail.decisions))}
 ${section("d-diff", "Legs compared with the origin", legDiffs(detail))}
-${section("d-raw", "Raw JSON", html`<button type="button" class="button" data-action="copy">Copy JSON</button> <span class="muted" data-part="copy-status" role="status"></span><pre class="raw-json"><code>${rawJsonText(detail)}</code></pre>`)}`;
+${section("d-raw", "Raw JSON", html`<button type="button" class="button" data-action="copy">Copy JSON</button> <span class="muted" data-part="copy-status" data-key="copy-status" role="status"></span><pre class="raw-json"><code>${rawJsonText(detail)}</code></pre>`)}`;
 }

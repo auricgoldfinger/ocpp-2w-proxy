@@ -7,12 +7,13 @@ import { exchangeDetail, rawJsonText } from "../components/exchange_detail.js";
 import { lanesFor } from "../components/swimlane_model.js";
 import { sessionHash } from "../filters.js";
 import { html, setHtml } from "../html.js";
+import { captureDrawerState, restoreDrawerState } from "./drawer_state.js";
 
 const LIVE_RELOAD_MS = 500;
 const FOCUSABLE = "a[href], button:not([disabled]), input, select, [tabindex]:not([tabindex='-1'])";
 
 function titleBar(title, subtitle) {
-  return html`<div class="drawer__bar"><div class="drawer__titles"><h2 id="drawer-title" tabindex="-1">${title}</h2><p class="drawer__subtitle">${subtitle}</p></div><button type="button" class="icon-button" data-action="close" aria-label="Close detail" title="Close (Esc)">✕</button></div>`;
+  return html`<div class="drawer__bar"><div class="drawer__titles"><h2 id="drawer-title" tabindex="-1" data-key="title">${title}</h2><p class="drawer__subtitle">${subtitle}</p></div><button type="button" class="icon-button" data-action="close" data-key="close" aria-label="Close detail" title="Close (Esc)">✕</button></div>`;
 }
 
 async function loadSession(api, detail) {
@@ -37,7 +38,7 @@ export function createDetailDrawer({ api, live, config, navigate }) {
   const close = () => navigate({ view: "exchanges", filters });
 
   function render(body, title, subtitle) {
-    setHtml(drawer, html`${titleBar(title, subtitle)}<div class="drawer__body">${body}</div>`);
+    setHtml(drawer, html`${titleBar(title, subtitle)}<div class="drawer__body" data-key="body">${body}</div>`);
   }
 
   async function load({ quiet }) {
@@ -52,7 +53,10 @@ export function createDetailDrawer({ api, live, config, navigate }) {
       const outcome = (loaded.outcome ?? "open").replaceAll("_", " ");
       const subtitle = `${loaded.headline ?? ""} · ${outcome}${loaded.problem ? " · problem" : ""}`;
       const txHref = loaded.transaction_id === null ? null : sessionHash(filters, loaded.transaction_id);
+      // A live reload of the same exchange keeps what the reader had open, scrolled and focused.
+      const kept = quiet ? captureDrawerState(drawer) : null;
       render(exchangeDetail({ detail: loaded, lanes, session, now: Date.now() / 1000, txHref }), loaded.action, subtitle);
+      if (kept) restoreDrawerState(drawer, kept);
     } catch (error) {
       if (mine !== token) return;
       const message = error.status === 404
