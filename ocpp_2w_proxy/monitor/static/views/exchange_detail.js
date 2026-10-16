@@ -3,16 +3,21 @@
 // navigating back to the list so the URL always says what is open.
 
 import { wantsSession } from "../cards/index.js";
-import { exchangeDetail, rawJsonText } from "../components/exchange_detail.js";
+import { exchangeDetail } from "../components/exchange_detail.js";
+import { copyText } from "../components/json_view.js";
 import { lanesFor } from "../components/swimlane_model.js";
+import { tabId, viewTabs } from "../components/view_tabs.js";
 import { sessionHash } from "../filters.js";
 import { html, setHtml } from "../html.js";
+import { captureDrawerState, restoreDrawerState } from "./drawer_state.js";
+import { tabStops } from "./focus_trap.js";
+import { createViewMode, modeForKey } from "./view_mode.js";
 
 const LIVE_RELOAD_MS = 500;
-const FOCUSABLE = "a[href], button:not([disabled]), input, select, [tabindex]:not([tabindex='-1'])";
+const TARGET_HIGHLIGHT_MS = 1600;
 
 function titleBar(title, subtitle) {
-  return html`<div class="drawer__bar"><div class="drawer__titles"><h2 id="drawer-title" tabindex="-1">${title}</h2><p class="drawer__subtitle">${subtitle}</p></div><button type="button" class="icon-button" data-action="close" aria-label="Close detail" title="Close (Esc)">✕</button></div>`;
+  return html`<div class="drawer__bar"><div class="drawer__titles"><h2 id="drawer-title" tabindex="-1" data-key="title">${title}</h2><p class="drawer__subtitle">${subtitle}</p></div><button type="button" class="icon-button" data-action="close" data-key="close" aria-label="Close detail" title="Close (Esc)">✕</button></div>`;
 }
 
 async function loadSession(api, detail) {
@@ -29,15 +34,29 @@ export function createDetailDrawer({ api, live, config, navigate }) {
   const backdrop = document.getElementById("drawer-backdrop");
   let openId = null;
   let filters = null;
-  let detail = null;
+  // What the loaded exchange was drawn with, so a tab switch redraws without fetching.
+  let shown = null;
+  const viewMode = createViewMode();
   let token = 0;
   let reloadTimer = null;
   let returnFocus = null;
 
   const close = () => navigate({ view: "exchanges", filters });
 
-  function render(body, title, subtitle) {
-    setHtml(drawer, html`${titleBar(title, subtitle)}<div class="drawer__body">${body}</div>`);
+  function render(body, title, subtitle, tabs = "") {
+    setHtml(drawer, html`${titleBar(title, subtitle)}${tabs}<div class="drawer__body" data-key="body">${body}</div>`);
+  }
+
+  function renderShown() {
+    const { context, title, subtitle } = shown;
+    const mode = viewMode.mode;
+    render(exchangeDetail({ ...context, mode, now: Date.now() / 1000 }), title, subtitle, viewTabs(mode));
+  }
+
+  function selectView(mode) {
+    if (!shown || !viewMode.select(mode)) return;
+    renderShown();
+    drawer.querySelector(`#${tabId(mode)}`)?.focus();
   }
 
   async function load({ quiet }) {
@@ -47,14 +66,22 @@ export function createDetailDrawer({ api, live, config, navigate }) {
       const loaded = await api.exchange(openId);
       const session = await loadSession(api, loaded);
       if (mine !== token) return;
-      detail = loaded;
       const lanes = lanesFor(config, [loaded]);
       const outcome = (loaded.outcome ?? "open").replaceAll("_", " ");
       const subtitle = `${loaded.headline ?? ""} · ${outcome}${loaded.problem ? " · problem" : ""}`;
       const txHref = loaded.transaction_id === null ? null : sessionHash(filters, loaded.transaction_id);
-      render(exchangeDetail({ detail: loaded, lanes, session, now: Date.now() / 1000, txHref }), loaded.action, subtitle);
+      shown = { context: { detail: loaded, lanes, session, txHref }, title: loaded.action, subtitle };
+      // A live reload of the same exchange keeps what the reader had open, scrolled and focused.
+      const kept = quiet ? captureDrawerState(drawer) : null;
+      const hadFocus = drawer.contains(document.activeElement);
+      renderShown();
+      if (kept) restoreDrawerState(drawer, kept);
+      // Focus on an element the re-render replaced must not fall out of the modal.
+      if (hadFocus && !drawer.contains(document.activeElement)) drawer.querySelector("#drawer-title")?.focus();
     } catch (error) {
       if (mine !== token) return;
+      // A failed live reload keeps the detail already on screen.
+      if (quiet && shown) return;
       const message = error.status === 404
         ? "This exchange is not stored (any more). It may have passed the retention period."
         : "Could not load this exchange.";
@@ -63,22 +90,38 @@ export function createDetailDrawer({ api, live, config, navigate }) {
     if (!quiet) drawer.querySelector("#drawer-title")?.focus();
   }
 
-  async function copy() {
+  // `target` is a frame index, "all" or "record" (see copyText); without clipboard access the
+  // matching block is selected instead, for Ctrl+C.
+  async function copy(target) {
     const status = drawer.querySelector('[data-part="copy-status"]');
+    const text = copyText(shown.context.detail, target);
     try {
-      await navigator.clipboard.writeText(rawJsonText(detail));
+      await navigator.clipboard.writeText(text);
       status.textContent = "Copied.";
     } catch {
+      const source = drawer.querySelector(`[data-copy-source="${CSS.escape(target)}"]`);
+      if (!source) return;
       const range = document.createRange();
-      range.selectNodeContents(drawer.querySelector(".raw-json"));
+      range.selectNodeContents(source);
       getSelection().removeAllRanges();
       getSelection().addRange(range);
       status.textContent = "Selected; press Ctrl+C to copy.";
     }
   }
 
+  // A sequence arrow jumps to the Readable block of its frame and outlines it for a moment.
+  function jumpToFrame(index) {
+    const target = drawer.querySelector(`[data-frame-target="${CSS.escape(index)}"]`);
+    if (!target) return;
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+    target.classList.add("is-frame-target");
+    setTimeout(() => target.classList.remove("is-frame-target"), TARGET_HIGHLIGHT_MS);
+  }
+
   function trapFocus(event) {
-    const items = [...drawer.querySelectorAll(FOCUSABLE)];
+    const items = tabStops(drawer);
     if (items.length === 0) return;
     const [first, last] = [items[0], items.at(-1)];
     if (event.shiftKey && document.activeElement === first) {
@@ -91,22 +134,50 @@ export function createDetailDrawer({ api, live, config, navigate }) {
   }
 
   drawer.addEventListener("click", (event) => {
-    const action = event.target.closest("[data-action]")?.dataset.action;
+    const control = event.target.closest("[data-action]");
+    const action = control?.dataset.action;
     if (action === "close") close();
-    if (action === "copy" && detail) copy();
+    if (action === "copy" && shown) copy(control.dataset.copy);
+    const view = event.target.closest("[data-view]")?.dataset.view;
+    if (view) selectView(view);
+    const frame = event.target.closest("[data-frame]")?.dataset.frame;
+    if (frame !== undefined) jumpToFrame(frame);
   });
   drawer.addEventListener("keydown", (event) => {
     if (event.key === "Escape") close();
     if (event.key === "Tab") trapFocus(event);
+    const frame = event.target.closest?.("[data-frame]")?.dataset.frame;
+    if (event.key === "Enter" && frame !== undefined) jumpToFrame(frame);
+    const next = event.target.closest?.('[role="tab"]') ? modeForKey(event.key, viewMode.mode) : null;
+    if (next) {
+      event.preventDefault();
+      selectView(next);
+    }
   });
   backdrop.addEventListener("click", close);
+
+  // A re-render would drop text the reader selected (or the copy fallback selected), so a live
+  // reload waits until the selection is gone.
+  function selectingInDrawer() {
+    const selection = getSelection();
+    return selection !== null && !selection.isCollapsed && drawer.contains(selection.anchorNode);
+  }
+
+  function reloadQuietly() {
+    if (selectingInDrawer()) scheduleReload();
+    else load({ quiet: true });
+  }
+
+  function scheduleReload() {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(reloadQuietly, LIVE_RELOAD_MS);
+  }
+
   live.subscribe({
     exchange: (summary) => {
-      if (summary.id !== openId) return;
-      clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(() => load({ quiet: true }), LIVE_RELOAD_MS);
+      if (summary.id === openId) scheduleReload();
     },
-    resync: () => openId && load({ quiet: true }),
+    resync: () => openId && reloadQuietly(),
   });
 
   return {
@@ -115,7 +186,8 @@ export function createDetailDrawer({ api, live, config, navigate }) {
       if (id === openId) return;
       if (openId === null) returnFocus = document.activeElement;
       openId = id;
-      detail = null;
+      shown = null;
+      viewMode.reset();
       drawer.hidden = false;
       backdrop.hidden = false;
       document.body.classList.add("drawer-open");

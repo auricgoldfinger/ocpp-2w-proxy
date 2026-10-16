@@ -24,7 +24,7 @@
 3. For each Exchange, System shows the action, a one-line headline and one lane per peer with the Leg's outcome: delivered, blocked or refused by the proxy, failed, queued, withheld, dropped, or not sent because that Backend is not configured for the action.
 4. While the Proxy Administrator follows the list, System adds new Exchanges as the Charger and Backends exchange messages (UC-003, UC-004, UC-006, UC-007).
 5. Proxy Administrator selects an Exchange.
-6. System shows its detail: a sequence of the frames per Leg, a readable payload card, a table of Legs with wire id, latency, outcome and the Decision in plain words, the raw JSON, and the differences between each Leg and the original message.
+6. System shows its detail in a Readable view: a sequence of the frames per Leg, a readable payload card of the request, and per Leg what its peer received (the differences with the original message), what it answered, its wire id, latency, outcome and the Decisions in plain words, then what the requester got back. The user can switch to a JSON view with every frame as the OCPP-J message it was, and the full record.
 7. Proxy Administrator filters the list by Backend, action, outcome, problems, Transaction, card or message id, or loads older Exchanges.
 8. System shows the matching Exchanges from its history.
 

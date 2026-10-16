@@ -404,25 +404,29 @@ Leg attributes:
 - late and duplicate replies get small "late" or "dup" tags;
 - incomplete exchanges get a ⚠ tag.
 
-**Detail drawer:**
-1. Mini sequence diagram.
-2. Payload card.
-3. Legs table: peer, wire id, sent, reply, latency, outcome, reason text, rewrite chips.
-4. Decisions, shown with their human text.
-5. **Raw JSON** with a copy button.
-6. **Diff legs**: compares each leg against the origin and highlights the changed paths.
+**Detail drawer:** the facts line, then a **Readable | JSON** tab switch (an ARIA tablist; the selected tab is bold and underlined). Every exchange opens in Readable; the choice is not stored and only lasts while the same exchange stays open, so live reloads keep it. Only the active view is built. Live reloads also keep scroll, focus and open sections.
+
+*Readable* shows no JSON:
+1. Mini sequence diagram. Each arrow is a link (mouse or Enter) to the block of its frame.
+2. **1 · Request**: the payload card of the request.
+3. **2 · Forwarded to**: one block per leg, side by side when there is room. Each shows the wire id, outcome, latency, rewrite chips and late/dup tags; what the peer received ("same as the request" or the changed paths); what it answered (the confirmation per OCPP 1.6 action, a CallError's code and description, "answered by the proxy", "no reply" or "waiting"); and the proxy's decisions for that peer. Peers not configured for the action are listed below.
+4. **3 · What the requester got back**, left out when the proxy or the debug endpoint made the call.
+
+*JSON* has no graphics: every frame as its OCPP-J message array (`[2,id,action,payload]`, `[3,id,payload]`, `[4,id,code,description,details]`) under a text header (`n · from → to · type · wire id · +Δ`), syntax-coloured, never wrapped (long lines scroll sideways). Copy per frame or all frames, a note that values are masked by the proxy, and the full API record in a closed section.
 
 **Payload cards** (`cards/index.js` maps action → card, with a generic fallback):
 
 | Card | When | Content |
 |---|---|---|
-| Generic | MVP | key/value tree; numeric strings trimmed (`' 1.2'` → 1.2) |
+| Generic | MVP | key/value tree with friendly field labels (`cards/labels.js`; the raw key is the tooltip); numeric strings trimmed (`' 1.2'` → 1.2) |
 | Start / Stop | MVP | kWh delivered and duration |
 | MeterValues | Should | measurand × phase table with key figures in kW / kWh / A / V / °C |
 | StatusNotification | Should | status pill; errorCode shown only when not NoError |
 | BootNotification | Should | charger card with clock skew |
 | GetConfiguration / ChangeConfiguration | Should | key/value/readonly table |
 | SetChargingProfile | Could | SVG step chart |
+
+Cards describe the request only. Replies are drawn per leg by `cards/responses.js`, a table with a renderer for every OCPP 1.6 confirmation: empty confirmations (MeterValues, StatusNotification, …) read "✓ Acknowledged — no data in reply" and flag unexpected fields; idTagInfo and status confirmations show a status pill; BootNotification, Heartbeat, GetConfiguration and the other data-carrying ones show their own fields.
 
 **Interaction:**
 - Heartbeats are hidden by default and show a counter.

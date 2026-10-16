@@ -1,0 +1,50 @@
+{
+  "id": "4611686018427387926",
+  "charger_id": "99224881",
+  "origin": "charger",
+  "action": "Authorize",
+  "started_at": 1760537400.00,
+  "last_at": 1760537431.40,
+  "outcome": "queued",
+  "problem": true,
+  "incomplete": false,
+  "transaction_id": null,
+  "connector_id": null,
+  "id_tag": "***4F2A",
+  "headline": "***4F2A",
+  "not_sent": ["stats"],
+  "legs": [
+    {"peer": "primary", "wire_id": "c0ffee-26", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "error", "error_code": "FormationViolation", "replied_by": "peer", "sent_at": 1760537400.01,
+     "replied_at": 1760537400.21, "rewritten": [], "late": false, "duplicate": false},
+    {"peer": "homeassistant", "wire_id": "9e41-26", "outcome": "delivered", "reason": null, "reason_text": null,
+     "reply": "result", "error_code": null, "replied_by": "peer", "sent_at": 1760537400.02,
+     "replied_at": 1760537431.30, "rewritten": [], "late": true, "duplicate": true},
+    {"peer": "backup", "wire_id": null, "outcome": "queued", "reason": "QUEUED",
+     "reason_text": "Queued for backup during an outage", "reply": null, "error_code": null, "replied_by": null,
+     "sent_at": null, "replied_at": null, "rewritten": [], "late": false, "duplicate": false}
+  ],
+  "payload": {"idTag": "***4F2A"},
+  "frames": [
+    {"at": 1760537400.00, "peer": "charger", "dir": "in", "msg_type": "call", "wire_id": "a1d7",
+     "payload": {"idTag": "***4F2A"}, "same_as_origin": true, "error": null},
+    {"at": 1760537400.01, "peer": "primary", "dir": "out", "msg_type": "call", "wire_id": "c0ffee-26",
+     "payload": {"idTag": "***4F2A"}, "same_as_origin": true, "error": null},
+    {"at": 1760537400.02, "peer": "homeassistant", "dir": "out", "msg_type": "call", "wire_id": "9e41-26",
+     "payload": {"idTag": "***4F2A"}, "same_as_origin": true, "error": null},
+    {"at": 1760537400.21, "peer": "primary", "dir": "in", "msg_type": "error", "wire_id": "c0ffee-26",
+     "payload": {"field": "idTag", "reason": "unknown token format"}, "same_as_origin": false,
+     "error": {"code": "FormationViolation", "description": "idTag is not a valid token"}},
+    {"at": 1760537400.22, "peer": "charger", "dir": "out", "msg_type": "error", "wire_id": "a1d7",
+     "payload": {"field": "idTag", "reason": "unknown token format"}, "same_as_origin": false,
+     "error": {"code": "FormationViolation", "description": "idTag is not a valid token"}},
+    {"at": 1760537431.30, "peer": "homeassistant", "dir": "in", "msg_type": "result", "wire_id": "9e41-26",
+     "payload": {"idTagInfo": {"status": "Accepted"}}, "same_as_origin": false, "error": null},
+    {"at": 1760537431.40, "peer": "homeassistant", "dir": "in", "msg_type": "result", "wire_id": "9e41-26",
+     "payload": {"idTagInfo": {"status": "Accepted"}}, "same_as_origin": false, "error": null}
+  ],
+  "decisions": [
+    {"at": 1760537400.00, "peer": "backup", "reason": "QUEUED",
+     "text": "Queued for backup during an outage", "detail": null}
+  ]
+}

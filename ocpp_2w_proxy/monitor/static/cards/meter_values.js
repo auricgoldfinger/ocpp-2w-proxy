@@ -72,7 +72,7 @@ function readingTable(entry) {
 function earlierReadings(entries) {
   if (entries.length === 0) return "";
   const label = entries.length === 1 ? "1 earlier reading" : `${entries.length} earlier readings`;
-  return html`<details class="card__more"><summary>${label}</summary>${[...entries].reverse().map(readingTable)}</details>`;
+  return html`<details class="card__more" data-key="meter-more"><summary data-key="meter-more-summary">${label}</summary>${[...entries].reverse().map(readingTable)}</details>`;
 }
 
 export function meterValuesCard(payload) {

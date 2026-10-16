@@ -34,6 +34,13 @@
   --tone-up: var(--oi-green);
   --tone-down: var(--oi-vermillion);
 
+  --json-key: #005a8c;
+  --json-str: #1d6b2f;
+  --json-num: #8a4500;
+  --json-bool: #7a3a8f;
+  --json-null: var(--fg-muted);
+  --json-punct: var(--fg-muted);
+
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -59,6 +66,10 @@
     --link: var(--oi-sky);
     --tone-delivered: var(--oi-sky);
     --tone-queued: var(--oi-yellow);
+    --json-key: #7cc4f0;
+    --json-str: #8fd19e;
+    --json-num: #f0b860;
+    --json-bool: #e0a3d0;
     color-scheme: dark;
   }
 }
@@ -75,6 +86,10 @@
   --link: var(--oi-sky);
   --tone-delivered: var(--oi-sky);
   --tone-queued: var(--oi-yellow);
+  --json-key: #7cc4f0;
+  --json-str: #8fd19e;
+  --json-num: #f0b860;
+  --json-bool: #e0a3d0;
   color-scheme: dark;
 }
 
@@ -745,6 +760,36 @@ body.drawer-open {
   color: var(--fg-muted);
 }
 
+/* The selected view tab is bold and underlined, not only coloured. */
+.view-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.view-tab {
+  margin-bottom: -1px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.view-tab[aria-selected="true"] {
+  border-bottom-color: currentColor;
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.view-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .drawer__body {
   flex: 1;
   overflow-y: auto;
@@ -819,6 +864,20 @@ body.drawer-open {
 .seq-msg--result line,
 .seq-msg--error line {
   stroke-dasharray: 5 3;
+}
+
+.seq-msg {
+  cursor: pointer;
+}
+
+.seq-msg:hover line,
+.seq-msg:focus-visible line {
+  stroke-width: 3;
+}
+
+.seq-msg:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .seq-head--filled {
@@ -964,11 +1023,6 @@ body.drawer-open {
   overflow-wrap: normal;
 }
 
-.card__subhead {
-  margin: var(--space-4) 0 var(--space-2);
-  font-size: 0.8125rem;
-}
-
 .boot-card__name {
   margin: 0 0 var(--space-2);
   font-size: 1.125rem;
@@ -1049,24 +1103,162 @@ thead th {
   text-decoration: line-through;
 }
 
-.decisions {
-  margin: 0;
-  padding-left: var(--space-6);
+/* Readable view: the request, one block per leg (side by side when there is room), the reply. */
+.leg-blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: var(--space-3);
 }
 
-.decisions li {
+.leg-block {
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.detail-section .leg-block h4 {
+  margin-top: 0;
+}
+
+.leg-block h5 {
+  margin: var(--space-3) 0 var(--space-1);
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.leg-block__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+/* Where a sequence arrow jumped to: an outline, not only a colour change. */
+.is-frame-target {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.leg-reply + .leg-reply {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+
+.leg-reply__label {
+  margin: 0 0 var(--space-1);
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+.reply-ack,
+.reply-status,
+.reply-error,
+.reply-unexpected {
+  margin: 0 0 var(--space-2);
+}
+
+.reply-error__text {
+  font-weight: 600;
+}
+
+.story-decisions {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+}
+
+.story-decisions li {
   margin-bottom: var(--space-1);
 }
 
-.raw-json {
-  max-height: 24rem;
-  overflow: auto;
+.story-not-sent {
+  margin: var(--space-3) 0 0;
+}
+
+/* JSON tokens (components/json_highlight.js); each colour is at least 4.5:1 on --surface-2. */
+.j-key {
+  color: var(--json-key);
+}
+
+.j-str {
+  color: var(--json-str);
+}
+
+.j-num {
+  color: var(--json-num);
+}
+
+.j-bool {
+  color: var(--json-bool);
+}
+
+.j-null {
+  color: var(--json-null);
+  font-style: italic;
+}
+
+.j-punct {
+  color: var(--json-punct);
+}
+
+/* JSON view: one block per frame. Lines never wrap; a long one scrolls sideways. */
+.json-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.json-frames {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.json-frame {
+  margin-top: var(--space-4);
+}
+
+.json-frame__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.json-frame__title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.json-view {
+  overflow-x: auto;
   margin: var(--space-2) 0 0;
   padding: var(--space-3);
   background: var(--surface-2);
   border-radius: var(--radius);
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.json-record {
+  margin-top: var(--space-6);
+}
+
+.json-record > summary {
+  margin-bottom: var(--space-2);
+  cursor: pointer;
 }
 
 /* ---- links view ---- */

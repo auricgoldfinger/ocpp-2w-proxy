@@ -4,7 +4,8 @@
 import { notSentView, outcomeView } from "./badge.js";
 
 const PROXY = "proxy";
-const PROXY_ORIGINS = new Set(["proxy", "debug"]);
+/** Origins where the proxy itself made the call, so no requester waits for a reply. */
+export const PROXY_ORIGINS = new Set(["proxy", "debug"]);
 
 const ORIGIN_TAGS = {
   replay: { icon: "↻", label: "replay", title: "Replayed by the proxy" },

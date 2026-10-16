@@ -1,8 +1,9 @@
-// Generic payload card: a key/value tree of any JSON payload. Numeric strings are trimmed
-// (" 1.2" → 1.2) because chargers pad them.
+// Generic payload card: a key/value tree of any JSON payload. Keys show their human label with
+// the raw key as the tooltip; numeric strings are trimmed (" 1.2" → 1.2) because chargers pad them.
 
 import { trimNumericString } from "../format.js";
 import { html } from "../html.js";
+import { fieldLabel } from "./labels.js";
 
 function scalar(value) {
   if (value === null) return html`<span class="kv-null">null</span>`;
@@ -20,7 +21,7 @@ function tree(value) {
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value);
     if (entries.length === 0) return html`<span class="kv-null">{ }</span>`;
-    return html`<dl class="kv">${entries.map(([key, item]) => html`<dt>${key}</dt><dd>${tree(item)}</dd>`)}</dl>`;
+    return html`<dl class="kv">${entries.map(([key, item]) => html`<dt title="${key}">${fieldLabel(key)}</dt><dd>${tree(item)}</dd>`)}</dl>`;
   }
   return scalar(value);
 }
