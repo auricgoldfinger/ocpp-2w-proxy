@@ -17,10 +17,7 @@ const CARDS = {
   StopTransaction: stopCard,
 };
 
-/**
- * The card for `action`. `context` may carry the exchange `detail` (for its reply frames), the
- * session aggregate and `now`.
- */
+/** The request card for `action`. `context` may carry the session aggregate and `now`. */
 export function renderCard(action, payload, context = {}) {
   return (CARDS[action] ?? genericCard)(payload, context);
 }

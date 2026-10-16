@@ -979,11 +979,6 @@ body.drawer-open {
   overflow-wrap: normal;
 }
 
-.card__subhead {
-  margin: var(--space-4) 0 var(--space-2);
-  font-size: 0.8125rem;
-}
-
 .boot-card__name {
   margin: 0 0 var(--space-2);
   font-size: 1.125rem;
@@ -1064,24 +1059,78 @@ thead th {
   text-decoration: line-through;
 }
 
-.decisions {
-  margin: 0;
-  padding-left: var(--space-6);
+/* Readable view: the request, one block per leg (side by side when there is room), the reply. */
+.leg-blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: var(--space-3);
 }
 
-.decisions li {
+.leg-block {
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.detail-section .leg-block h4 {
+  margin-top: 0;
+}
+
+.leg-block h5 {
+  margin: var(--space-3) 0 var(--space-1);
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.leg-block__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.leg-reply + .leg-reply {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+
+.leg-reply__label {
+  margin: 0 0 var(--space-1);
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+.reply-ack,
+.reply-status,
+.reply-error,
+.reply-unexpected {
+  margin: 0 0 var(--space-2);
+}
+
+.reply-error__text {
+  font-weight: 600;
+}
+
+.story-decisions {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+}
+
+.story-decisions li {
   margin-bottom: var(--space-1);
 }
 
-.raw-json {
-  max-height: 24rem;
-  overflow: auto;
-  margin: var(--space-2) 0 0;
-  padding: var(--space-3);
-  background: var(--surface-2);
-  border-radius: var(--radius);
-  font-family: var(--mono);
-  font-size: 0.75rem;
+.story-not-sent {
+  margin: var(--space-3) 0 0;
 }
 
 /* JSON tokens (components/json_highlight.js); each colour is at least 4.5:1 on --surface-2. */

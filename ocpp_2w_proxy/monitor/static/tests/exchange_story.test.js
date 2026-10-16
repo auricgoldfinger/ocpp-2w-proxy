@@ -53,3 +53,10 @@ test("a proxy or debug origin has no requester", () => {
     assert.equal(story.requesterReply, null);
   }
 });
+
+test("decisions about a peer without a leg are kept apart", () => {
+  const detail = loadFixture("exchange_detail");
+  assert.deepEqual(exchangeStory(detail).otherDecisions, []);
+  detail.decisions.push({ at: detail.started_at, peer: "charger", reason: "SYNTHETIC_REPLY", text: "Answered locally", detail: null });
+  assert.deepEqual(exchangeStory(detail).otherDecisions.map((decision) => decision.peer), ["charger"]);
+});

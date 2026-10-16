@@ -21,16 +21,19 @@ function legStory(leg, frames, decisions) {
 }
 
 /**
- * {request, legs: [{peer, leg, call, replies, decisions}], notSent, requesterReply}; `request`,
- * `call` and each reply are {frame, index} or null. A proxy or debug origin has no requester.
+ * {request, legs: [{peer, leg, call, replies, decisions}], notSent, requesterReply, otherDecisions};
+ * `request`, `call` and each reply are {frame, index} or null. A proxy or debug origin has no
+ * requester. `otherDecisions` are those about a peer without a leg (the requester, say).
  */
 export function exchangeStory(detail) {
   const frames = indexed(detail.frames);
+  const legPeers = new Set(detail.legs.map((leg) => leg.peer));
   const fromRequester = PROXY_ORIGINS.has(detail.origin) ? [] : frames.filter(({ frame }) => frame.peer === detail.origin);
   return {
     request: fromRequester.find(({ frame }) => frame.dir === "in" && frame.msg_type === "call") ?? null,
     legs: detail.legs.map((leg) => legStory(leg, frames, detail.decisions)),
     notSent: detail.not_sent,
     requesterReply: fromRequester.find(({ frame }) => frame.dir === "out" && REPLY_TYPES.has(frame.msg_type)) ?? null,
+    otherDecisions: detail.decisions.filter((decision) => !legPeers.has(decision.peer)),
   };
 }
