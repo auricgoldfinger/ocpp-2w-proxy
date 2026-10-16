@@ -38,7 +38,7 @@ export function copyText(detail, target) {
 }
 
 function copyButton(target, label) {
-  return html`<button type="button" class="button" data-action="copy" data-copy="${target}">${label}</button>`;
+  return html`<button type="button" class="button" data-action="copy" data-copy="${target}" data-key="copy-${target}">${label}</button>`;
 }
 
 function codeBlock(target, value) {
@@ -56,8 +56,8 @@ function frames(detail) {
 
 /** The JSON panel's content. */
 export function jsonView(detail) {
-  const tools = html`<div class="json-tools">${detail.frames.length > 0 ? copyButton("all", "Copy all frames") : ""} <span class="muted" data-part="copy-status" data-key="copy-status" role="status"></span></div>`;
+  const tools = html`<div class="json-tools">${detail.frames.length > 0 ? copyButton("all", "Copy all frames") : ""} <span class="muted" data-part="copy-status" role="status"></span></div>`;
   const note = html`<p class="muted json-note">Sensitive values were masked by the proxy before they were stored; they read *** here.</p>`;
-  const record = html`<details class="json-record" data-key="json-record"><summary>Full record from the monitor API</summary>${copyButton("record", "Copy record")}${codeBlock("record", detail)}</details>`;
+  const record = html`<details class="json-record" data-key="json-record"><summary data-key="json-record-summary">Full record from the monitor API</summary>${copyButton("record", "Copy record")}${codeBlock("record", detail)}</details>`;
   return html`${tools}${note}${frames(detail)}${record}`;
 }

@@ -1,5 +1,5 @@
 // Which drawer view is showing. Every exchange opens in Readable; the choice is not stored and
-// only lasts while the same exchange stays open (so live reloads keep it).
+// only lasts while the exchange stays open (live reloads and tab switches keep it).
 
 import { VIEWS } from "../components/view_tabs.js";
 
@@ -7,16 +7,13 @@ const MODES = VIEWS.map((view) => view.mode);
 const DEFAULT_MODE = MODES[0];
 
 export function createViewMode() {
-  let exchangeId = null;
   let mode = DEFAULT_MODE;
   return {
     get mode() {
       return mode;
     },
-    /** Opening a different exchange starts it in Readable. */
-    open(id) {
-      if (id === exchangeId) return;
-      exchangeId = id;
+    /** Back to Readable, for an exchange that is being opened. */
+    reset() {
       mode = DEFAULT_MODE;
     },
     /** Switches to `next`; returns whether the mode changed. */

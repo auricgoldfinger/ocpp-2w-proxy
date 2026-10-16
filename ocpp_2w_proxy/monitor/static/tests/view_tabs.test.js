@@ -16,17 +16,15 @@ test("the panel is labelled by its tab", () => {
   assert.equal(String(viewPanel("readable", html`x`)), '<div role="tabpanel" class="view-panel" id="drawer-panel-readable" aria-labelledby="drawer-tab-readable">x</div>');
 });
 
-test("every exchange opens in Readable; the same one keeps its tab", () => {
+test("the view starts in Readable, switches, and resets for the next exchange", () => {
   const mode = createViewMode();
-  mode.open("1");
   assert.equal(mode.mode, "readable");
   assert.equal(mode.select("json"), true);
   assert.equal(mode.select("json"), false, "no change");
-  mode.open("1");
-  assert.equal(mode.mode, "json", "a live reload of the same exchange");
-  mode.open("2");
-  assert.equal(mode.mode, "readable");
   assert.equal(mode.select("nonsense"), false);
+  assert.equal(mode.mode, "json");
+  mode.reset();
+  assert.equal(mode.mode, "readable");
 });
 
 test("arrow keys wrap between tabs; Home and End jump", () => {

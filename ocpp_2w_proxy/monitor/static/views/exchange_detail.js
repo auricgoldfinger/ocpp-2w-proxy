@@ -10,11 +10,11 @@ import { tabId, viewTabs } from "../components/view_tabs.js";
 import { sessionHash } from "../filters.js";
 import { html, setHtml } from "../html.js";
 import { captureDrawerState, restoreDrawerState } from "./drawer_state.js";
+import { tabStops } from "./focus_trap.js";
 import { createViewMode, modeForKey } from "./view_mode.js";
 
 const LIVE_RELOAD_MS = 500;
 const TARGET_HIGHLIGHT_MS = 1600;
-const FOCUSABLE = "a[href], button:not([disabled]), input, select, [tabindex]:not([tabindex='-1'])";
 
 function titleBar(title, subtitle) {
   return html`<div class="drawer__bar"><div class="drawer__titles"><h2 id="drawer-title" tabindex="-1" data-key="title">${title}</h2><p class="drawer__subtitle">${subtitle}</p></div><button type="button" class="icon-button" data-action="close" data-key="close" aria-label="Close detail" title="Close (Esc)">✕</button></div>`;
@@ -73,10 +73,15 @@ export function createDetailDrawer({ api, live, config, navigate }) {
       shown = { context: { detail: loaded, lanes, session, txHref }, title: loaded.action, subtitle };
       // A live reload of the same exchange keeps what the reader had open, scrolled and focused.
       const kept = quiet ? captureDrawerState(drawer) : null;
+      const hadFocus = drawer.contains(document.activeElement);
       renderShown();
       if (kept) restoreDrawerState(drawer, kept);
+      // Focus on an element the re-render replaced must not fall out of the modal.
+      if (hadFocus && !drawer.contains(document.activeElement)) drawer.querySelector("#drawer-title")?.focus();
     } catch (error) {
       if (mine !== token) return;
+      // A failed live reload keeps the detail already on screen.
+      if (quiet && shown) return;
       const message = error.status === 404
         ? "This exchange is not stored (any more). It may have passed the retention period."
         : "Could not load this exchange.";
@@ -89,8 +94,9 @@ export function createDetailDrawer({ api, live, config, navigate }) {
   // matching block is selected instead, for Ctrl+C.
   async function copy(target) {
     const status = drawer.querySelector('[data-part="copy-status"]');
+    const text = copyText(shown.context.detail, target);
     try {
-      await navigator.clipboard.writeText(copyText(shown.context.detail, target));
+      await navigator.clipboard.writeText(text);
       status.textContent = "Copied.";
     } catch {
       const source = drawer.querySelector(`[data-copy-source="${CSS.escape(target)}"]`);
@@ -107,14 +113,15 @@ export function createDetailDrawer({ api, live, config, navigate }) {
   function jumpToFrame(index) {
     const target = drawer.querySelector(`[data-frame-target="${CSS.escape(index)}"]`);
     if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
     target.focus({ preventScroll: true });
     target.classList.add("is-frame-target");
     setTimeout(() => target.classList.remove("is-frame-target"), TARGET_HIGHLIGHT_MS);
   }
 
   function trapFocus(event) {
-    const items = [...drawer.querySelectorAll(FOCUSABLE)];
+    const items = tabStops(drawer);
     if (items.length === 0) return;
     const [first, last] = [items[0], items.at(-1)];
     if (event.shiftKey && document.activeElement === first) {
@@ -148,13 +155,29 @@ export function createDetailDrawer({ api, live, config, navigate }) {
     }
   });
   backdrop.addEventListener("click", close);
+
+  // A re-render would drop text the reader selected (or the copy fallback selected), so a live
+  // reload waits until the selection is gone.
+  function selectingInDrawer() {
+    const selection = getSelection();
+    return selection !== null && !selection.isCollapsed && drawer.contains(selection.anchorNode);
+  }
+
+  function reloadQuietly() {
+    if (selectingInDrawer()) scheduleReload();
+    else load({ quiet: true });
+  }
+
+  function scheduleReload() {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(reloadQuietly, LIVE_RELOAD_MS);
+  }
+
   live.subscribe({
     exchange: (summary) => {
-      if (summary.id !== openId) return;
-      clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(() => load({ quiet: true }), LIVE_RELOAD_MS);
+      if (summary.id === openId) scheduleReload();
     },
-    resync: () => openId && load({ quiet: true }),
+    resync: () => openId && reloadQuietly(),
   });
 
   return {
@@ -164,7 +187,7 @@ export function createDetailDrawer({ api, live, config, navigate }) {
       if (openId === null) returnFocus = document.activeElement;
       openId = id;
       shown = null;
-      viewMode.open(id);
+      viewMode.reset();
       drawer.hidden = false;
       backdrop.hidden = false;
       document.body.classList.add("drawer-open");
