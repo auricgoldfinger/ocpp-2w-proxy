@@ -8,9 +8,3 @@ export function replyFrame(detail) {
   const replies = (detail?.frames ?? []).filter((frame) => REPLY_TYPES.has(frame.msg_type));
   return replies.find((frame) => frame.peer === "charger") ?? replies[0] ?? null;
 }
-
-/** A badge view of a CallError reply: "ERR <code>" with its description as the title. */
-export function errorView(frame) {
-  const code = frame.error?.code ?? "";
-  return { label: `ERR ${code}`.trim(), icon: "✕", tone: "failed", title: frame.error?.description || code || "CallError" };
-}

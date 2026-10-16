@@ -19,6 +19,12 @@ export function formatDateTime(epochSeconds) {
   return `${day} ${formatTime(epochSeconds)}`;
 }
 
+/** An ISO 8601 timestamp as local date and time; text that is not one is returned as it is. */
+export function formatIsoDateTime(text) {
+  const millis = typeof text === "string" ? Date.parse(text) : Number.NaN;
+  return Number.isNaN(millis) ? (text ?? "–") : formatDateTime(millis / 1000);
+}
+
 /** A compact duration: "850 ms", "12s", "4m12s", "2h05m", "3d04h". */
 export function formatDuration(seconds) {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return "–";

@@ -1,19 +1,13 @@
 // The "Reply" part of a card: what the charger-side reply said, or why there is none.
 
-import { badge } from "../components/swimlane.js";
 import { html } from "../html.js";
-import { errorView, replyFrame } from "./reply.js";
+import { replyFrame } from "./reply.js";
+import { responseView } from "./responses.js";
 
-/**
- * `renderResult(frame)` draws a CallResult. A CallError shows its code, a missing reply says so,
- * and without the exchange `detail` (a card rendered from the payload alone) the part is left out.
- */
-export function replySection(detail, renderResult) {
+/** A missing reply says so; without the exchange `detail` (a card from the payload alone) the part is left out. */
+export function replySection(detail) {
   if (!detail) return "";
   const frame = replyFrame(detail);
-  let body;
-  if (!frame) body = html`<p class="muted">No reply recorded yet.</p>`;
-  else if (frame.msg_type === "error") body = html`<p>${badge(errorView(frame))}</p>`;
-  else body = renderResult(frame);
+  const body = frame ? responseView(detail.action, frame) : html`<p class="muted">No reply recorded yet.</p>`;
   return html`<h4 class="card__subhead">Reply</h4>${body}`;
 }

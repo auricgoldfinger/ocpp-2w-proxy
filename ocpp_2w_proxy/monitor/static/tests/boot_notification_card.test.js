@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { clockSkew, skewText } from "../cards/boot_notification.js";
 import { renderCard } from "../cards/index.js";
 import { replyFrame } from "../cards/reply.js";
 import { loadFixture } from "./fixture_loader.js";
@@ -15,15 +14,6 @@ test("the reply is the one sent to the charger", () => {
   assert.equal(frame.at, 1760537100.4);
   assert.equal(replyFrame({ frames: [] }), null);
   assert.equal(replyFrame(null), null);
-});
-
-test("clock skew is the reply's currentTime against the proxy's clock", () => {
-  assert.ok(Math.abs(clockSkew(replyFrame(detail())) - 3.6) < 1e-6);
-  assert.equal(clockSkew({ at: 1, payload: {} }), null);
-  assert.equal(clockSkew({ at: 1, payload: { currentTime: "soon" } }), null);
-  assert.equal(skewText(3.6), "4s ahead");
-  assert.equal(skewText(-130), "2m10s behind");
-  assert.equal(skewText(0.4), "in sync");
 });
 
 test("the card shows the charger identity, registration, interval and skew", () => {

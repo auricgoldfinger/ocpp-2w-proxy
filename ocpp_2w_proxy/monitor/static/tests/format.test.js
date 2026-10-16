@@ -7,6 +7,7 @@ const {
   formatCount,
   formatDateTime,
   formatDuration,
+  formatIsoDateTime,
   formatKw,
   formatKwh,
   formatLatency,
@@ -18,6 +19,12 @@ const {
 test("formatTime shows local wall-clock time", () => {
   assert.equal(formatTime(1760536931.21), "14:02:11");
   assert.equal(formatTime(null), "–");
+});
+
+test("formatIsoDateTime shows an ISO timestamp as local date and time", () => {
+  assert.equal(formatIsoDateTime("2025-10-15T14:02:11Z"), "2025-10-15 14:02:11");
+  assert.equal(formatIsoDateTime("soon"), "soon");
+  assert.equal(formatIsoDateTime(undefined), "–");
 });
 
 test("formatDateTime shows date and time", () => {
