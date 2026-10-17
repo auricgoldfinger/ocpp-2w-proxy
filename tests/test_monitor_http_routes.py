@@ -1,7 +1,6 @@
 import pytest
 from fakes import http_exchange
 
-from ocpp_2w_proxy import minihttp
 from ocpp_2w_proxy.minihttp import Content, Request
 from ocpp_2w_proxy.monitor.http_routes import MonitorRouter
 from ocpp_2w_proxy.monitor.static_files import StaticFiles
@@ -36,16 +35,11 @@ async def test_api_paths_go_to_the_api_and_the_rest_to_the_static_files(path, ha
     assert reply.body == handled_by
 
 
-async def test_both_sides_are_served_over_one_listener(tmp_path):
+async def test_both_sides_are_served_over_one_listener(tmp_path, serve_http):
     (tmp_path / "index.html").write_bytes(b"<!doctype html>")
-    router = MonitorRouter(api, StaticFiles(tmp_path).handle)
-    server = await minihttp.serve(router.handle, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
-        replies = [await http_exchange(port, "GET", path) for path in ("/api/config", "/", "/api/../index.html")]
-    finally:
-        server.close()
-        await server.wait_closed()
+    port = await serve_http(MonitorRouter(api, StaticFiles(tmp_path).handle).handle)
+
+    replies = [await http_exchange(port, "GET", path) for path in ("/api/config", "/", "/api/../index.html")]
 
     assert [(reply.status, reply.body) for reply in replies] == [
         (200, b"api"),

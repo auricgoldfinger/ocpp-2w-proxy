@@ -1,4 +1,5 @@
-from ocpp_2w_proxy.monitor.events import EventKind, FlowEvent
+from monitor_events import received, sent
+
 from ocpp_2w_proxy.monitor.gaps import ExchangeSpan
 from ocpp_2w_proxy.monitor.open_exchanges import OpenExchanges, TrackedExchange
 from ocpp_2w_proxy.monitor.projection import ExchangeProjection
@@ -7,16 +8,12 @@ from ocpp_2w_proxy.ocpp import Call, CallResult
 MV = Call("w1", "MeterValues", {"connectorId": 1})
 
 
-def event(kind, at, peer, message):
-    return FlowEvent(kind, at, "cp", peer, message, None, None)
-
-
 def tracked(exchange_id, *, settled):
     projection = ExchangeProjection(exchange_id)
-    projection.apply(event(EventKind.RECEIVED, 1.0, "charger", MV))
-    projection.apply(event(EventKind.SENT, 1.1, "primary", MV))
+    projection.apply(received(1.0, "charger", MV))
+    projection.apply(sent(1.1, "primary", MV))
     if settled:
-        projection.apply(event(EventKind.RECEIVED, 1.2, "primary", CallResult("w1", {})))
+        projection.apply(received(1.2, "primary", CallResult("w1", {})))
     return TrackedExchange(projection)
 
 
@@ -52,7 +49,7 @@ def test_touch_restarts_the_idle_time_and_follows_settling():
     table = OpenExchanges(settled_grace=10.0, open_idle=100.0)
     exchange = tracked(1, settled=False)
     table.touch(exchange, now=0.0)
-    exchange.projection.apply(event(EventKind.RECEIVED, 2.0, "primary", CallResult("w1", {})))
+    exchange.projection.apply(received(2.0, "primary", CallResult("w1", {})))
     table.touch(exchange, now=50.0)
 
     table.evict(now=59.0)
@@ -73,7 +70,7 @@ def test_capacity_evicts_the_least_recently_touched():
 def test_span_reports_open_and_orphan():
     exchange = tracked(7, settled=False)
     orphan = ExchangeProjection(8)
-    orphan.apply(event(EventKind.RECEIVED, 3.0, "primary", CallResult("zz", {})))
+    orphan.apply(received(3.0, "primary", CallResult("zz", {})))
 
     assert exchange.span() == ExchangeSpan(7, "cp", 1.0, 1.1, open=True, orphan=False)
     assert TrackedExchange(orphan).span() == ExchangeSpan(8, "cp", 3.0, 3.0, open=False, orphan=True)

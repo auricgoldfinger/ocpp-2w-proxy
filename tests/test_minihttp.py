@@ -38,11 +38,8 @@ async def echo(request: Request) -> Response | Content:
 
 
 @pytest.fixture
-async def port():
-    server = await minihttp.serve(echo, "127.0.0.1", 0)
-    yield server.sockets[0].getsockname()[1]
-    server.close()
-    await server.wait_closed()
+async def port(serve_http):
+    return await serve_http(echo)
 
 
 async def exchange_raw(port: int, raw: bytes) -> tuple[str, bytes]:
@@ -97,17 +94,13 @@ async def test_a_malformed_or_ambiguous_query_is_refused(port, target):
 
 
 async def test_the_response_is_uncached_unsniffed_json_and_closes_the_connection(port):
-    reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    writer.write(b"GET / HTTP/1.1\r\n\r\n")
-    head = (await asyncio.wait_for(reader.read(), 5)).partition(b"\r\n\r\n")[0].decode()
-    writer.close()
-    for line in (
+    head, _ = await exchange_raw(port, b"GET / HTTP/1.1\r\n\r\n")
+    assert {
         "Content-Type: application/json",
         "X-Content-Type-Options: nosniff",
         "Cache-Control: no-store",
         "Connection: close",
-    ):
-        assert line in head.split("\r\n")
+    } <= set(head.split("\r\n"))
 
 
 async def test_content_is_sent_as_is_with_its_type_and_extra_headers(port):
@@ -167,25 +160,17 @@ async def test_a_stalled_request_times_out(port, monkeypatch):
     assert (await exchange(port, b"POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc"))[0] == 408
 
 
-async def test_connections_beyond_the_default_limit_are_refused_with_503(port):
-    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(minihttp.DEFAULT_MAX_CONNECTIONS)]
+@pytest.mark.parametrize(
+    ("options", "limit"),
+    [({}, minihttp.DEFAULT_MAX_CONNECTIONS), ({"max_connections": 2}, 2)],
+    ids=["default", "configured"],
+)
+async def test_connections_beyond_the_limit_are_refused_with_503(serve_http, options, limit):
+    port = await serve_http(echo, **options)
+    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(limit)]
     await asyncio.sleep(0.1)  # let the server register them all
 
     assert (await exchange(port, b""))[0] == 503  # refused before it is even read
 
     for _, writer in held:
         writer.close()
-
-
-async def test_the_connection_limit_is_configurable():
-    server = await minihttp.serve(echo, "127.0.0.1", 0, max_connections=2)
-    port = server.sockets[0].getsockname()[1]
-    held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(2)]
-    await asyncio.sleep(0.1)
-
-    assert (await exchange(port, b""))[0] == 503
-
-    for _, writer in held:
-        writer.close()
-    server.close()
-    await server.wait_closed()

@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from fakes import RecordingFlow
+from fakes import FakeProxy, RecordingFlow
 
 from ocpp_2w_proxy.flow import FanOut
 from ocpp_2w_proxy.monitor.live_snapshot import LiveSnapshot
@@ -20,21 +20,6 @@ class RaisingFlow(RecordingFlow):
 
 def link(connected, since, queued):
     return SimpleNamespace(connected=connected, connected_since=since, queued_count=queued)
-
-
-class FakeProxy:
-    def __init__(self, contexts, connected_since):
-        self._contexts = contexts
-        self._connected_since = connected_since
-
-    def charger_ids(self):
-        return tuple(self._contexts)
-
-    def charger_connected_since(self, charger_id):
-        return self._connected_since.get(charger_id)
-
-    def context_for(self, charger_id):
-        return self._contexts[charger_id]
 
 
 def make_snapshot():

@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from fakes import eventually, open_event_stream
 
-from ocpp_2w_proxy import minihttp
 from ocpp_2w_proxy.minihttp import EventStream, Request
 from ocpp_2w_proxy.monitor.live_hub import RESET, LiveHub, Subscription, TooManySubscribers, sse_frame
 
@@ -101,29 +101,16 @@ async def test_has_subscribers_follows_the_subscriptions():
     assert hub.has_subscribers is False
 
 
-async def test_a_client_leaving_an_event_stream_gives_its_slot_back():
+async def test_a_client_leaving_an_event_stream_gives_its_slot_back(serve_http):
     hub = LiveHub(max_subscribers=1)
 
     async def handler(request: Request) -> EventStream:
         return EventStream(hub.subscribe())
 
-    server = await minihttp.serve(handler, "127.0.0.1", 0)
-    reader, writer = await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1])
-    writer.write(b"GET /api/events HTTP/1.1\r\n\r\n")
-    await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
+    reader, writer, _ = await open_event_stream(await serve_http(handler))
     hub.publish("exchange", b"{}")
     assert await asyncio.wait_for(reader.readuntil(b"\n\n"), 5) == sse_frame("exchange", b"{}")
 
     writer.close()
-    for _ in range(100):
-        await asyncio.sleep(0.01)
-        try:
-            hub.subscribe()
-            break
-        except TooManySubscribers:
-            continue
-    else:
-        pytest.fail("the slot was not given back")
-
-    server.close()
-    await server.wait_closed()
+    await eventually(lambda: not hub.has_subscribers)
+    hub.subscribe()  # the slot is free again

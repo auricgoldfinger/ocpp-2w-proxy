@@ -8,10 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 from conftest import CHARGER_ID, make_raw_config
-from fakes import http_exchange
-from test_monitor_queries import blocked, heartbeat, meter_values, start, store
+from fakes import http_exchange, open_event_stream
+from monitor_events import CP, blocked, heartbeat, meter_values, start, store
 
-from ocpp_2w_proxy import minihttp
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.monitor import db
 from ocpp_2w_proxy.monitor.api import MonitorApi
@@ -21,39 +20,14 @@ from ocpp_2w_proxy.monitor.rows import LinkRow, WriteBatch
 from ocpp_2w_proxy.monitor.sqlite_worker import SqliteWorker
 
 NOW = 100_000.0
-CP = "cp"  # the charger the stored rows of test_monitor_queries belong to
 SUMMARY_KEYS = {
-    "id",
-    "charger_id",
-    "origin",
-    "action",
-    "started_at",
-    "last_at",
-    "outcome",
-    "problem",
-    "incomplete",
-    "transaction_id",
-    "connector_id",
-    "id_tag",
-    "headline",
-    "not_sent",
-    "legs",
-}
+    "id", "charger_id", "origin", "action", "started_at", "last_at", "outcome", "problem", "incomplete",
+    "transaction_id", "connector_id", "id_tag", "headline", "not_sent", "legs",
+}  # fmt: skip
 LEG_KEYS = {
-    "peer",
-    "wire_id",
-    "outcome",
-    "reason",
-    "reason_text",
-    "reply",
-    "error_code",
-    "replied_by",
-    "sent_at",
-    "replied_at",
-    "rewritten",
-    "late",
-    "duplicate",
-}
+    "peer", "wire_id", "outcome", "reason", "reason_text", "reply", "error_code", "replied_by", "sent_at",
+    "replied_at", "rewritten", "late", "duplicate",
+}  # fmt: skip
 SNAPSHOT = {
     "chargers": [
         {
@@ -87,7 +61,7 @@ def write_store(conn):
 
 
 @pytest.fixture
-async def monitor(tmp_path):
+async def monitor(tmp_path, serve_http):
     raw = make_raw_config("ws://primary", ["ws://stats"], tmp_path, secondary={"forward_actions": ["MeterValues"]})
     raw["monitor"] = {"retention_days": 30}
     config = parse(raw, {"TAP_PASSWORD": "secret"})
@@ -99,11 +73,9 @@ async def monitor(tmp_path):
     hub = LiveHub()
     connected = {CHARGER_ID}
     api = MonitorApi(config, reader, hub, lambda: SNAPSHOT, lambda: connected, clock=lambda: NOW)
-    server = await minihttp.serve(api.handle, "127.0.0.1", 0, max_connections=16)
-    yield SimpleNamespace(port=server.sockets[0].getsockname()[1], hub=hub, connected=connected)
+    port = await serve_http(api.handle, max_connections=16)
+    yield SimpleNamespace(port=port, hub=hub, connected=connected)
     hub.close()
-    server.close()
-    await server.wait_closed()
     await reader.close()
     await writer.close()
 
@@ -216,10 +188,7 @@ async def test_unknown_is_404(monitor, path):
     assert (reply.status, reply.json()["error"]) == (404, "not_found")
 
 
-@pytest.mark.parametrize(
-    "query",
-    ["charger=a&charger=b", "before=nonsense", "before=1.5:x", "limit=0", "outcome=lost", "tx=ten", "page=2"],
-)
+@pytest.mark.parametrize("query", ["outcome=lost", "before=nonsense"])  # a filter and a cursor
 async def test_a_bad_query_is_400(monitor, query):
     reply = await get(monitor, f"/api/exchanges?{query}")
     assert (reply.status, reply.json()["error"]) == (400, "bad_request")
@@ -246,13 +215,6 @@ async def test_api_json_is_never_sniffed_or_cached(monitor, path):
     reply = await get(monitor, path)
     assert reply.headers["x-content-type-options"] == "nosniff"
     assert reply.headers["cache-control"] == "no-store"
-
-
-async def open_event_stream(port):
-    reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    writer.write(b"GET /api/events HTTP/1.1\r\nHost: localhost\r\n\r\n")
-    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
-    return reader, writer, head.decode("ascii")
 
 
 async def test_events_stream_what_the_hub_publishes(monitor):

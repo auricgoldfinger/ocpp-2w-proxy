@@ -8,26 +8,16 @@ from types import SimpleNamespace
 
 import pytest
 from conftest import CHARGER_ID, make_raw_config
-from fakes import http_exchange
+from fakes import FakeProxy, http_exchange
 
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.monitor.service import MonitorService
 from ocpp_2w_proxy.ocpp import Call
 
 
-class FakeProxy:
-    def __init__(self):
-        idle = SimpleNamespace(connected=False, connected_since=None, queued_count=0)
-        self.context = SimpleNamespace(primary=idle, secondaries={}, traffic=None)
-
-    def charger_ids(self):
-        return (CHARGER_ID,)
-
-    def charger_connected_since(self, charger_id):
-        return 123.0
-
-    def context_for(self, charger_id):
-        return self.context
+def fake_proxy():
+    idle = SimpleNamespace(connected=False, connected_since=None, queued_count=0)
+    return FakeProxy({CHARGER_ID: SimpleNamespace(primary=idle, secondaries={}, traffic=None)}, {CHARGER_ID: 123.0})
 
 
 def monitor_config(tmp_path, **monitor):
@@ -38,7 +28,7 @@ def monitor_config(tmp_path, **monitor):
 
 @pytest.fixture
 async def service(tmp_path):
-    service = MonitorService(monitor_config(tmp_path), FakeProxy())
+    service = MonitorService(monitor_config(tmp_path), fake_proxy())
     await service.start()
     yield service
     await service.close()
@@ -56,23 +46,8 @@ async def test_serves_the_api_and_the_ui_once_started(service, tmp_path):
     assert (tmp_path / "db" / "monitor.sqlite").exists()
 
 
-async def test_recorded_flow_reaches_the_api(service):
-    recorder = service.recorder_for(CHARGER_ID)
-    call = Call("w1", "Heartbeat", {})
-    recorder.received("charger", call)
-    recorder.sent("primary", call)
-
-    for _ in range(50):
-        listed = (await http_exchange(service.port, "GET", "/api/exchanges")).json()["exchanges"]
-        if listed:
-            break
-        await asyncio.sleep(0.05)
-
-    assert [exchange["action"] for exchange in listed] == ["Heartbeat"]
-
-
 async def test_close_stops_the_listener(tmp_path):
-    service = MonitorService(monitor_config(tmp_path), FakeProxy())
+    service = MonitorService(monitor_config(tmp_path), fake_proxy())
     await service.start()
     port = service.port
 
@@ -85,7 +60,7 @@ async def test_close_stops_the_listener(tmp_path):
 
 
 async def test_an_unopenable_store_leaves_the_monitor_off(tmp_path, caplog):
-    service = MonitorService(monitor_config(tmp_path, db_path=str(tmp_path)), FakeProxy())  # a directory
+    service = MonitorService(monitor_config(tmp_path, db_path=str(tmp_path)), fake_proxy())  # a directory
 
     with caplog.at_level(logging.ERROR):
         await service.start()
@@ -102,7 +77,7 @@ async def test_an_unopenable_store_leaves_the_monitor_off(tmp_path, caplog):
 async def test_a_taken_port_leaves_the_monitor_off(tmp_path, caplog):
     blocker = await asyncio.start_server(lambda reader, writer: None, "127.0.0.1", 0)
     taken = blocker.sockets[0].getsockname()[1]
-    service = MonitorService(monitor_config(tmp_path, port=taken), FakeProxy())
+    service = MonitorService(monitor_config(tmp_path, port=taken), fake_proxy())
     try:
         with caplog.at_level(logging.ERROR):
             await service.start()

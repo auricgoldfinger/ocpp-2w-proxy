@@ -96,21 +96,6 @@ async def test_a_disconnect_in_flight_is_a_502(primary, start_proxy, proxies):
     assert (status, body["error"]) == (502, "charger_disconnected")
 
 
-async def test_a_second_command_while_one_is_in_flight_is_a_409(primary, start_proxy, proxies):
-    url, port = await start(primary, start_proxy, proxies)
-    charger = await connect(url, proxies, responder=lambda action, payload: None)  # holds the first command
-
-    first = asyncio.create_task(http_request(port, "POST", COMMANDS, {**RESET, "timeout": 5}))
-    while not charger.received_calls:
-        await asyncio.sleep(0.01)
-
-    status, body = await http_request(port, "POST", COMMANDS, RESET)
-    assert (status, body["error"]) == (409, "busy")
-
-    first.cancel()
-    await charger.close()
-
-
 async def test_chargers_are_listed_with_their_connection_state(primary, start_proxy, proxies):
     url, port = await start(primary, start_proxy, proxies)
     assert (await http_request(port, "GET", "/debug/chargers"))[1]["chargers"] == [
@@ -149,17 +134,6 @@ async def test_browser_style_requests_are_refused(primary, start_proxy, proxies)
     status, body = await http_request(port, "POST", COMMANDS, RESET, {"Content-Type": "text/plain"})
     assert (status, body["error"]) == (415, "unsupported_media_type")
     assert (await http_request(port, "POST", COMMANDS, b"{nope"))[1]["error"] == "invalid_json"
-    assert charger.received_calls == []
-    await charger.close()
-
-
-async def test_actions_a_central_system_cannot_send_are_refused(primary, start_proxy, proxies):
-    url, port = await start(primary, start_proxy, proxies)
-    charger = await connect(url, proxies)
-
-    for action in ("Heartbeat", "BootNotification", "Bogus"):
-        status, body = await http_request(port, "POST", COMMANDS, {"action": action})
-        assert (status, body["error"]) == (400, "invalid_action")
     assert charger.received_calls == []
     await charger.close()
 

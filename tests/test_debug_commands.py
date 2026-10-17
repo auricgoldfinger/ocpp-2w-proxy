@@ -91,21 +91,24 @@ async def test_a_call_error_is_described_as_an_error():
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "code"),
     [
-        [],
-        {},
-        {"action": 5},
-        {"action": "Heartbeat"},  # charger -> central system
-        {"action": "Nope"},
-        {"action": "Reset", "payload": []},
-        {"action": "Reset", "timeout": "5"},
-        {"action": "Reset", "timeout": 0},
-        {"action": "Reset", "timeout": True},
+        ([], "invalid_request"),
+        ({}, "invalid_action"),
+        ({"action": 5}, "invalid_action"),
+        ({"action": "Heartbeat"}, "invalid_action"),  # charger -> central system
+        ({"action": "BootNotification"}, "invalid_action"),
+        ({"action": "Nope"}, "invalid_action"),
+        ({"action": "Reset", "payload": []}, "invalid_request"),
+        ({"action": "Reset", "timeout": "5"}, "invalid_request"),
+        ({"action": "Reset", "timeout": 0}, "invalid_request"),
+        ({"action": "Reset", "timeout": True}, "invalid_request"),
     ],
 )
-async def test_an_invalid_request_is_a_400(body):
-    assert (await refused(commands().send("CH1", body))).status == 400
+async def test_an_invalid_request_is_a_400_and_nothing_is_sent(body, code):
+    session = FakeSession()
+    failure = await refused(commands(session).send("CH1", body))
+    assert (failure.status, failure.code, session.timeouts) == (400, code, [])
 
 
 async def test_unknown_and_offline_chargers_are_404():

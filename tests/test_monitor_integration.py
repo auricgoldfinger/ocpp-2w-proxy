@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from conftest import CHARGER_ID
-from fakes import FakeCharger, FakeCsms, http_exchange
+from fakes import FakeCharger, FakeCsms, http_exchange, open_event_stream, with_transaction
 
 from ocpp_2w_proxy.flow import FanOut
 from ocpp_2w_proxy.monitor import payload_blob
@@ -18,15 +18,6 @@ from ocpp_2w_proxy.traffic_log import TrafficLog
 
 START = {"connectorId": 1, "idTag": "04A2B3C4D5", "meterStart": 0, "timestamp": "2026-01-01T10:00:00Z"}
 METER_VALUES = {"connectorId": 1, "transactionId": 100, "meterValue": []}
-
-
-def with_transaction(transaction_id: int):
-    def respond(action, payload):
-        if action == "StartTransaction":
-            return {"transactionId": transaction_id, "idTagInfo": {"status": "Accepted"}}
-        return FakeCsms().responder(action, payload)
-
-    return respond
 
 
 @pytest.fixture
@@ -106,9 +97,10 @@ async def test_meter_values_show_each_leg_the_tx_rewrite_and_who_was_not_sent(
 
     exchange = await until_listed(port, "action=MeterValues", settled("primary", "tap"))
     assert (exchange["origin"], exchange["outcome"], exchange["not_sent"]) == ("charger", "delivered", ["stats"])
-    assert (leg(exchange, "primary")["outcome"], leg(exchange, "primary")["rewritten"]) == ("delivered", [])
-    assert leg(exchange, "tap")["outcome"] == "delivered"
-    assert leg(exchange, "tap")["rewritten"] == [{"field": "tx", "from": 100, "to": 9}]
+    assert {leg["peer"]: (leg["outcome"], leg["rewritten"]) for leg in exchange["legs"]} == {
+        "primary": ("delivered", []),
+        "tap": ("delivered", [{"field": "tx", "from": 100, "to": 9}]),
+    }
     await charger.close()
 
 
@@ -147,13 +139,10 @@ async def test_a_call_queued_in_a_primary_outage_is_delivered_after_the_reconnec
     try:
         await recovered.wait_for_call("MeterValues")
         delivered = await until_listed(monitor_port, "action=MeterValues", settled("primary"))
-        assert delivered["id"] == queued["id"]
         primary_leg = leg(delivered, "primary")
-        assert (primary_leg["outcome"], primary_leg["reason"], primary_leg["replied_by"]) == (
-            "delivered",
-            "QUEUED",
-            "peer",
-        )
+        assert (delivered["id"], primary_leg["outcome"], primary_leg["reason"], primary_leg["replied_by"]) == (
+            queued["id"], "delivered", "QUEUED", "peer"
+        )  # fmt: skip
     finally:
         await charger.close()
         await recovered.stop()
@@ -162,11 +151,9 @@ async def test_a_call_queued_in_a_primary_outage_is_delivered_after_the_reconnec
 async def test_the_live_stream_delivers_each_exchange_summary(start_proxy, proxies, primary):
     url = await start_proxy(primary.url, monitor={})
     charger = await FakeCharger.connect(url, CHARGER_ID)
-    reader, writer = await asyncio.open_connection("127.0.0.1", proxies[0].monitor_port)
+    reader, writer, head = await open_event_stream(proxies[0].monitor_port)
     try:
-        writer.write(b"GET /api/events HTTP/1.1\r\nHost: localhost\r\n\r\n")
-        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
-        assert b"200" in head.split(b"\r\n")[0] and b"text/event-stream" in head
+        assert "200" in head.split("\r\n")[0] and "text/event-stream" in head
 
         await charger.call("Heartbeat", {})
 

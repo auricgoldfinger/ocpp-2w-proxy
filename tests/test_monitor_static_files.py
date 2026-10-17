@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from fakes import http_exchange
 
-from ocpp_2w_proxy import minihttp
 from ocpp_2w_proxy.monitor.static_files import StaticFiles
 
 INDEX = b"<!doctype html><title>Monitor</title>"
@@ -42,18 +41,8 @@ def static_root(tmp_path):
 
 
 @pytest.fixture
-async def serve_static():
-    servers = []
-
-    async def start(static: StaticFiles) -> int:
-        server = await minihttp.serve(static.handle, "127.0.0.1", 0)
-        servers.append(server)
-        return server.sockets[0].getsockname()[1]
-
-    yield start
-    for server in servers:
-        server.close()
-        await server.wait_closed()
+async def port(static_root, serve_http):
+    return await serve_http(StaticFiles(static_root).handle)
 
 
 def test_only_ui_files_are_whitelisted(static_root):
@@ -84,11 +73,7 @@ def test_an_empty_or_missing_directory_serves_nothing(tmp_path, missing):
         ("/icons/logo.svg", b"<svg/>", "image/svg+xml"),
     ],
 )
-async def test_a_whitelisted_file_is_served_with_its_type_and_security_headers(
-    static_root, serve_static, path, body, content_type
-):
-    port = await serve_static(StaticFiles(static_root))
-
+async def test_a_whitelisted_file_is_served_with_its_type_and_security_headers(port, path, body, content_type):
     reply = await http_exchange(port, "GET", path)
 
     assert (reply.status, reply.body, reply.headers["content-type"]) == (200, body, content_type)
@@ -110,9 +95,7 @@ async def test_a_whitelisted_file_is_served_with_its_type_and_security_headers(
         "/APP.JS",
     ],
 )
-async def test_anything_else_is_not_found(static_root, serve_static, path):
-    port = await serve_static(StaticFiles(static_root))
-
+async def test_anything_else_is_not_found(port, path):
     reply = await http_exchange(port, "GET", path)
 
     assert reply.status == 404
@@ -120,16 +103,8 @@ async def test_anything_else_is_not_found(static_root, serve_static, path):
     assert SECURITY_HEADERS.items() <= reply.headers.items()
 
 
-async def test_only_get_is_allowed(static_root, serve_static):
-    port = await serve_static(StaticFiles(static_root))
-
+async def test_only_get_is_allowed(port):
     reply = await http_exchange(port, "POST", "/index.html", b"")
 
     assert reply.status == 405
     assert SECURITY_HEADERS.items() <= reply.headers.items()
-
-
-async def test_a_missing_directory_answers_404_for_the_root(tmp_path, serve_static):
-    port = await serve_static(StaticFiles(tmp_path / "absent"))
-
-    assert (await http_exchange(port, "GET", "/")).status == 404
