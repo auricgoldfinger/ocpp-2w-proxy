@@ -24,6 +24,7 @@ from .primary_channel import PrimaryChannel
 from .redact import describe_credentials
 from .secondary_channel import SecondaryChannel
 from .session import ChargerSession
+from .session_resume import ResumeTracker
 from .state import StateStore
 from .traffic_log import TrafficLog
 from .transactions import TransactionMap
@@ -124,7 +125,13 @@ class ProxyServer:
             for backend in self._config.secondaries
         }
         primary = PrimaryChannel(self._config.primary, charger, store, traffic)
-        return ChargerContext(primary=primary, secondaries=secondaries, transactions=transactions, traffic=traffic)
+        return ChargerContext(
+            primary=primary,
+            secondaries=secondaries,
+            transactions=transactions,
+            resumes=ResumeTracker(store),
+            traffic=traffic,
+        )
 
     def _flow_for(self, charger_id: str, log: FlowRecorder) -> FlowRecorder:
         """The traffic log alone, or fanned out to the monitor too when it is enabled."""

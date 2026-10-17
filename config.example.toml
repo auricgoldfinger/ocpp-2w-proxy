@@ -134,6 +134,12 @@ actions = { SetChargingProfile = "forward", ClearChargingProfile = "forward" }
 # "Rejected" by the proxy. Keys that change the charger's authorization behavior or its
 # credentials (e.g. LocalAuthListEnabled, AuthorizationKey) are refused.
 change_configuration_allow_keys = []
+# Pause by stopping, resume by starting (for chargers that cannot pause a session): this
+# backend's RemoteStartTransaction is forwarded only to resume a session it stopped itself
+# with RemoteStopTransaction, while the cable stayed in, and with that session's idTag
+# instead of its own. The charger authorizes the card at the primary again, which bills the
+# resume as a new session. Any other remote start of this backend stays "Rejected".
+# resume_own_stops = true
 
 # A statistics backend only needs meter data: add it as another [[secondary]] entry
 # (with its own [[secondary]] and [secondary.policy] blocks).

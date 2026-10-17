@@ -61,6 +61,14 @@
 1. System logs a warning naming the backend and drops the reply.
 2. Use case ends.
 
+### A5: Secondary Backend resumes a session it stopped
+
+**Trigger:** A Secondary Backend whose policy has `resume_own_stops` sends a remote start, after the charger accepted its remote stop of a session the Primary Backend had accepted, and the connector has not become available since (step 2)  
+**Flow:**
+
+1. System replaces the backend's idTag with the idTag of the stopped session and drops any charging profile.
+2. Use case continues at step 4; the charger authorizes the card at the Primary Backend, which starts a new Transaction for it.
+
 ## Postconditions
 
 ### Success Postconditions
@@ -89,7 +97,7 @@ An Exclusive Command reaches the charger only from the one backend that is confi
 
 ### BR-004: Only the Primary Backend starts charging
 
-Authorization Commands (remote start, local authorization list, reservations, authorization settings) are only forwarded for the Primary Backend. A Secondary Backend therefore cannot start a charging session for a card the Primary Backend denied, nor make the charger accept such a card locally.
+Authorization Commands (remote start, local authorization list, reservations, authorization settings) are only forwarded for the Primary Backend. A Secondary Backend therefore cannot start a charging session for a card the Primary Backend denied, nor make the charger accept such a card locally. The one exception is a resume (A5): when enabled, a Secondary Backend may restart a session it stopped itself, for the same car and with the card the Primary Backend accepted for it.
 
 ### BR-005: Pause and resume with a Charging Profile
 

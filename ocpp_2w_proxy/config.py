@@ -54,7 +54,9 @@ CHARGER_KEYS = frozenset({"id", "password_env", "primary_id", "secondary_ids"})
 BACKEND_KEYS = frozenset({"url", "auth", "password_env", "call_timeout", "max_queue", "policy"})
 PRIMARY_KEYS = BACKEND_KEYS | {"outage_grace", "boot_replay_grace"}
 SECONDARY_KEYS = BACKEND_KEYS | {"name", "forward_actions"}
-POLICY_KEYS = frozenset({"actions", "default", "change_configuration_allow_keys", "strip_charging_profile"})
+POLICY_KEYS = frozenset(
+    {"actions", "default", "change_configuration_allow_keys", "strip_charging_profile", "resume_own_stops"}
+)
 
 
 class AuthMode(StrEnum):
@@ -314,6 +316,7 @@ def _parse_policy(
             default_rule=Rule(section.get("default", default_rule)),
             change_configuration_allow_keys=allow_keys,
             strip_charging_profile=flag(section, "strip_charging_profile", f"[{name}.policy]"),
+            resume_own_stops=flag(section, "resume_own_stops", f"[{name}.policy]"),
         )
     except ValueError as exc:
         raise ConfigError(f"[{name}.policy] {exc}") from exc
@@ -329,6 +332,8 @@ def _lowercase_keys(keys: Any, backend_name: str) -> frozenset[str]:
 
 def _parse_primary(section: Mapping[str, Any], secrets: _Secrets) -> PrimaryConfig:
     base = _parse_backend(PRIMARY_NAME, section, secrets, PRIMARY_DEFAULT_RULES, PRIMARY_DEFAULT_RULE, PRIMARY_KEYS)
+    if base.policy.resume_own_stops:
+        raise ConfigError(f"[{PRIMARY_NAME}.policy] resume_own_stops is for secondary backends only")
     return PrimaryConfig(
         **vars(base),
         outage_grace=number(section, "outage_grace", DEFAULT_OUTAGE_GRACE, f"[{PRIMARY_NAME}]", float, 0),

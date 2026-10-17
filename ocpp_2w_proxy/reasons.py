@@ -30,6 +30,7 @@ class Reason(Enum):
     BACKEND_GONE_REPLY_LOST = (Outcome.DROPPED, "{peer} disconnected before the reply could be returned")
     MALFORMED_FRAME = (Outcome.FAILED, "Malformed frame from {peer}: {detail}")
     DEBUG_COMMAND = (Outcome.DELIVERED, "Sent from the debug endpoint")
+    RESUMED = (Outcome.DELIVERED, "Resumed for {peer} with the card of the session it stopped")
     # withholding
     WITHHELD_UNAUTHORIZED = (Outcome.WITHHELD, "Withheld from {peer}: the idTag was not authorized")
     START_NOT_CONFIRMED = (Outcome.WITHHELD, "Withheld from {peer}: the primary did not accept the start")

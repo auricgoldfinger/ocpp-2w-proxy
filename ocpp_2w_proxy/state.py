@@ -100,6 +100,9 @@ class ChargerState:
     # Last BootNotification payload and last StatusNotification payload per connector
     boot: dict[str, Any] | None = None
     statuses: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Connector -> last session the primary accepted there and who stopped it remotely
+    # ({transaction_id, id_tag, stopped_by?}), for session_resume
+    resumable_sessions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class StateStore:

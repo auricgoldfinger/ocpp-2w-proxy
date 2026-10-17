@@ -159,6 +159,8 @@ class CommandPolicy:
     # Lowercase keys owned by another backend: ChangeConfiguration for them is answered
     # "Rejected" here even though this policy otherwise forwards ChangeConfiguration.
     withheld_configuration_keys: frozenset[str] = frozenset()
+    # A secondary's RemoteStartTransaction resumes a session it stopped itself (session_resume).
+    resume_own_stops: bool = False
 
     def __post_init__(self) -> None:
         for action, rule in self.rules.items():

@@ -93,7 +93,7 @@ Each `[[secondary]]` entry has its own policy. Defaults for every secondary:
 |---|---|
 | RemoteStopTransaction | forwarded with the transaction id translated; unknown id → `Rejected` |
 | TriggerMessage, GetConfiguration, UnlockConnector, GetCompositeSchedule | forwarded |
-| RemoteStartTransaction | answered: `Rejected` (Authorization Commands stay with the primary) |
+| RemoteStartTransaction | answered: `Rejected` (Authorization Commands stay with the primary), except a resume with `resume_own_stops` (below) |
 | GetLocalListVersion | answered by proxy: `listVersion: -1` (so it won't push a card list) |
 | SendLocalList | answered: `NotSupported` |
 | ChangeConfiguration | answered: `Rejected`, unless the key is in `change_configuration_allow_keys` |
@@ -121,6 +121,21 @@ The proxy **refuses to start** on configurations that would send conflicting com
 A secondary may own a configuration key (`change_configuration_allow_keys`) while the primary
 forwards all configuration changes: the proxy then answers the primary's changes to that key
 with `Rejected`.
+
+**Pause by stopping, resume by starting.** Some chargers cannot pause a session (a 0 A limit is
+undone within seconds). With `resume_own_stops = true` in its `[secondary.policy]`, a control
+backend pauses with `RemoteStopTransaction` and resumes with `RemoteStartTransaction`. The
+proxy forwards that start only as a resume:
+
+- of the session this backend stopped itself (the charger accepted its remote stop);
+- on that connector, while the cable stayed in (`Available`, `Unavailable` or `Faulted`
+  forgets it, and so does any new start);
+- with the idTag of the stopped session, which the primary accepted, instead of the
+  backend's own idTag; a charging profile in the request is dropped.
+
+The charger authorizes the card at the primary again (`AuthorizeRemoteTxRequests`), and the
+primary bills the resume as a new session. Every other remote start of the backend is still
+answered `Rejected`, and the monitor marks a resume as *Resumed*.
 
 ## Security
 

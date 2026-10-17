@@ -372,3 +372,11 @@ def test_primary_outage_grace_defaults_and_can_be_set():
     assert parse(raw(), {"TAP": "pw"}).primary.outage_grace == 30
     config = parse(raw(primary={"url": "wss://p", "outage_grace": 0}), {"TAP": "pw"})
     assert config.primary.outage_grace == 0
+
+
+def test_resume_own_stops_is_off_by_default_and_for_secondaries_only():
+    assert not parse(raw(), {"TAP": "pw"}).secondaries[0].policy.resume_own_stops
+    secondary = [{"name": "tap", "url": "wss://x", "policy": {"resume_own_stops": True}}]
+    assert parse(raw(secondary=secondary), {}).secondaries[0].policy.resume_own_stops
+    with pytest.raises(ConfigError, match="secondary backends only"):
+        parse(raw(primary={"url": "wss://p", "policy": {"resume_own_stops": True}}), {"TAP": "pw"})

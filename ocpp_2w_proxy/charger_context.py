@@ -13,17 +13,19 @@ from dataclasses import dataclass
 from .flow import FlowRecorder
 from .primary_channel import PrimaryChannel
 from .secondary_channel import SecondaryChannel
+from .session_resume import ResumeTracker
 from .transactions import TransactionMap
 
 
 @dataclass(frozen=True)
 class ChargerContext:
-    """Everything the proxy owns per charger: its transaction map, one flow recorder and
-    one channel per backend."""
+    """Everything the proxy owns per charger: its transaction map, the sessions a secondary
+    may resume, one flow recorder and one channel per backend."""
 
     primary: PrimaryChannel
     secondaries: Mapping[str, SecondaryChannel]
     transactions: TransactionMap
+    resumes: ResumeTracker
     traffic: FlowRecorder
 
     def start_background(self) -> None:

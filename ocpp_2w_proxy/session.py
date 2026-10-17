@@ -9,6 +9,9 @@ Routing rules (OCPP 1.6J):
            CallError
   charger Call of an   -> every forwarding secondary only; the proxy answers the charger
   unauthorized idTag      "Invalid" itself (withheld_calls)
+  secondary remote     -> forwarded as a resume with the stopped session's idTag, when the
+  start after its own     policy has resume_own_stops (session_resume); otherwise policy
+  remote stop
 The session lives as long as the charger is connected. Secondary backends reconnect
 independently. The charger mirrors the primary's availability: a call that needs the
 primary's own answer and cannot get one closes the charger connection, so the charger
@@ -48,7 +51,7 @@ from .ocpp import (
     serialize,
     substitute_reply,
 )
-from .policy import CANNED_ANSWERS, CommandPolicy, answer_reason, canned_answer
+from .policy import CANNED_ANSWERS, answer_reason, canned_answer
 from .primary_channel import PrimaryUnavailable
 from .primary_outage import outlast_grace
 from .reasons import Reason
@@ -63,6 +66,7 @@ CLOSE_PRIMARY_UNAVAILABLE = 1011
 SESSION_ENDED = 1001
 
 Translate = Callable[[Call], Call | None]
+Decide = Callable[[Call], Call | Reply]
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,7 @@ class ChargerSession:
         self.charger_id = identity.charger.id
         self._traffic = charger.traffic
         self._transactions = charger.transactions
+        self._resumes = charger.resumes
         self._secondaries = dict(charger.secondaries)
         self._router = CommandRouter(charger.traffic)
         self._relays: set[asyncio.Task] = set()
@@ -182,6 +187,8 @@ class ChargerSession:
             logger.error("%s relaying a charger call failed", self.charger_id, exc_info=task.exception())
 
     async def _relay_charger_call(self, call: Call) -> None:
+        if call.action == "StatusNotification":
+            self._resumes.status_changed(call)
         if (withheld := withhold(call, self._transactions)) is not None:
             await self._relay_withheld(call, withheld)
             return
@@ -236,6 +243,7 @@ class ChargerSession:
             for channel in self._secondaries.values():
                 if channel.forwards(call.action):
                     self._traffic.decided(channel.name, call, Reason.START_NOT_CONFIRMED)
+        self._resumes.start_answered(call, reply)
         await self._send_to_charger(reply)
 
     async def _route_charger_reply(self, reply: Reply) -> None:
@@ -254,6 +262,7 @@ class ChargerSession:
         return routed
 
     async def _return_reply(self, routed: RoutedReply) -> None:
+        self._resumes.command_answered(routed.target.name, routed.sent, routed.reply)
         try:
             await routed.target.reply(routed.reply)
         except BackendUnavailable:
@@ -265,16 +274,21 @@ class ChargerSession:
     # --- backends -> charger --------------------------------------------------------------
 
     async def _on_primary_call(self, call: Call) -> None:
-        await self._handle_backend_call(self._primary, self._config.primary.policy, _unchanged, call)
+        await self._handle_backend_call(self._primary, self._config.primary.policy.decide, _unchanged, call)
 
     async def _on_secondary_call(self, channel: SecondaryChannel, call: Call) -> None:
         translate = partial(self._transactions.rewrite_for_charger, backend_name=channel.name)
-        await self._handle_backend_call(channel, channel.policy, translate, call)
+        await self._handle_backend_call(channel, partial(self._secondary_decision, channel), translate, call)
 
-    async def _handle_backend_call(
-        self, origin: ReplyTarget, policy: CommandPolicy, translate: Translate, call: Call
-    ) -> None:
-        decision = policy.decide(call)
+    def _secondary_decision(self, channel: SecondaryChannel, call: Call) -> Call | Reply:
+        """The policy's decision, unless the call resumes a session this backend stopped."""
+        if channel.policy.resume_own_stops and (resumed := self._resumes.resume(call, channel.name)) is not None:
+            self._traffic.decided(channel.name, call, Reason.RESUMED)
+            return resumed
+        return channel.policy.decide(call)
+
+    async def _handle_backend_call(self, origin: ReplyTarget, decide: Decide, translate: Translate, call: Call) -> None:
+        decision = decide(call)
         if isinstance(decision, Call):
             translated = translate(decision)
             if translated is None:
