@@ -28,7 +28,9 @@ class FlowRecorder(Protocol):
         """
         ...
 
-    def link_changed(self, peer: str, up: bool) -> None: ...
+    def link_changed(self, peer: str, up: bool, note: str | None = None) -> None:
+        """The link to ``peer`` came up or went down; ``note`` says why (a disconnect reason, the boot decision)."""
+        ...
 
 
 class FanOut:
@@ -61,10 +63,10 @@ class FanOut:
         except Exception:
             self._failed()
 
-    def link_changed(self, peer: str, up: bool) -> None:
-        self._log.link_changed(peer, up)
+    def link_changed(self, peer: str, up: bool, note: str | None = None) -> None:
+        self._log.link_changed(peer, up, note)
         try:
-            self._monitor.link_changed(peer, up)
+            self._monitor.link_changed(peer, up, note)
         except Exception:
             self._failed()
 

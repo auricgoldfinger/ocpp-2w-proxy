@@ -38,7 +38,7 @@ def test_each_hook_enqueues_one_tuple_in_flow_event_field_order():
     rec.received("charger", CALL)
     rec.sent("primary", CALL)
     rec.decided("stats", CALL, Reason.QUEUED, 5)
-    rec.link_changed("primary", False)
+    rec.link_changed("primary", False, "dropped without close frame")
     rec.received("primary", reply)
 
     raw = [hub.queue.get_nowait() for _ in range(5)]
@@ -48,7 +48,7 @@ def test_each_hook_enqueues_one_tuple_in_flow_event_field_order():
         (EventKind.RECEIVED, "cp", "charger", CALL, None, None),
         (EventKind.SENT, "cp", "primary", CALL, None, None),
         (EventKind.DECIDED, "cp", "stats", CALL, Reason.QUEUED, 5),
-        (EventKind.LINK, "cp", "primary", None, None, False),
+        (EventKind.LINK, "cp", "primary", None, None, (False, "dropped without close frame")),
         (EventKind.RECEIVED, "cp", "primary", reply, None, None),
     ]
     assert all(type(e.at) is float and abs(e.at - time.time()) < 5 for e in events)

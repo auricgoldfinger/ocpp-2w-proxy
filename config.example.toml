@@ -72,6 +72,11 @@ auth = "none"
 call_timeout = 30
 # Seconds a primary outage is hidden from the charger before its connection is closed (0 = at once).
 outage_grace = 30
+# Every new primary connection gets the charger's cached BootNotification first. When the primary
+# comes back within this many seconds of losing a connection that had its boot accepted, that
+# replay is skipped, so a network blip does not look like a charger reboot (0 = always replay).
+# Try 60 once you have checked that the primary takes calls on a connection without a boot.
+boot_replay_grace = 0
 # Max queued transaction messages while the primary backend is unreachable (minimum 10000).
 # When it overflows, MeterValues are dropped first, then the oldest message.
 max_queue = 10000

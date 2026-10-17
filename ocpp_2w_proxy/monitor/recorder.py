@@ -42,8 +42,8 @@ class MonitorRecorder:
     def decided(self, peer: str, call: Call, reason: Reason, detail: object = None) -> None:
         self._record(_DECIDED, peer, call, reason, detail)
 
-    def link_changed(self, peer: str, up: bool) -> None:
-        self._record(_LINK, peer, None, None, up)
+    def link_changed(self, peer: str, up: bool, note: str | None = None) -> None:
+        self._record(_LINK, peer, None, None, (up, note))
 
     def detach(self) -> None:
         """Record nothing from now on: the monitor could not start, so no writer will ever read the queue."""

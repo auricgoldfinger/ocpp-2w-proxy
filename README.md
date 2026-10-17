@@ -73,6 +73,12 @@ Details that make this work in practice:
       closed, so the charger keeps the message and resends it once it is back online.
     - A `StartTransaction` is refused with an OCPP error while the queue is not yet emptied.
 
+  Every new primary connection first gets the charger's cached `BootNotification`. Set
+  `boot_replay_grace` (seconds, default 0 = off) to skip that replay when the primary comes back
+  within that time of losing a connection on which it had accepted a boot, so a network blip
+  does not look like a charger reboot. Turn it on only once you know the primary takes calls on
+  a connection without a boot; the Links view shows per reconnect whether the boot was skipped.
+
   The queue holds up to 10,000 messages per charger (`max_queue`, at least 10,000); when it
   overflows, meter readings are dropped first, then the oldest message, and this is logged.
   Delivery continues after the charger disconnects. With primary `auth = "forward"`,
@@ -252,8 +258,8 @@ with one **leg** per peer:
 - rewrites: a transactionId (`⇄tx 10216 → 1791822333`), idTag or charging profile changed for a leg.
 
 Click a row for the sequence, the payloads per leg, the proxy's decisions and the raw JSON. The **Links**
-view shows each backend's connection history, queue depth and messages per hour, and the monitor's own
-health. It is off by default. Enable it in `config.toml` (see `config.example.toml`) and open
+view shows each backend's connection history with the reason for every outage (who closed the
+connection and why), queue depth and messages per hour, and the monitor's own health. It is off by default. Enable it in `config.toml` (see `config.example.toml`) and open
 `http://127.0.0.1:8323/`:
 
 ```toml

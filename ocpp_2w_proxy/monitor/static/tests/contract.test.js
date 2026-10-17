@@ -51,6 +51,6 @@ test("links fixture follows the contract", () => {
       assert.deepEqual(Object.keys(peer).sort(), ["messages_last_hour", "name", "queued", "role", "since", "up"]);
     }
   }
-  for (const entry of links.history) assert.deepEqual(Object.keys(entry).sort(), ["at", "charger_id", "peer", "up"]);
+  for (const entry of links.history) assert.deepEqual(Object.keys(entry).sort(), ["at", "charger_id", "note", "peer", "up"]);
   for (const gap of links.gaps) assert.deepEqual(Object.keys(gap).sort(), ["charger_id", "dropped", "from_at", "to_at"]);
 });

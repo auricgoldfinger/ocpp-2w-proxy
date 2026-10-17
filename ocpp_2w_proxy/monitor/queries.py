@@ -147,7 +147,7 @@ def links_report(
     """The live ``snapshot`` (taken on the loop from the channels) plus link history and gaps since ``since``."""
     with _reading(conn, clock):
         history = conn.execute(
-            "SELECT charger_id, peer, at, up FROM links WHERE at >= ? ORDER BY at, rowid", (since,)
+            "SELECT charger_id, peer, at, up, note FROM links WHERE at >= ? ORDER BY at, rowid", (since,)
         ).fetchall()
         gaps = conn.execute(
             "SELECT charger_id, from_at, to_at, dropped FROM monitor_gaps WHERE to_at >= ? ORDER BY from_at, rowid",
@@ -156,7 +156,9 @@ def links_report(
     return dumps_bytes(
         {
             **snapshot,
-            "history": [{"charger_id": c, "peer": p, "at": at, "up": bool(up)} for c, p, at, up in history],
+            "history": [
+                {"charger_id": c, "peer": p, "at": at, "up": bool(up), "note": note} for c, p, at, up, note in history
+            ],
             "gaps": [{"charger_id": c, "from_at": f, "to_at": t, "dropped": d} for c, f, t, d in gaps],
         }
     )

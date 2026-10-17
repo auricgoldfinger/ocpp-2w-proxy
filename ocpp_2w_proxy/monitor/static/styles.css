@@ -1336,6 +1336,14 @@ td .state {
   fill: var(--tone-down);
 }
 
+.outages {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 .figure__help {
   color: var(--fg-muted);
   font-size: 0.6875rem;

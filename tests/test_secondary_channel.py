@@ -224,8 +224,13 @@ async def test_synthetic_heartbeats_at_the_requested_interval(tmp_path):
 class _SilentLink:
     """A link whose Call never gets an answer."""
 
+    closing_cause = None
+
     async def call(self, call, timeout):
         raise TimeoutError
+
+    def mark_closing(self, cause):
+        self.closing_cause = cause
 
 
 async def test_a_timed_out_message_stays_queued_and_forces_a_reconnect(tmp_path):
@@ -239,17 +244,19 @@ async def test_a_timed_out_message_stays_queued_and_forces_a_reconnect(tmp_path)
     stop = _QueuedCall(Call("m", "StopTransaction", {"transactionId": 100, "meterStop": 1}), durable=True)
     channel._queue.append(stop)
 
+    link = _SilentLink()
     for _ in range(5):  # however often it times out
         with pytest.raises(BackendUnavailable):
-            await channel._send_head(_SilentLink())
+            await channel._send_head(link)
 
     assert channel._queue[0] is stop
+    assert link.closing_cause == "queued StopTransaction not answered in time"
     assert channel._transactions.to_secondary(100, "tap") == 9  # the link to its transaction is kept
 
 
-def _unattached_channel(config, store):
+def _unattached_channel(config, store, flow=None):
     return SecondaryChannel(
-        config.secondaries[0], config.chargers["CH1"], store, TransactionMap(store), TrafficLog("CH1", False)
+        config.secondaries[0], config.chargers["CH1"], store, TransactionMap(store), flow or TrafficLog("CH1", False)
     )
 
 
@@ -266,6 +273,35 @@ async def test_idle_secondary_without_session_or_queue_stays_disconnected(tmp_pa
             await channel.close()
     finally:
         await csms.stop()
+
+
+async def test_a_link_closed_after_draining_is_reported_idle(tmp_path):
+    csms = await FakeCsms().start()
+    try:
+        config = make_config({"name": "tap", "url": csms.url})
+        store = StateStore(tmp_path / "CH1.json")
+        store.state.outboxes["tap"] = [
+            {"call": {"id": "m", "action": "MeterValues", "payload": {"connectorId": 1}}, "start_ref": None}
+        ]
+        store.save()
+        flow = RecordingFlow()
+        channel = _unattached_channel(config, StateStore(tmp_path / "CH1.json"), flow)
+        channel.start_background()
+        try:
+            await asyncio.wait_for(_link_down(flow), 5)
+        finally:
+            await channel.close()
+    finally:
+        await csms.stop()
+
+    (_, up, up_note), (_, down, down_note) = flow.link_notes
+    assert (up, up_note, down) == (True, None, False)
+    assert down_note.startswith("closed by proxy: idle: no session and nothing queued · up ")
+
+
+async def _link_down(flow):
+    while ("tap", False) not in flow.links:
+        await asyncio.sleep(0.02)
 
 
 async def test_restored_queue_is_delivered_without_a_session_and_then_disconnects(tmp_path):

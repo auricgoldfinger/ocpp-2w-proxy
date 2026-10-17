@@ -33,6 +33,7 @@ PRIMARY_NAME = "primary"
 # quietly turn an ordinary backend outage into lost billing data.
 MIN_QUEUE = 10_000
 DEFAULT_OUTAGE_GRACE = 30.0
+DEFAULT_BOOT_REPLAY_GRACE = 0.0  # always replay until the skip has been tried with the primary
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 DEFAULT_SECONDARY_FORWARD_ACTIONS = [
@@ -51,7 +52,7 @@ PROXY_KEYS = frozenset({"listen", "port", "state_dir", "tls_cert", "tls_key", "p
 LOGGING_KEYS = frozenset({"level", "log_payloads"})
 CHARGER_KEYS = frozenset({"id", "password_env", "primary_id", "secondary_ids"})
 BACKEND_KEYS = frozenset({"url", "auth", "password_env", "call_timeout", "max_queue", "policy"})
-PRIMARY_KEYS = BACKEND_KEYS | {"outage_grace"}
+PRIMARY_KEYS = BACKEND_KEYS | {"outage_grace", "boot_replay_grace"}
 SECONDARY_KEYS = BACKEND_KEYS | {"name", "forward_actions"}
 POLICY_KEYS = frozenset({"actions", "default", "change_configuration_allow_keys", "strip_charging_profile"})
 
@@ -99,6 +100,8 @@ class BackendConfig:
 class PrimaryConfig(BackendConfig):
     # Seconds a primary outage stays hidden from the charger before its connection is closed.
     outage_grace: float = DEFAULT_OUTAGE_GRACE
+    # Seconds after losing a booted link within which a reconnect skips the boot replay (0 = never skip).
+    boot_replay_grace: float = DEFAULT_BOOT_REPLAY_GRACE
 
 
 @dataclass(frozen=True)
@@ -329,6 +332,9 @@ def _parse_primary(section: Mapping[str, Any], secrets: _Secrets) -> PrimaryConf
     return PrimaryConfig(
         **vars(base),
         outage_grace=number(section, "outage_grace", DEFAULT_OUTAGE_GRACE, f"[{PRIMARY_NAME}]", float, 0),
+        boot_replay_grace=number(
+            section, "boot_replay_grace", DEFAULT_BOOT_REPLAY_GRACE, f"[{PRIMARY_NAME}]", float, 0
+        ),
     )
 
 

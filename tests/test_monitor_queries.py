@@ -338,7 +338,7 @@ def test_links_report_merges_the_snapshot_with_history_and_gaps(conn):
     db.write_batch(
         conn,
         WriteBatch(
-            links=[LinkRow(CP, "stats", 10.0, False), LinkRow(CP, "stats", 500.0, True)],
+            links=[LinkRow(CP, "stats", 10.0, False), LinkRow(CP, "stats", 500.0, True, "boot replayed")],
             gaps=[Gap(CP, 5.0, 6.0, 3), Gap(CP, 600.0, 601.0, 37)],
         ),
     )
@@ -348,7 +348,7 @@ def test_links_report_merges_the_snapshot_with_history_and_gaps(conn):
 
     assert report == {
         **snapshot,
-        "history": [{"charger_id": CP, "peer": "stats", "at": 500.0, "up": True}],
+        "history": [{"charger_id": CP, "peer": "stats", "at": 500.0, "up": True, "note": "boot replayed"}],
         "gaps": [{"charger_id": CP, "from_at": 600.0, "to_at": 601.0, "dropped": 37}],
     }
 

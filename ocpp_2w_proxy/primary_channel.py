@@ -9,14 +9,14 @@ from collections import deque
 from operator import attrgetter
 
 from .backend_auth import backend_headers, backend_url
-from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
+from .backend_link import CONNECT_ERRORS, IDLE, SHUTTING_DOWN, BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .boot_replay import BootReplay
 from .charger_auth import ChargerIdentity
-from .config import AuthMode, BackendConfig, ChargerConfig
+from .config import AuthMode, ChargerConfig, PrimaryConfig
 from .flow import FlowRecorder
 from .message_classes import MessageClass, classify, latest_key
-from .ocpp import Call, CallError, CallResult, Reply, new_message_id, now_iso
+from .ocpp import Call, CallError, CallResult, Reply, is_accepted, new_message_id, now_iso
 from .queue_overflow import pick_victim
 from .reasons import Reason
 from .restartable_worker import RestartableWorker
@@ -40,7 +40,7 @@ class PrimaryChannel:
 
     def __init__(
         self,
-        backend: BackendConfig,
+        backend: PrimaryConfig,
         charger: ChargerConfig,
         store: StateStore,
         traffic: FlowRecorder,
@@ -60,7 +60,7 @@ class PrimaryChannel:
         self._reader: asyncio.Task | None = None
         # Nothing else goes out on a link before its boot replay is over, so a backend
         # that wants a boot first gets one.
-        self._boot = BootReplay(store, charger.id, backend.call_timeout)
+        self._boot = BootReplay(store, charger.id, backend.call_timeout, backend.boot_replay_grace)
         # Billing data (stops, transaction meter readings), oldest first.
         self._queue: deque[Call] = deque(call for call, _ in restore_outbox(store.state.primary_outbox))
         # The newest unconfirmed state report per subject; sent once the queue is empty.
@@ -161,7 +161,11 @@ class PrimaryChannel:
             return answer
         if call.action == "StartTransaction" and not await self._wait_drained(timeout):
             return self._refuse_start(call)
-        return await self._send_live(call, deadline)
+        link = self._link
+        reply = await self._send_live(call, deadline)
+        if call.action == "BootNotification" and link is not None and is_accepted(reply):
+            self._boot.accepted(link)
+        return reply
 
     def _answer_boot(self, call: Call) -> Reply | None:
         """The earlier replayed boot's answer if the charger's boot is the same; else cache
@@ -188,7 +192,7 @@ class PrimaryChannel:
             return self._unavailable(call)
         except TimeoutError:
             # A wedged link is useless: closing it makes the worker reconnect (UC-003 A1).
-            await link.close()
+            await link.close(f"{call.action} not answered in time")
             return self._unavailable(call)
 
     async def _await_boot_replay(self, timeout: float) -> bool:
@@ -205,7 +209,7 @@ class PrimaryChannel:
     async def close(self) -> None:
         self._queue_changed.set()
         await self._worker.close()
-        await self._discard(self._link)
+        await self._discard(self._link, SHUTTING_DOWN)
         self._store.flush()
 
     def _unavailable(self, call: Call) -> Reply:
@@ -283,13 +287,18 @@ class PrimaryChannel:
             self._link = link
             self._connected.set()
             self._disconnected.clear()
-            self._boot.start(link)
+            link.report_up(self._boot.start(link))
             return link
 
-    async def _discard(self, link: BackendLink | None) -> None:
-        """Deregister one link and stop its reader; its in-flight calls have failed (UC-003 A1)."""
+    async def _discard(self, link: BackendLink | None, cause: str | None = None) -> None:
+        """Deregister one link and stop its reader; its in-flight calls have failed (UC-003 A1).
+
+        ``cause`` is why the proxy gives up on a link that is still up; None when it already dropped.
+        """
         if link is None or self._link is not link:
             return
+        if cause is not None:
+            link.mark_closing(cause)  # before the reader is cancelled: that reports the link down
         self._link = None
         self._connected.clear()
         self._disconnected.set()
@@ -332,14 +341,16 @@ class PrimaryChannel:
             if link is None:
                 continue
             dead = True
+            cause = None
             try:
                 dead = await self._pump(link)
             except Exception:
                 logger.exception("%s primary connection failed unexpectedly", self._charger.id)
+                cause = "unexpected error in the primary channel"
             # Never discard a healthy link a session just attached to: without its reader,
             # every call of that session would time out against the primary (UC-002 A4).
             if dead or (not self._routing.attached and not self._backlog):
-                await self._discard(link)
+                await self._discard(link, cause if dead else IDLE)
                 if dead and (self._routing.attached or self._backlog):
                     await self._backoff_sleep(backoff.next_delay())
             # A parked link stays registered and is pumped again on the next loop turn.
@@ -413,6 +424,8 @@ class PrimaryChannel:
         try:
             return await link.call(call.with_id(new_message_id()), self._backend.call_timeout)
         except (BackendUnavailable, TimeoutError) as exc:
+            if isinstance(exc, TimeoutError):
+                link.mark_closing(f"queued {call.action} not answered in time")  # the worker discards it next
             logger.warning("%s primary did not confirm queued %s; will retry", self._charger.id, call.action)
             raise BackendUnavailable(f"primary did not confirm queued {call.action}") from exc
 

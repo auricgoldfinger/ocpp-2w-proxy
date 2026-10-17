@@ -167,17 +167,24 @@ Returns the live snapshot taken from the channels, plus the last 24 h of link hi
      "monitor": {"dropped": 0, "last_drop_at": null}}
   ],
   "monitor": {"fanout_failures": 0, "dropped_batches": 0},
-  "history": [{"charger_id": "99224881", "peer": "stats", "at": 1760530000.0, "up": false}],
+  "history": [{"charger_id": "99224881", "peer": "primary", "at": 1760530000.0, "up": false,
+               "note": "closed by primary: 1000 (OK) · up 29m58s · last frame 7m01s ago"}],
   "gaps": [{"charger_id": "99224881", "from_at": 1760536922.0, "to_at": 1760536924.0, "dropped": 37}]
 }
 ```
+
+A history entry's `note` (string or `null`) says why a backend link went down: `closed by <backend>:
+<close code>`, `closed by proxy: <cause>` or `dropped without close frame`, then its uptime and
+the time since its last frame. On a primary link coming up it says whether the charger's boot was
+replayed (`boot replayed`) or skipped after a short outage (`boot replay skipped: down 1.8s`).
+Changes of the charger's own link, and rows recorded before notes existed, have `null`.
 
 ### `GET /api/events` (Server-Sent Events)
 
 | Event | `data` |
 |---|---|
 | `exchange` | an exchange summary, sent when it is created or changes |
-| `link` | `{"charger_id", "peer", "at", "up"}` |
+| `link` | `{"charger_id", "peer", "at", "up", "note"}`, as a history entry in `/api/links` |
 | `gap` | a gap object, as in `/api/links` |
 | `reset` | empty. The client was too slow; re-fetch everything and reconnect. |
 

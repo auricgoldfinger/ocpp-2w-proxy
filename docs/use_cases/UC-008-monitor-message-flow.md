@@ -113,3 +113,7 @@ Exchanges are kept for the retention period (default 90 days) and then purged; t
 ### BR-007: Never colour alone
 
 Every outcome and connection state is shown with an icon or line style and a word, not by colour only.
+
+### BR-008: Why a Backend connection went down
+
+Every Backend connection that goes down is recorded with who closed it and why (the Backend's close code, the proxy's own cause such as an unanswered call or no session, or a drop without a close frame), how long it had been up and how long since its last message. A Primary Backend connection that comes up records whether the Charger's boot was replayed or skipped. The Links view lists the outages of the last 24 hours, newest first, with these reasons.

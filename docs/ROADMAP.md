@@ -28,13 +28,14 @@ references below describe follow-up work, not completed support for those requir
 | `policy.py` | Per-backend command policy (forward / answer / error) + canned answers |
 | `charger_auth.py` | Handshake auth: path → charger id, allowlist, Basic auth |
 | `backend_auth.py` | Upstream URL + Authorization header per backend auth mode |
-| `backend_link.py` | One WebSocket to a backend; `call()` with reply correlation, `serve()` read loop |
+| `backend_link.py` | One WebSocket to a backend; `call()` with reply correlation, `serve()` read loop; why it went down |
+| `durations.py` | Short durations for log lines and link notes (`1.8s`, `7m01s`) |
 | `message_classes.py` | How a charger message is kept while a backend is away (durable / latest / droppable / live) |
 | `queue_overflow.py` | Which queued item to drop when a durable queue is full |
 | `backoff.py` | Exponential backoff with jitter for reconnects and retries |
 | `charger_context.py` | Per-charger state and channels, which outlive individual charger sessions |
 | `primary_channel.py` | Reconnecting Primary Backend link and durable outbox for selected charger messages |
-| `boot_replay.py` | Replays the cached BootNotification to the primary on every reconnection |
+| `boot_replay.py` | Replays the cached BootNotification to the primary on every reconnection, unless it is back within `boot_replay_grace` |
 | `primary_outage.py` | Mirrors a primary outage to the charger once it outlasts the grace period |
 | `secondary_channel.py` | Reconnecting store-and-forward link to each secondary backend (boot replay, durable per-backend queue) |
 | `synthetic_heartbeat.py` | Heartbeats invented for a secondary that does not receive the charger's own |

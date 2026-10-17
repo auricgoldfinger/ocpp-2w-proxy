@@ -146,8 +146,11 @@ only the newest per connector is kept, and it is sent after the outbox has been 
 On every new Primary Backend connection the proxy replays the Charger's last
 `BootNotification`, so backends that key their charger state to the booting connection accept
 the session's calls; when the Charger then sends that same boot, it is answered with the
-reply to the replay instead of booting twice. UC-006 provides separate durable delivery
-to Secondary Backends.
+reply to the replay instead of booting twice. When `boot_replay_grace` is set (default 0, off)
+and the connection comes back within that many seconds of losing one on which the Primary
+Backend had accepted a boot (the replay or the Charger's own), the replay is skipped, so a
+network blip does not look like a Charger reboot. A proxy restart always replays. UC-006
+provides separate durable delivery to Secondary Backends.
 
 ### BR-008: Primary outbox
 

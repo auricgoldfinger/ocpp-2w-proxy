@@ -69,6 +69,18 @@ def test_only_new_migrations_run(conn, monkeypatch):
     assert scalar(conn, "SELECT count(*) FROM sqlite_master WHERE name = 'extra'") == 1
 
 
+def test_a_version_1_database_keeps_its_links_and_gains_their_note(tmp_path):
+    connection = sqlite3.connect(tmp_path / "v1.sqlite")
+    connection.executescript(f"{db.MIGRATIONS[0]}\nPRAGMA user_version = 1;")
+    connection.execute("INSERT INTO links (charger_id, peer, at, up) VALUES ('cp', 'primary', 9.0, 0)")
+    connection.commit()
+
+    db.prepare_writer(connection)
+
+    assert connection.execute("SELECT * FROM links").fetchall() == [("cp", "primary", 9.0, 0, None)]
+    connection.close()
+
+
 def test_upsert_keeps_origin_started_at_and_not_sent(conn):
     db.write_batch(conn, WriteBatch(exchanges=[exchange()]))
     resumed = exchange(
@@ -113,14 +125,14 @@ def test_batch_writes_decisions_links_gaps_and_incomplete_marks(conn):
         conn,
         WriteBatch(
             decisions=[DecisionRow(1, 10.1, "primary", "QUEUED", None)],
-            links=[LinkRow("cp", "primary", 9.0, False)],
+            links=[LinkRow("cp", "primary", 9.0, False, "dropped without close frame")],
             gaps=[Gap("cp", 9.5, 9.9, 37)],
             incomplete=[2],
         ),
     )
 
     assert conn.execute("SELECT exchange_rowid, peer, reason FROM decisions").fetchall() == [(1, "primary", "QUEUED")]
-    assert conn.execute("SELECT * FROM links").fetchall() == [("cp", "primary", 9.0, 0)]
+    assert conn.execute("SELECT * FROM links").fetchall() == [("cp", "primary", 9.0, 0, "dropped without close frame")]
     assert conn.execute("SELECT * FROM monitor_gaps").fetchall() == [("cp", 9.5, 9.9, 37)]
     assert conn.execute("SELECT exchange_id FROM exchanges WHERE incomplete").fetchall() == [(2,)]
 

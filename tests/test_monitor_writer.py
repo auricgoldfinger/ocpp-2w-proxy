@@ -80,7 +80,7 @@ async def test_each_changed_summary_and_each_link_change_is_published_once(store
     subscription = live.subscribe()
     writer = new_writer(store, recorders, live)
     recorder = recorders.recorder_for(CP)
-    recorder.link_changed("primary", True)
+    recorder.link_changed("primary", True, "boot replayed")
     forwarded(recorder, 2)
 
     await run_writer(writer)
@@ -91,7 +91,7 @@ async def test_each_changed_summary_and_each_link_change_is_published_once(store
     events = [frame.split(b"\n")[0] for frame in frames]
     assert events == [b"event: link", b"event: exchange", b"event: exchange"]
     link = json.loads(frames[0].split(b"data: ")[1])
-    assert (link["charger_id"], link["peer"], link["up"]) == (CP, "primary", True)
+    assert (link["charger_id"], link["peer"], link["up"], link["note"]) == (CP, "primary", True, "boot replayed")
 
 
 async def test_never_more_than_fifty_events_between_yields(store, monkeypatch):

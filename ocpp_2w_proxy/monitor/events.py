@@ -17,7 +17,7 @@ class EventKind(StrEnum):
     RECEIVED = "received"  # message: the frame read from ``peer``
     SENT = "sent"  # message: the frame written to ``peer``
     DECIDED = "decided"  # message: the Call; reason and detail set
-    LINK = "link"  # message None; detail: True when the link to ``peer`` came up, False when it went down
+    LINK = "link"  # message None; detail: (up, note), up True when the link to ``peer`` came up; note str | None
 
 
 class FlowEvent(NamedTuple):

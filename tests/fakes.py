@@ -54,6 +54,7 @@ class RecordingFlow:
         self.frames: list[tuple[str, str, Message]] = []  # ("received" | "sent", peer, message)
         self.decisions: list[Decision] = []
         self.links: list[tuple[str, bool]] = []
+        self.link_notes: list[tuple[str, bool, str | None]] = []
 
     def received(self, peer: str, message: Message) -> None:
         self.frames.append(("received", peer, message))
@@ -64,8 +65,9 @@ class RecordingFlow:
     def decided(self, peer: str, call: Call, reason: Reason, detail: object = None) -> None:
         self.decisions.append(Decision(peer, call, reason, detail))
 
-    def link_changed(self, peer: str, up: bool) -> None:
+    def link_changed(self, peer: str, up: bool, note: str | None = None) -> None:
         self.links.append((peer, up))
+        self.link_notes.append((peer, up, note))
 
     def reasons(self) -> list[Reason]:
         return [decision.reason for decision in self.decisions]

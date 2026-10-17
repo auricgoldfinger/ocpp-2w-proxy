@@ -29,8 +29,8 @@ def decided(at, peer, call, reason, detail=None):
     return (EventKind.DECIDED, at, CP, peer, call, reason, detail)
 
 
-def link(at, peer, up):
-    return (EventKind.LINK, at, CP, peer, None, None, up)
+def link(at, peer, up, note=None):
+    return (EventKind.LINK, at, CP, peer, None, None, (up, note))
 
 
 def assembler():
@@ -210,13 +210,16 @@ def test_link_down_is_stored_and_turns_a_pending_reply_into_an_orphan():
         [
             received(1.0, "primary", command),
             sent(1.1, "charger", command.with_id("c1")),
-            link(2.0, "charger", False),
+            link(2.0, "charger", False, "dropped without close frame"),
             link(3.0, "charger", True),
             received(4.0, "charger", CallResult("c1", {"status": "Accepted"})),
         ],
     )
 
-    assert [(row.peer, row.up) for row in batch.links] == [("charger", False), ("charger", True)]
+    assert [(row.peer, row.up, row.note) for row in batch.links] == [
+        ("charger", False, "dropped without close frame"),
+        ("charger", True, None),
+    ]
     assert summaries["900"]["origin"] is None
 
 

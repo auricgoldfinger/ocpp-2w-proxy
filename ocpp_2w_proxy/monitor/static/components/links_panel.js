@@ -3,7 +3,10 @@
 
 import { formatCount, formatDateTime, formatDuration, formatRate, formatTime } from "../format.js";
 import { html } from "../html.js";
-import { downtimeText, HISTORY_SECONDS, linkSegments, timelineBar } from "./link_history.js";
+import { downtimeText, HISTORY_SECONDS, linkSegments, outages, timelineBar } from "./link_history.js";
+
+// A blip is a sliver on the 24 h bar, so the newest outages are listed in words as well.
+const LISTED_OUTAGES = 10;
 
 function state(up, since, now) {
   const age = since ? ` for ${formatDuration(now - since)}` : "";
@@ -12,13 +15,26 @@ function state(up, since, now) {
     : html`<span class="state state--down"><span aria-hidden="true">✕</span> down${age}</span>`;
 }
 
+function outageList(segments) {
+  const all = outages(segments);
+  if (all.length === 0) return "";
+  const items = all.slice(0, LISTED_OUTAGES).map((outage) => {
+    const duration = outage.to - outage.from;
+    const reason = outage.note ?? "reason not recorded";
+    const recovery = outage.recovery ? html` · <span class="muted">${outage.recovery}</span>` : "";
+    return html`<li><time>${formatDateTime(outage.from)}</time> · ${formatDuration(duration)} · ${reason}${recovery}</li>`;
+  });
+  const more = all.length > LISTED_OUTAGES ? html`<li class="muted">and ${all.length - LISTED_OUTAGES} earlier</li>` : "";
+  return html`<ul class="outages">${items}${more}</ul>`;
+}
+
 function peerRow(chargerId, peer, history, now) {
   const range = { from: now - HISTORY_SECONDS, now };
   const changes = history.filter((change) => change.charger_id === chargerId && change.peer === peer.name);
   const segments = linkSegments(changes, { up: peer.up, ...range });
   const role = peer.role === "primary" ? html`<span class="role">PRIMARY</span> ` : "";
   const queued = peer.queued > 0 ? html`<span class="queue">⧗ ${peer.queued}</span>` : html`<span class="muted">0</span>`;
-  return html`<tr><th scope="row">${role}${peer.name}</th><td>${state(peer.up, peer.since, now)}</td><td>${queued}</td><td>${formatRate(peer.messages_last_hour)}</td><td class="timeline-cell">${timelineBar(segments, range)}<span class="muted">${downtimeText(segments)}</span></td></tr>`;
+  return html`<tr><th scope="row">${role}${peer.name}</th><td>${state(peer.up, peer.since, now)}</td><td>${queued}</td><td>${formatRate(peer.messages_last_hour)}</td><td class="timeline-cell">${timelineBar(segments, range)}<span class="muted">${downtimeText(segments)}</span>${outageList(segments)}</td></tr>`;
 }
 
 function chargerSection(charger, history, now) {

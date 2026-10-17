@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from operator import attrgetter
 
 from .backend_auth import backend_headers, backend_url
-from .backend_link import CONNECT_ERRORS, BackendLink, BackendUnavailable, send_reply
+from .backend_link import CONNECT_ERRORS, IDLE, SHUTTING_DOWN, BackendLink, BackendUnavailable, send_reply
 from .backoff import Backoff
 from .charger_auth import ChargerIdentity
 from .config import ChargerConfig, SecondaryConfig
@@ -249,6 +249,7 @@ class SecondaryChannel:
     async def _serve(self, link: BackendLink) -> bool:
         """Run one connection until it drops. Returns True if the boot was accepted."""
         self._link = link
+        link.report_up()
         booted = asyncio.Event()
         reader = asyncio.create_task(link.serve(self._dispatch_call))
         sender = asyncio.create_task(self._sync_and_drain(link, booted))
@@ -260,6 +261,8 @@ class SecondaryChannel:
                     logger.error("%s sender failed: %r", self.name, exc)
         finally:
             self._link = None
+            if (cause := self._closing_cause(sender)) is not None:
+                link.mark_closing(cause)  # before the reader is cancelled: that reports the link down
             for task in (reader, sender):
                 task.cancel()
             await asyncio.gather(reader, sender, self._heartbeat.stop(), return_exceptions=True)
@@ -267,6 +270,14 @@ class SecondaryChannel:
             await asyncio.shield(link.close())
             self._drop_transient()
         return booted.is_set()
+
+    def _closing_cause(self, sender: asyncio.Task) -> str | None:
+        """Why the proxy closes a link that may still be up; None when the backend ended it."""
+        if self._worker.closed:
+            return SHUTTING_DOWN
+        if sender.done() and not sender.cancelled() and sender.exception() is None:
+            return IDLE
+        return None
 
     async def _dispatch_call(self, call: Call) -> None:
         await self._routing.dispatch(call, self._link)
@@ -376,6 +387,7 @@ class SecondaryChannel:
             # A silent link is wedged: reconnect and send the message again. A timeout
             # never ends a message's life.
             logger.warning("%s did not answer %s; reconnecting to send it again", self.name, item.call.action)
+            link.mark_closing(f"queued {item.call.action} not answered in time")
             self._delivery_failed = True
             raise BackendUnavailable(f"{self.name} did not answer {item.call.action}") from exc
         finally:

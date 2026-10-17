@@ -16,8 +16,8 @@ class Recording:
     def decided(self, peer, call, reason, detail=None):
         self.calls.append(("decided", peer, call, reason, detail))
 
-    def link_changed(self, peer, up):
-        self.calls.append(("link_changed", peer, up))
+    def link_changed(self, peer, up, note=None):
+        self.calls.append(("link_changed", peer, up, note))
 
 
 class Raising:
@@ -38,9 +38,10 @@ def test_fan_out_reports_to_log_and_monitor():
     flow.received("charger", CALL)
     flow.sent("primary", CallResult("1", {}))
     flow.decided("stats", CALL, Reason.QUEUED, 7)
-    flow.link_changed("stats", False)
+    flow.link_changed("stats", False, "dropped without close frame")
 
     assert log.calls == monitor.calls
+    assert log.calls[-1] == ("link_changed", "stats", False, "dropped without close frame")
     assert [entry[0] for entry in log.calls] == ["received", "sent", "decided", "link_changed"]
 
 

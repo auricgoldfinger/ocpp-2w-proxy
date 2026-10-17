@@ -80,8 +80,11 @@ CREATE TABLE monitor_gaps (
 CREATE INDEX monitor_gaps_charger ON monitor_gaps (charger_id, from_at);
 """
 
+# Why a link went down (who closed it), or how it came up (whether the primary's boot was replayed).
+_LINK_NOTES_V2 = "ALTER TABLE links ADD COLUMN note TEXT;"
+
 # Applied in order; PRAGMA user_version counts how many already ran. Append only, never edit.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1,)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _LINK_NOTES_V2)
 
 # A later write keeps what the first one decided: origin, started_at and not_sent.
 _UPSERT_EXCHANGES = """
@@ -113,7 +116,7 @@ FROM (VALUES {values}) AS v JOIN exchanges AS e ON e.exchange_id = v.column6
 ORDER BY v.column1
 """
 MAX_ROWS_PER_STATEMENT = 500
-_INSERT_LINK = "INSERT INTO links (charger_id, peer, at, up) VALUES (?, ?, ?, ?)"
+_INSERT_LINK = "INSERT INTO links (charger_id, peer, at, up, note) VALUES (?, ?, ?, ?, ?)"
 _INSERT_GAP = "INSERT INTO monitor_gaps (charger_id, from_at, to_at, dropped) VALUES (?, ?, ?, ?)"
 _MARK_INCOMPLETE = "UPDATE exchanges SET incomplete = 1 WHERE exchange_id = ?"
 

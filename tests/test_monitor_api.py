@@ -80,7 +80,7 @@ def write_store(conn):
     db.write_batch(
         conn,
         WriteBatch(
-            links=[LinkRow(CP, "stats", 10.0, False), LinkRow(CP, "stats", NOW - 50, True)],
+            links=[LinkRow(CP, "stats", 10.0, False), LinkRow(CP, "stats", NOW - 50, True, "boot replayed")],
             gaps=[Gap(CP, NOW - 40, NOW - 39, 37)],
         ),
     )
@@ -194,7 +194,7 @@ async def test_session_is_the_transaction_aggregate(monitor):
 async def test_links_merge_the_live_snapshot_with_the_last_day_of_history(monitor):
     assert await get_json(monitor, "/api/links") == {
         **SNAPSHOT,
-        "history": [{"charger_id": CP, "peer": "stats", "at": NOW - 50, "up": True}],
+        "history": [{"charger_id": CP, "peer": "stats", "at": NOW - 50, "up": True, "note": "boot replayed"}],
         "gaps": [{"charger_id": CP, "from_at": NOW - 40, "to_at": NOW - 39, "dropped": 37}],
     }
 

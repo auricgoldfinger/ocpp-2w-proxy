@@ -86,7 +86,8 @@ class BatchAssembler:
     def fold(self, routed: Routed) -> None:
         event, exchange_id = routed.event, routed.exchange_id
         if exchange_id is None:
-            self._links.append(LinkRow(event.charger_id, event.peer, event.at, bool(event.detail)))
+            up, note = event.detail
+            self._links.append(LinkRow(event.charger_id, event.peer, event.at, up, note))
             return
         tracked = self._track(routed)
         projection = tracked.projection
@@ -186,7 +187,8 @@ class BatchAssembler:
         return Routed(event, call.exchange_id)
 
     def _correlate_link(self, event: FlowEvent) -> Routed:
-        if not event.detail:
+        up, _ = event.detail
+        if not up:
             self._outbound.link_down(event.charger_id, event.peer)
             self._inbound.link_down(event.charger_id, event.peer)
         return Routed(event, None)

@@ -275,11 +275,11 @@ async def test_attach_during_backoff_sleep_is_served_and_drained(primary, tmp_pa
         await recovered.stop()
 
 
-async def _attached_channel(primary, tmp_path, traffic=None):
+async def _attached_channel(primary, tmp_path, traffic=None, **primary_config):
     config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
     charger = config.chargers[CHARGER_ID]
     channel = PrimaryChannel(
-        config.primary,
+        replace(config.primary, **primary_config),
         charger,
         StateStore.for_charger(config.proxy.state_dir, CHARGER_ID),
         traffic or TrafficLog(CHARGER_ID, False),
@@ -510,3 +510,132 @@ async def test_the_chargers_boot_answered_from_the_replay(primary, tmp_path):
     finally:
         await channel.close()
     assert flow.decisions == [Decision("primary", call, Reason.BOOT_FROM_REPLAY)]
+
+
+BOOT = {"chargePointVendor": "Grubby"}
+
+
+def _cache_boot(tmp_path) -> None:
+    store = StateStore.for_charger(tmp_path, CHARGER_ID)
+    store.state.boot = BOOT
+    store.save()
+
+
+def _up_notes(flow: RecordingFlow) -> list[str | None]:
+    return [note for peer, up, note in flow.link_notes if peer == "primary" and up]
+
+
+async def _reconnected(primary, channel, flow: RecordingFlow) -> None:
+    """Drop the primary connection and wait until the worker has a new one."""
+    await primary.drop_connection()
+    await _eventually(lambda: flow.links_of("primary") == [True, False, True])
+    await channel.call(Call("hb", "Heartbeat", {}), timeout=3)  # goes out once any replay is over
+
+
+async def test_a_reconnect_within_the_grace_period_skips_the_boot_replay(primary, tmp_path):
+    _cache_boot(tmp_path)
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow, boot_replay_grace=60)
+    try:
+        await primary.wait_for_call("BootNotification")
+        await _reconnected(primary, channel, flow)
+
+        await primary.wait_for_call("Heartbeat")
+        assert primary.actions().count("BootNotification") == 1
+        first, second = _up_notes(flow)
+        assert first == "boot replayed"
+        assert second.startswith("boot replay skipped: down ")
+    finally:
+        await channel.close()
+
+
+async def test_a_reconnect_after_the_grace_period_replays_the_boot(primary, tmp_path):
+    _cache_boot(tmp_path)
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow, boot_replay_grace=0.01)  # the reconnect takes longer
+    try:
+        await primary.wait_for_call("BootNotification")
+        await _reconnected(primary, channel, flow)
+
+        await primary.wait_for_call("BootNotification", count=2)
+        assert _up_notes(flow) == ["boot replayed", "boot replayed"]
+    finally:
+        await channel.close()
+
+
+async def test_a_link_whose_replay_was_rejected_does_not_count_as_booted(primary, tmp_path):
+    rejected = {"status": "Rejected", "currentTime": "2026-01-01T00:00:00Z", "interval": 60}
+    primary.responder = lambda action, payload: (
+        rejected if action == "BootNotification" else FakeCsms().responder(action, payload)
+    )
+    _cache_boot(tmp_path)
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow, boot_replay_grace=60)
+    try:
+        await primary.wait_for_call("BootNotification")
+        await _reconnected(primary, channel, flow)
+
+        await primary.wait_for_call("BootNotification", count=2)
+    finally:
+        await channel.close()
+
+
+async def test_the_chargers_own_accepted_boot_lets_a_quick_reconnect_skip_the_replay(primary, tmp_path):
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow, boot_replay_grace=60)  # nothing cached yet
+    try:
+        reply = await channel.call(Call("b1", "BootNotification", BOOT), timeout=3)
+        assert reply.payload["status"] == "Accepted"
+        await _reconnected(primary, channel, flow)
+
+        await primary.wait_for_call("Heartbeat")
+        assert primary.actions().count("BootNotification") == 1
+        assert _up_notes(flow)[-1].startswith("boot replay skipped: down ")
+    finally:
+        await channel.close()
+
+
+def _down_notes(flow: RecordingFlow) -> list[str | None]:
+    return [note for peer, up, note in flow.link_notes if peer == "primary" and not up]
+
+
+async def test_a_link_given_up_on_a_queued_call_says_so(primary, tmp_path):
+    primary.responder = lambda action, payload: (
+        None if action == "StopTransaction" else FakeCsms().responder(action, payload)
+    )
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow, call_timeout=0.2)
+    try:
+        channel._unavailable(Call("s1", "StopTransaction", {"transactionId": 1}))
+
+        await _eventually(lambda: _down_notes(flow))
+        assert _down_notes(flow)[0].startswith("closed by proxy: queued StopTransaction not answered in time · up ")
+    finally:
+        await channel.close()
+
+
+async def test_a_parked_link_is_closed_as_idle(primary, tmp_path):
+    config = parse(make_raw_config(primary.url, None, tmp_path, primary={"auth": "none"}), {})
+    charger = config.chargers[CHARGER_ID]
+    flow = RecordingFlow()
+    channel = PrimaryChannel(config.primary, charger, StateStore.for_charger(tmp_path, CHARGER_ID), flow)
+
+    async def on_call(call: Call) -> None:
+        pass
+
+    try:
+        token = await channel.attach(ChargerIdentity(charger, None, None), on_call)
+        channel.detach(token)
+
+        await _eventually(lambda: _down_notes(flow))
+        assert _down_notes(flow)[0].startswith("closed by proxy: idle: no session and nothing queued · up ")
+    finally:
+        await channel.close()
+
+
+async def test_closing_the_channel_names_the_shutdown(primary, tmp_path):
+    flow = RecordingFlow()
+    channel = await _attached_channel(primary, tmp_path, flow)
+    await channel.close()
+
+    assert _down_notes(flow)[0].startswith("closed by proxy: proxy shutting down · up ")

@@ -10,11 +10,11 @@
   ],
   "monitor": {"fanout_failures": 0, "dropped_batches": 1},
   "history": [
-    {"charger_id": "99224881", "peer": "stats", "at": 1760530000.0, "up": false},
-    {"charger_id": "99224881", "peer": "stats", "at": 1760530300.0, "up": true},
-    {"charger_id": "99224881", "peer": "primary", "at": 1760536300.0, "up": false},
-    {"charger_id": "99224881", "peer": "primary", "at": 1760536560.0, "up": true},
-    {"charger_id": "99224881", "peer": "stats", "at": 1760536690.0, "up": false}
+    {"charger_id": "99224881", "peer": "stats", "at": 1760530000.0, "up": false, "note": "dropped without close frame · up 2h10m · last frame 12s ago"},
+    {"charger_id": "99224881", "peer": "stats", "at": 1760530300.0, "up": true, "note": null},
+    {"charger_id": "99224881", "peer": "primary", "at": 1760536300.0, "up": false, "note": "closed by primary: 1000 (OK) · up 29m58s · last frame 7m01s ago"},
+    {"charger_id": "99224881", "peer": "primary", "at": 1760536560.0, "up": true, "note": "boot replayed"},
+    {"charger_id": "99224881", "peer": "stats", "at": 1760536690.0, "up": false, "note": null}
   ],
   "gaps": [{"charger_id": "99224881", "from_at": 1760536922.0, "to_at": 1760536924.0, "dropped": 37}]
 }

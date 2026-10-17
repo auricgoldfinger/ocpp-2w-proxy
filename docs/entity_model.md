@@ -45,6 +45,7 @@ A named Primary or Secondary Backend to which the proxy connects.
 | call_timeout | Maximum wait for a backend answer, in seconds | Decimal | 10,2 | Not Null |
 | max_queue | Maximum number of queued Billing Messages per charger | Integer | 10 | Not Null, Default 10,000, Min 10,000 |
 | outage_grace | Seconds a Primary Backend outage is hidden from the charger before its connection is closed | Decimal | 10,2 | Primary Backend only, Default 30, Min 0 |
+| boot_replay_grace | Seconds after losing a booted Primary Backend connection within which a reconnect skips the boot replay | Decimal | 10,2 | Primary Backend only, Default 0 (always replay), Min 0 |
 | forward_actions | Message types from the charger also sent to this Secondary Backend | List of String | - | Secondary Backends only |
 
 #### Constraints

@@ -74,6 +74,7 @@ class LinkRow(NamedTuple):
     peer: str
     at: float
     up: bool
+    note: str | None = None  # why it went down, or how it came up
 
 
 class WriteBatch(NamedTuple):

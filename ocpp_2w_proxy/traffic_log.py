@@ -35,7 +35,7 @@ class TrafficLog:
     def decided(self, peer: str, call: Call, reason: Reason, detail: object = None) -> None:
         """Decisions are logged where they are made, in the relay's own words."""
 
-    def link_changed(self, peer: str, up: bool) -> None:
+    def link_changed(self, peer: str, up: bool, note: str | None = None) -> None:
         """Link changes are logged where they happen."""
 
     def _frame(self, source: str, target: str, message: Message) -> None:

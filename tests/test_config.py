@@ -360,6 +360,14 @@ def test_queue_defaults_to_the_minimum_capacity():
     assert config.secondaries[0].max_queue == 10_000
 
 
+def test_primary_boot_replay_grace_is_off_by_default_and_can_be_set():
+    assert parse(raw(), {"TAP": "pw"}).primary.boot_replay_grace == 0
+    config = parse(raw(primary={"url": "wss://p", "boot_replay_grace": 60}), {"TAP": "pw"})
+    assert config.primary.boot_replay_grace == 60
+    with pytest.raises(ConfigError):
+        parse(raw(primary={"url": "wss://p", "boot_replay_grace": -1}), {"TAP": "pw"})
+
+
 def test_primary_outage_grace_defaults_and_can_be_set():
     assert parse(raw(), {"TAP": "pw"}).primary.outage_grace == 30
     config = parse(raw(primary={"url": "wss://p", "outage_grace": 0}), {"TAP": "pw"})
