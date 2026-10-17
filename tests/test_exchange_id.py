@@ -34,13 +34,9 @@ class _RecordingLink:
         return CallResult(call.id, {})
 
 
-def test_every_new_call_gets_a_fresh_exchange_id():
+def test_every_new_call_gets_a_fresh_exchange_id_that_does_not_affect_equality_or_repr():
     first, second = Call("1", "Heartbeat", {}), Call("1", "Heartbeat", {})
     assert first.exchange_id != second.exchange_id
-
-
-def test_exchange_id_does_not_affect_equality_or_repr():
-    first, second = Call("1", "Heartbeat", {}), Call("1", "Heartbeat", {})
     assert first == second
     assert "exchange_id" not in repr(first)
 

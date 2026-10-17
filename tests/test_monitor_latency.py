@@ -1,7 +1,7 @@
 """The monitor never slows the relay (docs/plans/flow-monitor.md, "Performance budget" and "Verification").
 
 The default suite stresses it: a store whose every write takes 0.5 s (far slower than events come in), a live
-client that never reads, and a burst of 1000 relayed messages. The relay must finish, no loop callback from monitor
+client that never reads, and a burst of 1000 relayed MeterValues. The relay must finish, no loop callback from monitor
 code may take 5 ms or more, and the events the monitor could not keep must show up as a gap and in the drop
 counters.
 
@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from conftest import CHARGER_ID, make_raw_config
-from fakes import FakeCharger, http_exchange
+from fakes import FakeCharger, eventually, http_exchange, with_transaction
 
 from ocpp_2w_proxy.config import parse
 from ocpp_2w_proxy.monitor import db
@@ -35,6 +35,10 @@ TASK_NAME = re.compile(r"Executing <Task \w+ name='([^']*)'")
 FIRST_SOURCE = re.compile(r" at (/\S+?):\d+")
 MONITOR_TASK_PREFIX = "monitor-"
 MONITOR_PATHS = ("/ocpp_2w_proxy/monitor/", "/ocpp_2w_proxy/minihttp.py", "/ocpp_2w_proxy/flow.py")
+
+
+def meter_values(i: int) -> dict:
+    return {"connectorId": 1, "transactionId": 1, "meterValue": [{"sampledValue": [{"value": str(i), "unit": "Wh"}]}]}
 
 
 def slow_write_batch(conn, batch):
@@ -66,23 +70,29 @@ async def links(port: int) -> dict:
 
 
 async def test_a_stalled_store_and_a_stuck_client_never_slow_the_relay(
-    start_proxy, proxies, primary, monkeypatch, debug_loop, caplog
+    start_proxy, proxies, primary, secondary, monkeypatch, debug_loop, caplog
 ):
+    """MeterValues the secondary gets with its own transaction id: the frames that cost the monitor the most."""
     monkeypatch.setattr(writer_module, "write_batch", slow_write_batch)
-    url = await start_proxy(primary.url, monitor={})
+    secondary.responder = with_transaction(77)
+    url = await start_proxy(primary.url, secondary.url, monitor={})
     port = proxies[0].monitor_port
     stuck = await never_reading_live_client(port)
     charger = await FakeCharger.connect(url, CHARGER_ID)
     await primary.connected.wait()
+    await secondary.connected.wait()
+    await charger.call("StartTransaction", {"connectorId": 1, "idTag": "04A1B2C3D4", "meterStart": 0, "timestamp": "t"})
+    await eventually(lambda: [action for action, _ in secondary.calls] == ["StartTransaction"])
 
     with caplog.at_level(logging.WARNING, logger="asyncio"):
         replies = await asyncio.wait_for(
-            asyncio.gather(*(charger.call("Heartbeat", {}, timeout=30) for _ in range(BURST))), 30
+            asyncio.gather(*(charger.call("MeterValues", meter_values(i), timeout=30) for i in range(BURST))), 30
         )
     slow_monitor_callbacks = [record.getMessage() for record in caplog.records if is_slow_monitor_callback(record)]
 
     assert len(replies) == BURST and all(reply[0] == 3 for reply in replies)
     assert slow_monitor_callbacks == []
+    await eventually(lambda: any(payload["transactionId"] == 77 for _, payload in secondary.calls[1:]))
     charger_monitor = (await links(port))["chargers"][0]["monitor"]
     assert charger_monitor["dropped"] > 0 and charger_monitor["last_drop_at"] is not None
     gaps = await until_gap_stored(port)

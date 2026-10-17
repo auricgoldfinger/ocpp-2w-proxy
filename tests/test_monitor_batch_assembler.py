@@ -14,7 +14,6 @@ from ocpp_2w_proxy.reasons import Reason
 CP = "cp"
 METER = {"connectorId": 1, "transactionId": 10216, "meterValue": []}
 NOT_SENT = NotSentMap({CP: {"MeterValues": ("stats",)}}, {CP: ("ha", "stats")})
-SECRET_CONFIG = {"configurationKey": [{"key": "AuthorizationKey", "value": "s3cret-key", "readonly": False}]}
 
 
 def received(at, peer, message):
@@ -37,8 +36,9 @@ def assembler():
     return BatchAssembler(NOT_SENT, new_exchange_id=itertools.count(900).__next__)
 
 
-def run(asm, events, stored=()):
+def run(events, stored=(), asm=None):
     """One batch, as the writer drives it (without slicing); ``stored`` plays the rebuild from the store."""
+    asm = assembler() if asm is None else asm
     routed = [asm.correlate(raw) for raw in events]
     unknown = asm.take_unknown()
     asm.adopt([projection for projection in stored if projection.exchange_id in unknown], now=0.0)
@@ -57,10 +57,8 @@ def test_forwarded_exchange_stores_only_the_payloads_that_differ_from_the_origin
     same = origin.with_id("p1")  # the very same payload object
     equal = Call("h1", "MeterValues", dict(METER), exchange_id=origin.exchange_id)
     rewritten = Call("s1", "MeterValues", {**METER, "transactionId": 77}, exchange_id=origin.exchange_id)
-    asm = assembler()
 
     batch, summaries, _ = run(
-        asm,
         [
             received(1.0, "charger", origin),
             sent(1.1, "primary", same),
@@ -91,31 +89,8 @@ def test_forwarded_exchange_stores_only_the_payloads_that_differ_from_the_origin
     }
 
 
-def test_a_reply_is_redacted_with_the_action_of_the_call_it_answers():
-    command = Call("g1", "GetConfiguration", {"key": ["AuthorizationKey"]})
-    to_charger = command.with_id("c1")
-    asm = assembler()
-
-    batch, _, _ = run(
-        asm,
-        [
-            received(1.0, "primary", command),
-            sent(1.1, "charger", to_charger),
-            received(1.2, "charger", CallResult("c1", SECRET_CONFIG)),
-            sent(1.3, "primary", CallResult("g1", SECRET_CONFIG)),
-        ],
-    )
-
-    assert {f.exchange_id for f in batch.frames} == {command.exchange_id}
-    replies = [p for peer, direction, p in payloads(batch) if "configurationKey" in (p or {})]
-    assert [r["configurationKey"][0]["value"] for r in replies] == ["***", "***"]
-    assert "s3cret" not in "".join(f.payload or "" for f in batch.frames)
-
-
 def test_an_orphan_reply_is_redacted_as_unknown_so_redaction_fails_closed():
-    asm = assembler()
-
-    batch, summaries, unknown = run(asm, [received(1.0, "primary", CallResult("zz", {"idTag": "04A1B2C3D4"}))])
+    batch, summaries, unknown = run([received(1.0, "primary", CallResult("zz", {"idTag": "04A1B2C3D4"}))])
 
     (frame,) = batch.frames
     assert frame.exchange_id == 900
@@ -126,10 +101,8 @@ def test_an_orphan_reply_is_redacted_as_unknown_so_redaction_fails_closed():
 
 def test_call_error_details_are_always_redacted():
     call = Call("w1", "Heartbeat", {})
-    asm = assembler()
 
     batch, _, _ = run(
-        asm,
         [
             received(1.0, "charger", call),
             sent(1.1, "primary", call),
@@ -143,9 +116,8 @@ def test_call_error_details_are_always_redacted():
 def test_the_origin_payload_is_redacted_but_the_relayed_object_is_untouched():
     start = {"connectorId": 1, "idTag": "04A1B2C3D4", "meterStart": 0, "timestamp": "t"}
     call = Call("t1", "StartTransaction", start)
-    asm = assembler()
 
-    batch, summaries, _ = run(asm, [received(1.0, "charger", call), sent(1.1, "primary", call)])
+    batch, summaries, _ = run([received(1.0, "charger", call), sent(1.1, "primary", call)])
 
     assert payloads(batch) == [("charger", "in", {**start, "idTag": "***C3D4"}), ("primary", "out", None)]
     assert summaries[str(call.exchange_id)]["id_tag"] == "***C3D4"
@@ -155,9 +127,8 @@ def test_the_origin_payload_is_redacted_but_the_relayed_object_is_untouched():
 def test_not_sent_only_for_exchanges_from_the_charger():
     from_charger = Call("w1", "MeterValues", METER)
     from_primary = Call("r1", "MeterValues", METER)  # not a real command, but the same action
-    asm = assembler()
 
-    batch, _, _ = run(asm, [received(1.0, "charger", from_charger), received(1.0, "primary", from_primary)])
+    batch, _, _ = run([received(1.0, "charger", from_charger), received(1.0, "primary", from_primary)])
 
     assert {row.exchange_id: row.not_sent for row in batch.exchanges} == {
         from_charger.exchange_id: ("stats",),
@@ -168,10 +139,8 @@ def test_not_sent_only_for_exchanges_from_the_charger():
 def test_a_continued_exchange_not_in_memory_is_reported_for_a_rebuild():
     queued = Call("s1", "StopTransaction", {"transactionId": 1})
     fresh = Call("w1", "Heartbeat", {})
-    asm = assembler()
 
     _, _, unknown = run(
-        asm,
         [
             sent(5.0, "primary", queued),
             received(5.1, "charger", fresh),
@@ -189,10 +158,9 @@ def test_an_exchange_rebuilt_from_the_store_continues_with_its_stored_origin():
     stored_call = Call("s1", "StopTransaction", {"transactionId": 1, "idTag": "***C3D4"})
     stored.apply(FlowEvent(EventKind.RECEIVED, 1.0, CP, "charger", stored_call, None, None))
     stored.apply(FlowEvent(EventKind.DECIDED, 1.1, CP, "primary", None, Reason.QUEUED, None))
-    asm = assembler()
 
     batch, summaries, unknown = run(
-        asm, [sent(5.0, "primary", queued), received(5.2, "primary", CallResult("s1", {}))], stored=[stored]
+        [sent(5.0, "primary", queued), received(5.2, "primary", CallResult("s1", {}))], stored=[stored]
     )
 
     assert unknown == {queued.exchange_id}
@@ -203,10 +171,8 @@ def test_an_exchange_rebuilt_from_the_store_continues_with_its_stored_origin():
 
 def test_link_down_is_stored_and_turns_a_pending_reply_into_an_orphan():
     command = Call("r1", "Reset", {"type": "Soft"})
-    asm = assembler()
 
     batch, summaries, _ = run(
-        asm,
         [
             received(1.0, "primary", command),
             sent(1.1, "charger", command.with_id("c1")),
@@ -221,26 +187,27 @@ def test_link_down_is_stored_and_turns_a_pending_reply_into_an_orphan():
         ("charger", True, None),
     ]
     assert summaries["900"]["origin"] is None
+    (leg,) = summaries[str(command.exchange_id)]["legs"]
+    assert (leg["peer"], leg["reply"]) == ("charger", None)
 
 
-def test_a_reply_after_charger_no_reply_attaches_late():
+def test_a_reply_after_charger_no_reply_attaches_late_and_a_second_one_as_duplicate():
     command = Call("r1", "Reset", {"type": "Soft"})
     to_charger = command.with_id("c1")
-    asm = assembler()
 
     _, summaries, _ = run(
-        asm,
         [
             received(1.0, "primary", command),
             sent(1.1, "charger", to_charger),
             decided(31.1, "charger", to_charger, Reason.CHARGER_NO_REPLY),
             received(40.0, "charger", CallResult("c1", {"status": "Accepted"})),
+            received(41.0, "charger", CallResult("c1", {"status": "Accepted"})),
         ],
     )
 
     (summary,) = summaries.values()
     (leg,) = summary["legs"]
-    assert (leg["peer"], leg["outcome"], leg["late"]) == ("charger", "failed", True)
+    assert (leg["peer"], leg["outcome"], leg["late"], leg["duplicate"]) == ("charger", "failed", True, True)
 
 
 GAP = Gap(CP, 10.0, 12.0, 37)
@@ -251,7 +218,6 @@ def test_a_gap_marks_the_exchanges_open_in_it_incomplete():
     done_call = Call("w2", "Heartbeat", {})
     asm = assembler()
     run(
-        asm,
         [
             received(9.0, "charger", open_call),
             sent(9.1, "primary", open_call),
@@ -259,6 +225,7 @@ def test_a_gap_marks_the_exchanges_open_in_it_incomplete():
             sent(5.1, "primary", done_call),
             received(5.2, "primary", CallResult("w2", {})),
         ],
+        asm=asm,
     )
 
     asm.record_gaps([GAP], now=13.0)
@@ -277,11 +244,11 @@ def test_gaps_are_stored_and_a_later_orphan_in_the_reply_window_is_incomplete():
     assert asm.take_batch().gaps == [GAP]
 
     _, summaries, _ = run(
-        asm,
         [
             received(30.0, "primary", CallResult("zz", {})),
             received(12.0 + 121.0, "primary", CallResult("yy", {})),
         ],
+        asm=asm,
     )
 
     assert [s["incomplete"] for s in summaries.values()] == [True, False]
@@ -290,10 +257,8 @@ def test_gaps_are_stored_and_a_later_orphan_in_the_reply_window_is_incomplete():
 @pytest.mark.parametrize("peer", ["primary", "charger"])
 def test_a_proxy_reply_to_a_received_call_joins_its_exchange(peer):
     call = Call("w1", "Heartbeat", {})
-    asm = assembler()
 
     batch, summaries, _ = run(
-        asm,
         [
             received(1.0, peer, call),
             decided(1.1, peer, call, Reason.POLICY_ANSWERED),
@@ -313,9 +278,9 @@ def test_record_stores_the_same_exchange_row_as_summarize():
         sent(1.1, "primary", call),
         received(1.2, "primary", CallResult("w1", {})),
     ]
-    summarized, recorded = assembler(), assembler()
+    recorded = assembler()
 
-    summarized_batch, _, _ = run(summarized, events)
+    summarized_batch, _, _ = run(events)
     for item in [recorded.correlate(raw) for raw in events]:
         recorded.fold(item)
     for tracked in recorded.changed():

@@ -5,10 +5,15 @@ from ocpp_2w_proxy.monitor.correlator import Correlator, ReplyFlags
 ON_TIME = ReplyFlags(late=False, duplicate=False)
 
 
-def test_reply_resolves_to_the_registered_exchange():
+@pytest.fixture
+def correlator():
+    """A correlator that has sent w1 to the primary for exchange 7."""
     correlator = Correlator()
     correlator.register_sent("cp", "primary", "w1", 7, at=0.0)
+    return correlator
 
+
+def test_reply_resolves_to_the_registered_exchange(correlator):
     assert correlator.resolve_reply("cp", "primary", "w1", at=1.0) == (7, ON_TIME)
     assert len(correlator) == 0
 
@@ -17,16 +22,11 @@ def test_reply_resolves_to_the_registered_exchange():
     ("charger", "peer", "wire_id"),
     [("other", "primary", "w1"), ("cp", "stats", "w1"), ("cp", "primary", "w2")],
 )
-def test_reply_with_a_different_key_is_an_orphan(charger, peer, wire_id):
-    correlator = Correlator()
-    correlator.register_sent("cp", "primary", "w1", 7, at=0.0)
-
+def test_reply_with_a_different_key_is_an_orphan(charger, peer, wire_id, correlator):
     assert correlator.resolve_reply(charger, peer, wire_id, at=1.0) is None
 
 
-def test_second_reply_attaches_as_duplicate():
-    correlator = Correlator()
-    correlator.register_sent("cp", "primary", "w1", 7, at=0.0)
+def test_second_reply_attaches_as_duplicate(correlator):
     correlator.resolve_reply("cp", "primary", "w1", at=1.0)
 
     assert correlator.resolve_reply("cp", "primary", "w1", at=2.0) == (7, ReplyFlags(late=False, duplicate=True))
@@ -49,18 +49,14 @@ def test_mark_timed_out_of_an_unknown_entry_is_ignored():
     assert len(correlator) == 0
 
 
-def test_retry_under_a_new_wire_id_gets_its_own_entry():
-    correlator = Correlator()
-    correlator.register_sent("cp", "primary", "w1", 7, at=0.0)
+def test_retry_under_a_new_wire_id_gets_its_own_entry(correlator):
     correlator.register_sent("cp", "primary", "w2", 7, at=5.0)
 
     assert correlator.resolve_reply("cp", "primary", "w2", at=6.0) == (7, ON_TIME)
     assert correlator.resolve_reply("cp", "primary", "w1", at=7.0) == (7, ON_TIME)
 
 
-def test_link_down_clears_only_that_peers_entries_and_tombstones():
-    correlator = Correlator()
-    correlator.register_sent("cp", "primary", "w1", 7, at=0.0)
+def test_link_down_clears_only_that_peers_entries_and_tombstones(correlator):
     correlator.register_sent("cp", "primary", "w2", 8, at=0.0)
     correlator.register_sent("cp", "stats", "w1", 9, at=0.0)
     correlator.resolve_reply("cp", "primary", "w2", at=1.0)

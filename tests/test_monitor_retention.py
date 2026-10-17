@@ -2,49 +2,27 @@ import asyncio
 import sqlite3
 
 import pytest
+from monitor_events import exchange_row
 
 from ocpp_2w_proxy.monitor import db
 from ocpp_2w_proxy.monitor.gaps import Gap
 from ocpp_2w_proxy.monitor.retention import RetentionPurge
-from ocpp_2w_proxy.monitor.rows import ExchangeRow, LinkRow, WriteBatch
-from ocpp_2w_proxy.monitor.sqlite_worker import SqliteWorker
+from ocpp_2w_proxy.monitor.rows import LinkRow, WriteBatch
 
 DAY = 86_400.0
 NOW = 100 * DAY
 
 
-def row(exchange_id, last_at):
-    return ExchangeRow(
-        exchange_id=exchange_id,
-        charger_id="cp",
-        origin="charger",
-        action="Heartbeat",
-        started_at=last_at,
-        last_at=last_at,
-        outcome="delivered",
-        problem=False,
-        incomplete=False,
-        transaction_id=None,
-        connector_id=None,
-        id_tag=None,
-        not_sent=(),
-        headline=None,
-    )
-
-
 @pytest.fixture
-async def store(tmp_path):
-    worker = SqliteWorker(tmp_path / "monitor.sqlite", readonly=False)
-    await worker.run(db.prepare_writer)
+async def store(monitor_store):
     old, recent = NOW - 91 * DAY, NOW - 89 * DAY
     batch = WriteBatch(
-        exchanges=[row(i, old) for i in range(5)] + [row(100, recent)],
+        exchanges=[exchange_row(i, last_at=old) for i in range(5)] + [exchange_row(100, last_at=recent)],
         links=[LinkRow("cp", "primary", old, True), LinkRow("cp", "primary", recent, False)],
         gaps=[Gap("cp", old, old, 3)],
     )
-    await worker.run(db.write_batch, batch)
-    yield worker
-    await worker.close()
+    await monitor_store.run(db.write_batch, batch)
+    return monitor_store
 
 
 async def count(store, table):
@@ -69,11 +47,7 @@ async def test_purge_deletes_rows_past_retention_one_chunk_per_job(store):
 
     assert deleted == 5 + 1 + 1
     assert jobs.jobs == 4  # 2 + 2 + 1 exchanges (the link and gap ride along), then an empty chunk
-    assert (await count(store, "exchanges"), await count(store, "links"), await count(store, "monitor_gaps")) == (
-        1,
-        1,
-        0,
-    )
+    assert [await count(store, table) for table in ("exchanges", "links", "monitor_gaps")] == [1, 1, 0]
 
 
 async def test_purge_yields_to_the_loop_between_chunks(store, monkeypatch):
@@ -98,7 +72,7 @@ async def test_the_task_purges_at_start_and_again_every_interval(store):
     purge.start()
     await asyncio.sleep(0.02)
     assert await count(store, "exchanges") == 1
-    await store.run(db.write_batch, WriteBatch(exchanges=[row(7, 0.0)]))
+    await store.run(db.write_batch, WriteBatch(exchanges=[exchange_row(7, last_at=0.0)]))
     await asyncio.sleep(0.08)
     await purge.close()
 

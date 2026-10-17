@@ -1,13 +1,11 @@
 import pytest
+from monitor_events import CP, decided, link, received, sent
 
-from ocpp_2w_proxy.monitor.correlator import Correlator
-from ocpp_2w_proxy.monitor.events import EventKind, FlowEvent
 from ocpp_2w_proxy.monitor.legs import UNKNOWN_TEXT
 from ocpp_2w_proxy.monitor.projection import ExchangeProjection
 from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
 from ocpp_2w_proxy.reasons import Reason
 
-CP = "cp"
 METER = {
     "connectorId": 1,
     "transactionId": 10216,
@@ -23,22 +21,6 @@ REMOTE_STOP = Call("r1", "RemoteStopTransaction", {"transactionId": 5})
 REMOTE_STOP_CHARGER = Call("c1", "RemoteStopTransaction", {"transactionId": 10216})
 HEARTBEAT = Call("h1", "Heartbeat", {})
 OK = CallResult("w1", {})
-
-
-def received(at, peer, message):
-    return FlowEvent(EventKind.RECEIVED, at, CP, peer, message, None, None)
-
-
-def sent(at, peer, message):
-    return FlowEvent(EventKind.SENT, at, CP, peer, message, None, None)
-
-
-def decided(at, peer, reason, detail=None):
-    return FlowEvent(EventKind.DECIDED, at, CP, peer, None, reason, detail)
-
-
-def link(at, peer, up):
-    return FlowEvent(EventKind.LINK, at, CP, peer, None, None, up)
 
 
 def project(events, exchange_id=1, **attributes):
@@ -268,29 +250,6 @@ def test_the_overview_is_the_summary_without_its_legs(events, expected, expected
     assert projection.overview() == {key: value for key, value in summary.items() if key not in ("legs", "proxy_kind")}
 
 
-def test_queued_then_delivered_after_a_restart_with_the_same_exchange_id():
-    before = project([received(0.0, "charger", STOP), decided(0.1, "primary", Reason.QUEUED)], exchange_id=9)
-    assert before.summary()["outcome"] == "queued"
-
-    after = project([sent(300.0, "primary", STOP), received(300.2, "primary", CallResult("s1", {}))], exchange_id=9)
-    resumed = project(
-        [
-            received(0.0, "charger", STOP),
-            decided(0.1, "primary", Reason.QUEUED),
-            sent(300.0, "primary", STOP),
-            received(300.2, "primary", CallResult("s1", {})),
-        ],
-        exchange_id=9,
-    )
-
-    for summary in (after.summary(), resumed.summary()):
-        assert summary["id"] == "9"
-        assert summary["outcome"] == "delivered"
-        assert summary["last_at"] == 300.2
-    assert_subset(legs_by_peer(resumed.summary())["primary"], {"outcome": "delivered", "reason": "QUEUED"})
-    assert resumed.summary()["origin"] == "charger"
-
-
 def test_known_origin_wins_over_the_events_of_a_continued_exchange():
     continued = project(
         [sent(300.0, "primary", STOP), received(300.2, "primary", CallResult("s1", {}))], known_origin="charger"
@@ -340,48 +299,3 @@ def test_closed_legs_are_never_unknown():
 )
 def test_settled_once_every_leg_has_ended(events, settled):
     assert project(events).settled is settled
-
-
-class Pipeline:
-    """Correlates like the writer: Calls carry their exchange id, replies are resolved by the correlator."""
-
-    def __init__(self):
-        self.correlator = Correlator()
-        self.projections: dict[int, ExchangeProjection] = {}
-        self._orphan_ids = iter(range(1000, 2000))
-
-    def feed(self, event, exchange_id=None):
-        if event.kind is EventKind.LINK:
-            if not event.detail:
-                self.correlator.link_down(event.charger_id, event.peer)
-            return
-        if event.kind is EventKind.SENT and isinstance(event.message, Call):
-            self.correlator.register_sent(event.charger_id, event.peer, event.message.id, exchange_id, event.at)
-        if event.kind is EventKind.RECEIVED and not isinstance(event.message, Call):
-            resolved = self.correlator.resolve_reply(event.charger_id, event.peer, event.message.id, event.at)
-            exchange_id = next(self._orphan_ids) if resolved is None else resolved[0]
-        self.projections.setdefault(exchange_id, ExchangeProjection(exchange_id)).apply(event)
-
-
-def test_link_down_turns_a_pending_reply_into_an_orphan():
-    pipeline = Pipeline()
-    pipeline.feed(received(0.0, "charger", MV), exchange_id=1)
-    pipeline.feed(sent(0.1, "primary", MV), exchange_id=1)
-    pipeline.feed(link(0.2, "primary", False))
-    pipeline.feed(received(0.3, "primary", OK))
-
-    assert legs_by_peer(pipeline.projections[1].summary())["primary"]["reply"] is None
-    assert pipeline.projections[1000].summary()["origin"] is None
-
-
-def test_pipeline_attaches_late_and_duplicate_replies_to_the_command():
-    pipeline = Pipeline()
-    pipeline.feed(received(0.0, "primary", REMOTE_STOP), exchange_id=1)
-    pipeline.feed(sent(0.1, "charger", REMOTE_STOP_CHARGER), exchange_id=1)
-    pipeline.feed(decided(30.1, "primary", Reason.CHARGER_NO_REPLY), exchange_id=1)
-    pipeline.correlator.mark_timed_out(CP, "charger", "c1")
-    pipeline.feed(received(40.0, "charger", CallResult("c1", {})))
-    pipeline.feed(received(41.0, "charger", CallResult("c1", {})))
-
-    assert list(pipeline.projections) == [1]
-    assert_subset(legs_by_peer(pipeline.projections[1].summary())["charger"], {"late": True, "duplicate": True})

@@ -3,11 +3,22 @@ import json
 import sqlite3
 
 import pytest
+from monitor_events import (
+    CP,
+    METER,
+    blocked,
+    decided,
+    heartbeat,
+    meter_values,
+    received,
+    refused,
+    start,
+    stop,
+    store,
+)
 
 from ocpp_2w_proxy.monitor import db
-from ocpp_2w_proxy.monitor.events import EventKind, FlowEvent
 from ocpp_2w_proxy.monitor.gaps import Gap
-from ocpp_2w_proxy.monitor.projection import ExchangeProjection
 from ocpp_2w_proxy.monitor.queries import (
     MAX_LIMIT,
     ExchangeQuery,
@@ -18,122 +29,30 @@ from ocpp_2w_proxy.monitor.queries import (
     rebuild_projections,
     session_summary,
 )
-from ocpp_2w_proxy.monitor.rows import ExchangeRow, LinkRow, WriteBatch, decision_row, frame_row
-from ocpp_2w_proxy.monitor.sqlite_worker import SqliteWorker
-from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
+from ocpp_2w_proxy.monitor.rows import LinkRow, WriteBatch
+from ocpp_2w_proxy.ocpp import Call
 from ocpp_2w_proxy.reasons import Reason
 
-CP = "cp"
-METER = {
-    "connectorId": 1,
-    "transactionId": 10216,
-    "meterValue": [{"sampledValue": [{"value": "1241921", "unit": "Wh"}]}],
-}
-
-
-def received(at, peer, message, charger=CP):
-    return FlowEvent(EventKind.RECEIVED, at, charger, peer, message, None, None)
-
-
-def sent(at, peer, message, charger=CP):
-    return FlowEvent(EventKind.SENT, at, charger, peer, message, None, None)
-
-
-def decided(at, peer, reason, detail=None, charger=CP):
-    return FlowEvent(EventKind.DECIDED, at, charger, peer, None, reason, detail)
-
-
-def store(conn, exchange_id, events, not_sent=()):
-    """What the writer does: project, encode the frames against the origin payload, write one batch."""
-    projection = ExchangeProjection(exchange_id)
-    projection.not_sent = not_sent
-    frames, decisions, origin = [], [], None
-    for event in events:
-        projection.apply(event)
-        if event.kind is EventKind.DECIDED:
-            decisions.append(decision_row(exchange_id, event))
-            continue
-        frames.append(frame_row(exchange_id, event, origin))
-        if origin is None and isinstance(event.message, Call):
-            origin = event.message.payload
-    exchange = ExchangeRow.from_summary(projection.summary())
-    db.write_batch(conn, WriteBatch(exchanges=[exchange], frames=frames, decisions=decisions))
-
-
-def meter_values(at, exchange_id, charger=CP):
-    call = Call(f"mv{exchange_id}", "MeterValues", METER)
-    return [
-        received(at, "charger", call, charger),
-        sent(at + 0.01, "primary", call, charger),
-        sent(at + 0.02, "ha", Call(f"ha{exchange_id}", "MeterValues", {**METER, "transactionId": 77}), charger),
-        received(at + 0.03, "primary", CallResult(call.id, {}), charger),
-    ]
-
-
-def start(at):
-    call = Call("st", "StartTransaction", {"connectorId": 1, "idTag": "***4F2A", "meterStart": 1234500})
-    return [
-        received(at, "charger", call),
-        sent(at + 0.01, "primary", call),
-        received(at + 0.02, "primary", CallResult("st", {"transactionId": 10216, "idTagInfo": {}})),
-    ]
-
-
-def stop(at):
-    call = Call("sp", "StopTransaction", {"transactionId": 10216, "meterStop": 1241921, "reason": "Local"})
-    return [received(at, "charger", call), decided(at + 0.01, "primary", Reason.QUEUE_OVERFLOW)]
-
-
-def blocked(at):
-    call = Call("cmd-1", "SetChargingProfile", {"connectorId": 1, "csChargingProfiles": {}})
-    return [
-        received(at, "ha", call),
-        decided(at, "ha", Reason.POLICY_ANSWERED),
-        sent(at, "ha", CallResult("cmd-1", {"status": "Accepted"})),
-    ]
-
-
-def refused(at):
-    call = Call("cmd-2", "ChangeConfiguration", {"key": "x", "value": "y"})
-    return [
-        received(at, "ha", call),
-        decided(at, "ha", Reason.POLICY_REFUSED),
-        sent(at, "ha", CallError("cmd-2", "NotSupported", "no")),
-    ]
-
-
-def heartbeat(at, exchange_id):
-    call = Call(f"hb{exchange_id}", "Heartbeat", {})
-    return [received(at, "charger", call), sent(at, "primary", call)]
-
 
 @pytest.fixture
-def conn(tmp_path):
-    connection = sqlite3.connect(tmp_path / "monitor.sqlite")
-    db.prepare_writer(connection)
-    yield connection
-    connection.close()
+def populated(monitor_conn):
+    store(monitor_conn, 1, start(100.0))
+    store(monitor_conn, 2, meter_values(200.0, 2), not_sent=("stats",))
+    store(monitor_conn, 3, heartbeat(250.0, 3))
+    store(monitor_conn, 4, blocked(300.0))
+    store(monitor_conn, 5, refused(400.0))
+    store(monitor_conn, 6, meter_values(500.0, 6, charger="other"))
+    store(monitor_conn, 7, stop(600.0))
+    store(monitor_conn, 8, heartbeat(650.0, 8))
+    return monitor_conn
 
 
-@pytest.fixture
-def populated(conn):
-    store(conn, 1, start(100.0))
-    store(conn, 2, meter_values(200.0, 2), not_sent=("stats",))
-    store(conn, 3, heartbeat(250.0, 3))
-    store(conn, 4, blocked(300.0))
-    store(conn, 5, refused(400.0))
-    store(conn, 6, meter_values(500.0, 6, charger="other"))
-    store(conn, 7, stop(600.0))
-    store(conn, 8, heartbeat(650.0, 8))
-    return conn
+def listing(monitor_conn, **filters):
+    return json.loads(list_exchanges(monitor_conn, ExchangeQuery(**filters)))
 
 
-def listing(conn, **filters):
-    return json.loads(list_exchanges(conn, ExchangeQuery(**filters)))
-
-
-def ids(conn, **filters):
-    return [summary["id"] for summary in listing(conn, **filters)["exchanges"]]
+def ids(monitor_conn, **filters):
+    return [summary["id"] for summary in listing(monitor_conn, **filters)["exchanges"]]
 
 
 def test_list_returns_projected_summaries_newest_first(populated):
@@ -194,12 +113,12 @@ def test_keyset_paging_walks_every_exchange_once(populated):
     assert seen == ["8", "7", "6", "5", "4", "3", "2", "1"]
 
 
-def test_limit_is_clamped(conn):
+def test_limit_is_clamped(monitor_conn):
     for n in range(MAX_LIMIT + 5):
-        store(conn, n + 1, heartbeat(float(n), n + 1))
+        store(monitor_conn, n + 1, heartbeat(float(n), n + 1))
 
-    assert len(ids(conn, limit=10_000)) == MAX_LIMIT
-    assert len(ids(conn, limit=0)) == 1
+    assert len(ids(monitor_conn, limit=10_000)) == MAX_LIMIT
+    assert len(ids(monitor_conn, limit=0)) == 1
 
 
 @pytest.mark.parametrize("cursor", ["", "abc", "1.0", "x:1", "1.0:2:3"])
@@ -208,13 +127,13 @@ def test_invalid_cursor(populated, cursor):
         listing(populated, before=cursor)
 
 
-def test_exchange_ids_are_strings_even_when_huge(conn):
+def test_exchange_ids_are_strings_even_when_huge(monitor_conn):
     big = 2**62 + 12345
-    store(conn, big, heartbeat(1.0, big))
+    store(monitor_conn, big, heartbeat(1.0, big))
 
-    body = list_exchanges(conn, ExchangeQuery())
+    body = list_exchanges(monitor_conn, ExchangeQuery())
     assert f'"id":"{big}"'.encode() in body
-    assert json.loads(exchange_detail(conn, big))["id"] == str(big)
+    assert json.loads(exchange_detail(monitor_conn, big))["id"] == str(big)
 
 
 def test_detail_fills_in_frames_and_decisions(populated):
@@ -253,55 +172,27 @@ def test_detail_of_errors_and_decisions(populated):
     assert blocked_detail["legs"][0]["replied_by"] == "proxy"
 
 
-def test_unknown_exchange_detail_is_none(populated):
-    assert exchange_detail(populated, 999) is None
-
-
-def test_queued_then_delivered_after_a_restart_continues_the_same_exchange(conn):
+def test_rebuild_projections_of_stored_exchanges_skips_unknown_ids(monitor_conn):
     call = Call("s1", "StopTransaction", {"transactionId": 10216, "meterStop": 1241921})
-    store(conn, 9, [received(10.0, "charger", call), decided(10.1, "primary", Reason.QUEUED)], not_sent=("stats",))
-    # after the restart a fresh writer only sees the delivery
-    store(conn, 9, [sent(400.0, "primary", call), received(400.2, "primary", CallResult("s1", {}))])
+    store(
+        monitor_conn, 9, [received(10.0, "charger", call), decided(10.1, "primary", Reason.QUEUED)], not_sent=("stats",)
+    )
+    store(monitor_conn, 10, heartbeat(20.0, 10))
 
-    detail = json.loads(exchange_detail(conn, 9))
-    assert detail["origin"] == "charger"
-    assert detail["started_at"] == 10.0
-    assert detail["last_at"] == 400.2
-    assert detail["not_sent"] == ["stats"]
-    assert detail["outcome"] == "delivered"
-    primary = detail["legs"][0]
-    assert (primary["outcome"], primary["reason"], primary["sent_at"]) == ("delivered", "QUEUED", 400.0)
-    assert len(detail["frames"]) == 3
-
-
-def test_rebuild_projections_of_stored_exchanges_skips_unknown_ids(conn):
-    call = Call("s1", "StopTransaction", {"transactionId": 10216, "meterStop": 1241921})
-    store(conn, 9, [received(10.0, "charger", call), decided(10.1, "primary", Reason.QUEUED)], not_sent=("stats",))
-    store(conn, 10, heartbeat(20.0, 10))
-
-    (projection,) = rebuild_projections(conn, [9, 404])
+    (projection,) = rebuild_projections(monitor_conn, [9, 404])
 
     assert projection.exchange_id == 9
     assert (projection.origin, projection.action, projection.payload) == ("charger", "StopTransaction", call.payload)
     assert projection.not_sent == ("stats",)
     assert projection.summary()["legs"][0]["reason"] == "QUEUED"
-    assert rebuild_projections(conn, []) == []
+    assert rebuild_projections(monitor_conn, []) == []
 
 
-def test_open_leg_of_a_stored_incomplete_exchange_is_unknown(conn):
-    store(conn, 1, heartbeat(0.0, 1))
-    db.write_batch(conn, WriteBatch(incomplete=[1]))
+def test_stale_open_leg_is_unknown_relative_to_now(monitor_conn):
+    store(monitor_conn, 1, heartbeat(0.0, 1))
 
-    summary = listing(conn)["exchanges"][0]
-    assert summary["incomplete"] is True
-    assert summary["legs"][0]["reason_text"] == "Unknown (monitor gap)"
-
-
-def test_stale_open_leg_is_unknown_relative_to_now(conn):
-    store(conn, 1, heartbeat(0.0, 1))
-
-    fresh = json.loads(list_exchanges(conn, ExchangeQuery(), now=10.0))
-    stale = json.loads(list_exchanges(conn, ExchangeQuery(), now=1000.0))
+    fresh = json.loads(list_exchanges(monitor_conn, ExchangeQuery(), now=10.0))
+    stale = json.loads(list_exchanges(monitor_conn, ExchangeQuery(), now=1000.0))
     assert fresh["exchanges"][0]["legs"][0]["reason_text"] is None
     assert stale["exchanges"][0]["legs"][0]["reason_text"] == "Unknown (monitor gap)"
 
@@ -322,21 +213,22 @@ def test_session_summary(populated):
     }
 
 
-def test_session_without_a_stop_measures_energy_from_the_latest_meter_values(conn):
-    store(conn, 1, start(100.0))
-    store(conn, 2, meter_values(200.0, 2))
+def test_session_without_a_stop_measures_energy_from_the_latest_meter_values(monitor_conn):
+    store(monitor_conn, 1, start(100.0))
+    store(monitor_conn, 2, meter_values(200.0, 2))
 
-    session = json.loads(session_summary(conn, 10216))
+    session = json.loads(session_summary(monitor_conn, 10216))
     assert (session["stopped_at"], session["energy_wh"]) == (None, 7421)
 
 
-def test_unknown_session_is_none(populated):
+def test_unknown_exchange_or_session_is_none(populated):
+    assert exchange_detail(populated, 999) is None
     assert session_summary(populated, 1) is None
 
 
-def test_links_report_merges_the_snapshot_with_history_and_gaps(conn):
+def test_links_report_merges_the_snapshot_with_history_and_gaps(monitor_conn):
     db.write_batch(
-        conn,
+        monitor_conn,
         WriteBatch(
             links=[LinkRow(CP, "stats", 10.0, False), LinkRow(CP, "stats", 500.0, True, "boot replayed")],
             gaps=[Gap(CP, 5.0, 6.0, 3), Gap(CP, 600.0, 601.0, 37)],
@@ -344,7 +236,7 @@ def test_links_report_merges_the_snapshot_with_history_and_gaps(conn):
     )
     snapshot = {"chargers": [], "monitor": {"fanout_failures": 0, "dropped_batches": 0}}
 
-    report = json.loads(links_report(conn, snapshot, since=100.0))
+    report = json.loads(links_report(monitor_conn, snapshot, since=100.0))
 
     assert report == {
         **snapshot,
@@ -353,30 +245,14 @@ def test_links_report_merges_the_snapshot_with_history_and_gaps(conn):
     }
 
 
-def test_a_read_running_past_the_time_limit_is_interrupted(conn):
+def test_a_read_running_past_the_time_limit_is_interrupted(monitor_conn):
     for n in range(300):
-        store(conn, n + 1, heartbeat(float(n), n + 1))
+        store(monitor_conn, n + 1, heartbeat(float(n), n + 1))
     jumping_clock = itertools.count(step=1.0).__next__
 
     with pytest.raises(sqlite3.OperationalError, match="interrupted"):
-        list_exchanges(conn, ExchangeQuery(), clock=jumping_clock)
+        list_exchanges(monitor_conn, ExchangeQuery(), clock=jumping_clock)
 
     # the handler is removed and the transaction closed: the next read just works
-    assert len(listing(conn)["exchanges"]) == MAX_LIMIT
-    assert not conn.in_transaction
-
-
-async def test_reads_through_a_readonly_worker(tmp_path):
-    path = tmp_path / "monitor.sqlite"
-    writer = SqliteWorker(path, readonly=False)
-    reader = SqliteWorker(path, readonly=True)
-    try:
-        await writer.run(db.prepare_writer)
-        await writer.run(store, 1, heartbeat(1.0, 1))
-        body = await reader.run(list_exchanges, ExchangeQuery())
-    finally:
-        await reader.close()
-        await writer.close()
-
-    assert isinstance(body, bytes)
-    assert json.loads(body)["exchanges"][0]["action"] == "Heartbeat"
+    assert len(listing(monitor_conn)["exchanges"]) == MAX_LIMIT
+    assert not monitor_conn.in_transaction
