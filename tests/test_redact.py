@@ -12,36 +12,46 @@ from ocpp_2w_proxy.redact import (
     redact_payload,
 )
 
+ID_TAGS = {
+    "idTag": "04A2B3C4D5",
+    "idTagInfo": {"status": "Accepted", "parentIdTag": "PARENT1234"},
+    "localAuthorizationList": [{"idTag": "AB"}],
+}
+SIM_AND_VENDOR = {"iccid": "8931440400000012345", "imsi": "204080000012345", "vendorId": "com.example"}
+HEARTBEAT_INTERVAL = {"key": "HeartbeatInterval", "value": "300"}
+SAMPLE = {"value": "1.2", "measurand": "Energy.Active.Import.Register", "location": "Outlet"}
+METER_VALUES = {"meterValue": [{"sampledValue": [SAMPLE]}]}
 
-def test_redaction_masks_id_tags_everywhere():
-    payload = {
-        "idTag": "04A2B3C4D5",
-        "idTagInfo": {"status": "Accepted", "parentIdTag": "PARENT1234"},
-        "localAuthorizationList": [{"idTag": "AB"}],
-    }
-    redacted = redact_payload(payload)
-    assert redacted["idTag"] == "***C4D5"
-    assert redacted["idTagInfo"]["parentIdTag"] == "***1234"
-    assert redacted["localAuthorizationList"][0]["idTag"] == "***"
-    assert "04A2B3C4D5" not in describe(Call("1", "Authorize", payload), include_payload=True)
-    assert "04A2" not in describe(Call("1", "Authorize", payload), include_payload=False)
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        pytest.param(ID_TAGS, {"idTag": "***C4D5", "idTagInfo": {"status": "Accepted", "parentIdTag": "***1234"},
+                               "localAuthorizationList": [{"idTag": "***"}]}, id="id-tags-everywhere"),
+        pytest.param({"key": "AuthorizationKey", "value": "0011223344556677"},
+                     {"key": "AuthorizationKey", "value": "***"}, id="authorization-key"),
+        pytest.param({"configurationKey": [{"key": "authorizationkey", "readonly": False, "value": "secret"}]},
+                     {"configurationKey": [{"key": "authorizationkey", "readonly": False, "value": "***"}]},
+                     id="authorization-key-in-any-case"),
+        pytest.param({**SIM_AND_VENDOR, "location": "ftp://user:secret@host/fw", "data": '{"pin": "1234"}'},
+                     {"iccid": "***2345", "imsi": "***2345", "vendorId": "com.example",
+                      "location": "ftp://***@host/fw", "data": "***"}, id="location-url-sim-ids-and-vendor-data"),
+        pytest.param(HEARTBEAT_INTERVAL, HEARTBEAT_INTERVAL, id="other-configuration-value-visible"),
+        pytest.param(METER_VALUES, METER_VALUES, id="meter-value-location-kept"),
+    ],
+)  # fmt: skip
+def test_redact_payload(payload, expected):
+    assert redact_payload(payload) == expected
+
+
+def test_describe_masks_id_tags():
+    assert "04A2B3C4D5" not in describe(Call("1", "Authorize", ID_TAGS), include_payload=True)
+    assert "04A2" not in describe(Call("1", "Authorize", ID_TAGS), include_payload=False)
 
 
 def test_credentials_never_printed():
     text = describe_credentials("CH1", "supersecret")
     assert "supersecret" not in text and "present" in text
-
-
-def test_authorization_key_value_is_hidden_case_insensitively():
-    change = redact_payload({"key": "AuthorizationKey", "value": "0011223344556677"})
-    listed = redact_payload({"configurationKey": [{"key": "authorizationkey", "readonly": False, "value": "secret"}]})
-    assert change == {"key": "AuthorizationKey", "value": "***"}
-    assert listed["configurationKey"][0] == {"key": "authorizationkey", "readonly": False, "value": "***"}
-
-
-def test_other_configuration_values_stay_visible():
-    payload = {"key": "HeartbeatInterval", "value": "300"}
-    assert redact_payload(payload) == payload
 
 
 @pytest.mark.parametrize(
@@ -58,31 +68,6 @@ def test_other_configuration_values_stay_visible():
 )
 def test_url_credentials_are_hidden(url, expected):
     assert mask_url_credentials(url) == expected
-
-
-def test_location_urls_sim_ids_and_vendor_data_are_masked():
-    redacted = redact_payload(
-        {
-            "location": "ftp://user:secret@host/fw",
-            "iccid": "8931440400000012345",
-            "imsi": "204080000012345",
-            "data": '{"pin": "1234"}',
-            "vendorId": "com.example",
-        }
-    )
-    assert redacted == {
-        "location": "ftp://***@host/fw",
-        "iccid": "***2345",
-        "imsi": "***2345",
-        "data": "***",
-        "vendorId": "com.example",
-    }
-
-
-def test_meter_value_location_is_kept():
-    sample = {"value": "1.2", "measurand": "Energy.Active.Import.Register", "location": "Outlet"}
-    redacted = redact_payload({"meterValue": [{"sampledValue": [sample]}]})
-    assert redacted["meterValue"][0]["sampledValue"] == [sample]
 
 
 # Plan §6: one example per secret-carrying field, as a Call or CallResult payload, with the secret it holds.

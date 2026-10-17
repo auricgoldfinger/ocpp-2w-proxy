@@ -9,11 +9,7 @@ from ocpp_2w_proxy.monitor_config import MonitorConfig
 
 def test_monitor_is_off_by_default_bound_to_loopback_and_stored_in_the_state_dir():
     config = parse(raw(proxy={"state_dir": "/var/lib/proxy"}), {"TAP": "pw"})
-    assert config.monitor == MonitorConfig(db_path=Path("/var/lib/proxy/monitor.sqlite"))
-    assert not config.monitor.enabled
-    assert config.monitor.listen == "127.0.0.1"
-    assert config.monitor.port == 8323
-    assert config.monitor.retention_days == 90
+    assert config.monitor == MonitorConfig(False, "127.0.0.1", 8323, Path("/var/lib/proxy/monitor.sqlite"), 90)
 
 
 def test_monitor_settings_are_read():
@@ -40,13 +36,9 @@ def test_port_zero_never_clashes():
         ({"prot": 1}, "unknown key"),
         ({"port": 8321}, "charger-facing"),
         ({"port": 8400}, r"is the \[debug\] port"),
+        ([], r"\[monitor\] must be a table"),
     ],
 )
 def test_invalid_monitor_section_is_refused(monitor, message):
     with pytest.raises(ConfigError, match=message):
         parse(raw(monitor=monitor, proxy={"port": 8321}, debug={"port": 8400}), {"TAP": "pw"})
-
-
-def test_monitor_must_be_a_table():
-    with pytest.raises(ConfigError, match=r"\[monitor\] must be a table"):
-        parse(raw(monitor=[]), {"TAP": "pw"})

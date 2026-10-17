@@ -18,20 +18,8 @@ def _body(path: Path) -> dict:
     return json.loads(match.group(1).replace("{{timeout}}", "30"))
 
 
-def _action_files() -> dict[str, list[Path]]:
-    files: dict[str, list[Path]] = {}
-    for path in sorted(COMMANDS_DIR.glob("*.bru")):
-        files.setdefault(path.stem.split("-")[0], []).append(path)
-    return files
-
-
-@pytest.mark.parametrize("action", sorted(CHARGER_BOUND_ACTIONS))
-def test_every_charger_bound_action_has_a_request(action: str) -> None:
-    assert action in _action_files()
-
-
-def test_no_request_for_unknown_actions() -> None:
-    assert set(_action_files()) <= set(CHARGER_BOUND_ACTIONS)
+def test_requests_cover_exactly_the_charger_bound_actions() -> None:
+    assert {path.stem.split("-")[0] for path in COMMANDS_DIR.glob("*.bru")} == set(CHARGER_BOUND_ACTIONS)
 
 
 @pytest.mark.parametrize(

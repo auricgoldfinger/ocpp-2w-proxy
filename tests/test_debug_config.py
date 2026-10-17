@@ -7,10 +7,7 @@ from ocpp_2w_proxy.debug_config import DebugConfig
 
 def test_debug_is_off_by_default_and_bound_to_loopback():
     config = parse(raw(), {"TAP": "pw"})
-    assert config.debug == DebugConfig()
-    assert not config.debug.enabled
-    assert config.debug.listen == "127.0.0.1"
-    assert config.debug.port == 8322
+    assert config.debug == DebugConfig(False, "127.0.0.1", 8322, 30, 250)
 
 
 def test_debug_settings_are_read():
@@ -27,13 +24,9 @@ def test_debug_settings_are_read():
         ({"default_timeout": 100, "max_timeout": 50}, "default_timeout must be between"),
         ({"prot": 1}, "unknown key"),
         ({"port": 8321}, "charger-facing"),
+        ([], r"\[debug\] must be a table"),
     ],
 )
 def test_invalid_debug_section_is_refused(debug, message):
     with pytest.raises(ConfigError, match=message):
         parse(raw(debug=debug, proxy={"port": 8321}), {"TAP": "pw"})
-
-
-def test_debug_must_be_a_table():
-    with pytest.raises(ConfigError, match=r"\[debug\] must be a table"):
-        parse(raw(debug=[]), {"TAP": "pw"})

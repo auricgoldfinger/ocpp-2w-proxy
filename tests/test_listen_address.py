@@ -22,17 +22,14 @@ def test_only_loopback_addresses_stay_on_this_host(host, loopback):
     assert is_loopback(host) is loopback
 
 
-def test_a_loopback_listener_is_not_warned_about(caplog):
+@pytest.mark.parametrize(
+    ("host", "messages"),
+    [
+        ("127.0.0.1", []),
+        ("0.0.0.0", [("t", "debug endpoint is reachable beyond this host and has no authentication: anything goes")]),
+    ],
+)
+def test_only_a_listener_beyond_this_host_is_warned_about_on_the_callers_logger(caplog, host, messages):
     with caplog.at_level(logging.WARNING):
-        warn_unless_loopback(logging.getLogger("t"), "127.0.0.1", "debug endpoint", "anything goes")
-    assert caplog.records == []
-
-
-def test_a_listener_beyond_this_host_is_warned_about_on_the_callers_logger(caplog):
-    with caplog.at_level(logging.WARNING):
-        warn_unless_loopback(logging.getLogger("t"), "0.0.0.0", "debug endpoint", "anything goes")
-    [record] = caplog.records
-    assert record.name == "t"
-    assert record.getMessage() == (
-        "debug endpoint is reachable beyond this host and has no authentication: anything goes"
-    )
+        warn_unless_loopback(logging.getLogger("t"), host, "debug endpoint", "anything goes")
+    assert [(record.name, record.getMessage()) for record in caplog.records] == messages
