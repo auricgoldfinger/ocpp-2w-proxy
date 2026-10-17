@@ -12,3 +12,4 @@ state/
 docs/OCPP_1.6_documentation
 *.log
 .DS_Store
+data/
