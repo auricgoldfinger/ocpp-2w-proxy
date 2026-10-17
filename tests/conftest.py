@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import FakeCsms, RecordingFlow
+from fakes import FakeCharger, FakeCsms, RecordingFlow, eventually
 
-from ocpp_2w_proxy import backoff, server
+from ocpp_2w_proxy import backoff, minihttp, server
 from ocpp_2w_proxy.config import parse
+from ocpp_2w_proxy.monitor import db
+from ocpp_2w_proxy.monitor.sqlite_worker import SqliteWorker
 from ocpp_2w_proxy.server import ProxyServer
 
 CHARGER_ID = "CH1"
+START = {"connectorId": 1, "idTag": "04A2B3C4", "meterStart": 0, "timestamp": "2026-01-01T10:00:00Z"}
 
 # Stable names for the secondary backends created in tests, in connection order.
 SECONDARY_NAMES = ("tap", "stats", "beta", "gamma", "delta")
@@ -98,3 +102,54 @@ async def start_proxy(tmp_path, proxies):
     yield _start
     for proxy in proxies:
         await proxy.close()
+
+
+@pytest.fixture
+async def serve_http():
+    """Starts minihttp servers for a handler and returns their port; closes them all after the test."""
+    servers = []
+
+    async def start(handler, **options) -> int:
+        server = await minihttp.serve(handler, "127.0.0.1", 0, **options)
+        servers.append(server)
+        return server.sockets[0].getsockname()[1]
+
+    yield start
+    for started in servers:
+        started.close()
+        await started.wait_closed()
+
+
+@pytest.fixture
+def monitor_conn(tmp_path):
+    """A writer connection to a fresh monitor store."""
+    connection = sqlite3.connect(tmp_path / "monitor.sqlite")
+    db.prepare_writer(connection)
+    yield connection
+    connection.close()
+
+
+@pytest.fixture
+async def monitor_store(tmp_path):
+    """A writable SqliteWorker on a fresh monitor store."""
+    worker = SqliteWorker(tmp_path / "monitor.sqlite", readonly=False)
+    await worker.run(db.prepare_writer)
+    yield worker
+    await worker.close()
+
+
+async def attached_charger(url, **kwargs) -> FakeCharger:
+    charger = await FakeCharger.connect(url, CHARGER_ID, **kwargs)
+    await charger.call("Heartbeat", {})  # the session (and its routing) is attached by now
+    return charger
+
+
+async def start_transaction(charger, proxy, **secondary_ids) -> list:
+    """Starts a transaction; returns once each named secondary has linked its own id to the primary's."""
+    reply = await charger.call("StartTransaction", START)
+    transactions = proxy.context_for(CHARGER_ID).transactions
+    primary_tx = reply[2]["transactionId"]
+    await eventually(
+        lambda: all(transactions.to_secondary(primary_tx, name) == tx for name, tx in secondary_ids.items())
+    )
+    return reply

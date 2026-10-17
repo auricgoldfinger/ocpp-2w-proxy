@@ -31,6 +31,38 @@ def default_responder(action: str, payload: dict[str, Any]) -> dict[str, Any] | 
     }.get(action, {})
 
 
+def responding(**overrides: dict[str, Any] | None) -> Responder:
+    """default_responder with some actions answered differently; an action mapped to None stays silent."""
+
+    def respond(action: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        return overrides[action] if action in overrides else default_responder(action, payload)
+
+    return respond
+
+
+def with_transaction(transaction_id: int) -> Responder:
+    """A CSMS that hands out `transaction_id` for every StartTransaction."""
+    return responding(StartTransaction={"transactionId": transaction_id, "idTagInfo": {"status": "Accepted"}})
+
+
+async def eventually(predicate: Callable[[], object], timeout: float = 5) -> None:
+    """Wait until `predicate()` holds, polling; fails the test after `timeout` seconds."""
+
+    async def poll():
+        while not predicate():
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(poll(), timeout)
+
+
+async def dead_port() -> int:
+    """A port that just had a backend on it and now refuses connections."""
+    csms = await FakeCsms().start()
+    port = csms.port
+    await csms.stop()
+    return port
+
+
 @dataclass(frozen=True)
 class ErrorReply:
     """What a FakeCharger responder returns to answer with a CallError."""
@@ -265,3 +297,28 @@ async def http_exchange(
         name, _, value = line.partition(":")
         reply_headers[name.lower()] = value.strip()
     return HttpReply(int(status_line.split(" ")[1]), reply_headers, reply_body)
+
+
+async def open_event_stream(port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str]:
+    """Subscribe to /api/events; returns the stream and the response head once it has arrived."""
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(b"GET /api/events HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
+    return reader, writer, head.decode("ascii")
+
+
+class FakeProxy:
+    """The slice of ProxyServer the monitor reads: chargers, their contexts and when they connected."""
+
+    def __init__(self, contexts: dict[str, Any], connected_since: dict[str, float]):
+        self._contexts = contexts
+        self._connected_since = connected_since
+
+    def charger_ids(self) -> tuple[str, ...]:
+        return tuple(self._contexts)
+
+    def charger_connected_since(self, charger_id: str) -> float | None:
+        return self._connected_since.get(charger_id)
+
+    def context_for(self, charger_id: str) -> Any:
+        return self._contexts[charger_id]
