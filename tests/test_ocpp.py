@@ -43,21 +43,13 @@ def test_malformed_frames_raise_protocol_error(frame):
         parse(frame)
 
 
-def test_protocol_error_salvages_the_message_id():
-    with pytest.raises(ProtocolError) as exc:
-        parse(json.dumps([2, "x", "Heartbeat"]))  # a Call missing its payload
-    assert exc.value.message_id == "x"
-
-    with pytest.raises(ProtocolError) as unreadable:
-        parse("this is not ocpp")
-    assert unreadable.value.message_id is None
-
-
 def test_protocol_error_reply_uses_the_salvaged_id():
     error = ProtocolError("Call must have 4 elements", "x")
     assert protocol_error_reply(error) == CallError("x", "ProtocolError", "Call must have 4 elements")
-    anonymous = ProtocolError("not valid JSON: ...")
-    reply = protocol_error_reply(anonymous)
+    with pytest.raises(ProtocolError) as unreadable:
+        parse("this is not ocpp")
+    assert unreadable.value.message_id is None
+    reply = protocol_error_reply(unreadable.value)
     assert isinstance(reply, CallError) and reply.id != "x"
 
 
@@ -65,15 +57,16 @@ def test_a_malformed_reply_is_not_answered_but_ends_the_waiting_call():
     with pytest.raises(ProtocolError) as exc:
         parse('[3, "id-1", ["not", "an", "object"]]')
 
+    assert exc.value.message_id == "id-1"
     assert protocol_error_reply(exc.value) is None  # a CallResult is never answered
     substitute = substitute_reply(exc.value)
-    assert substitute.id == "id-1"
-    assert substitute.code == "GenericError"
+    assert (substitute.id, substitute.code) == ("id-1", "GenericError")
 
 
 def test_a_malformed_call_is_answered_and_needs_no_substitute():
     with pytest.raises(ProtocolError) as exc:
-        parse('[2, "id-2", "Heartbeat"]')
+        parse(json.dumps([2, "id-2", "Heartbeat"]))  # a Call missing its payload
 
+    assert exc.value.message_id == "id-2"
     assert protocol_error_reply(exc.value).code == "ProtocolError"
     assert substitute_reply(exc.value) is None

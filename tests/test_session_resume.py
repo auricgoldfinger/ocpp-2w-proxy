@@ -1,8 +1,6 @@
-import asyncio
-
-from conftest import CHARGER_ID
-from fakes import FakeCharger
-from test_proxy_integration import START, eventually, responder_with_transaction
+import pytest
+from conftest import CHARGER_ID, START, start_transaction
+from fakes import FakeCharger, eventually, with_transaction
 
 from ocpp_2w_proxy.ocpp import Call, CallError, CallResult
 from ocpp_2w_proxy.reasons import Reason
@@ -60,24 +58,20 @@ def test_only_the_backend_that_stopped_may_resume(tmp_path):
     assert tracker.resume(RESUME.with_payload({"connectorId": 2, "idTag": "HA-TAG"}), "ha") is None
 
 
-def test_no_resume_without_a_remote_stop(tmp_path):
+@pytest.mark.parametrize(
+    "answered",
+    [
+        [],  # no remote stop at all
+        [(REMOTE_STOP, CallResult("r", {"status": "Rejected"})), (REMOTE_STOP, CallError("r", "GenericError", "no"))],
+        [(REMOTE_STOP.with_payload({"transactionId": 99}), ACCEPTED)],  # a stop of another transaction
+    ],
+    ids=["no-stop", "refused-stop", "other-transaction"],
+)
+def test_only_an_accepted_stop_of_the_session_counts(tmp_path, answered):
     tracker = make(tmp_path)
     tracker.start_answered(start(), ACCEPTED_START)
-    assert tracker.resume(RESUME, "ha") is None
-
-
-def test_a_refused_remote_stop_does_not_count(tmp_path):
-    tracker = make(tmp_path)
-    tracker.start_answered(start(), ACCEPTED_START)
-    tracker.command_answered("ha", REMOTE_STOP, CallResult("r", {"status": "Rejected"}))
-    tracker.command_answered("ha", REMOTE_STOP, CallError("r", "GenericError", "no"))
-    assert tracker.resume(RESUME, "ha") is None
-
-
-def test_a_stop_of_another_transaction_does_not_count(tmp_path):
-    tracker = make(tmp_path)
-    tracker.start_answered(start(), ACCEPTED_START)
-    tracker.command_answered("ha", REMOTE_STOP.with_payload({"transactionId": 99}), ACCEPTED)
+    for command, reply in answered:
+        tracker.command_answered("ha", command, reply)
     assert tracker.resume(RESUME, "ha") is None
 
 
@@ -115,23 +109,20 @@ def test_other_commands_are_no_resume(tmp_path):
 # --- through the proxy ------------------------------------------------------------------------
 
 
-async def stopped_session(primary, secondary, start_proxy, **policy):
-    primary.responder = responder_with_transaction(100)
-    secondary.responder = responder_with_transaction(9)
+async def stopped_session(primary, secondary, start_proxy, proxies, **policy):
+    primary.responder = with_transaction(100)
+    secondary.responder = with_transaction(9)
     url = await start_proxy(primary.url, secondary.url, secondary={"policy": policy})
     charger = await FakeCharger.connect(url, CHARGER_ID)
-    await secondary.connected.wait()
-    await charger.call("StartTransaction", START)
-    await secondary.wait_for_call("StartTransaction")
-    await asyncio.sleep(0.05)  # let the secondary's StartTransaction.conf be processed
+    await start_transaction(charger, proxies[-1], tap=9)
     assert (await secondary.call("RemoteStopTransaction", {"transactionId": 9}))[2] == {"status": "Accepted"}
     await charger.call("StopTransaction", {"transactionId": 100, "meterStop": 10, "timestamp": "t", "reason": "Remote"})
     await charger.call("StatusNotification", {"connectorId": 1, "status": "Finishing", "errorCode": "NoError"})
     return charger
 
 
-async def test_a_secondary_resumes_its_own_stop_with_the_card(primary, secondary, start_proxy, flow):
-    charger = await stopped_session(primary, secondary, start_proxy, resume_own_stops=True)
+async def test_a_secondary_resumes_its_own_stop_with_the_card(primary, secondary, start_proxy, proxies, flow):
+    charger = await stopped_session(primary, secondary, start_proxy, proxies, resume_own_stops=True)
 
     reply = await secondary.call("RemoteStartTransaction", {"connectorId": 1, "idTag": "HA-TAG"}, message_id="ha-1")
 
@@ -142,8 +133,8 @@ async def test_a_secondary_resumes_its_own_stop_with_the_card(primary, secondary
     await charger.close()
 
 
-async def test_without_resume_own_stops_a_secondary_start_stays_rejected(primary, secondary, start_proxy):
-    charger = await stopped_session(primary, secondary, start_proxy)
+async def test_without_resume_own_stops_a_secondary_start_stays_rejected(primary, secondary, start_proxy, proxies):
+    charger = await stopped_session(primary, secondary, start_proxy, proxies)
 
     reply = await secondary.call("RemoteStartTransaction", {"connectorId": 1, "idTag": "HA-TAG"})
 
@@ -152,8 +143,8 @@ async def test_without_resume_own_stops_a_secondary_start_stays_rejected(primary
     await charger.close()
 
 
-async def test_no_resume_after_the_cable_was_unplugged(primary, secondary, start_proxy):
-    charger = await stopped_session(primary, secondary, start_proxy, resume_own_stops=True)
+async def test_no_resume_after_the_cable_was_unplugged(primary, secondary, start_proxy, proxies):
+    charger = await stopped_session(primary, secondary, start_proxy, proxies, resume_own_stops=True)
     await charger.call("StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"})
 
     reply = await secondary.call("RemoteStartTransaction", {"connectorId": 1, "idTag": "HA-TAG"})

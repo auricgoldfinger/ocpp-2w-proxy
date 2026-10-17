@@ -1,3 +1,5 @@
+import pytest
+
 from ocpp_2w_proxy.ocpp import Call
 from ocpp_2w_proxy.state import StateStore
 from ocpp_2w_proxy.transactions import MAX_PENDING_STARTS, TransactionMap
@@ -18,11 +20,14 @@ def test_links_regardless_of_which_backend_answers_first(tmp_path):
     assert txmap.to_primary(10, "stats") == 200
 
 
-def test_one_start_links_to_every_backend(tmp_path):
+@pytest.mark.parametrize("order", [("tap", "stats", "primary"), ("primary", "tap", "stats")])
+def test_one_start_links_to_every_backend_whatever_the_answer_order(tmp_path, order):
     txmap = make(tmp_path)
-    txmap.secondary_started("tap", "a", 9)
-    txmap.secondary_started("stats", "a", 10)
-    txmap.primary_started("a", 100)
+    for backend in order:
+        if backend == "primary":
+            txmap.primary_started("a", 100)
+        else:
+            txmap.secondary_started(backend, "a", {"tap": 9, "stats": 10}[backend])
     assert txmap.to_secondary(100, "tap") == 9
     assert txmap.to_secondary(100, "stats") == 10
     assert txmap.to_primary(9, "tap") == 100
@@ -114,36 +119,17 @@ def test_forget_keeps_the_pending_start_for_a_slow_backend(tmp_path):
     """A slow backend answers its StartTransaction long after the fast one stopped.
 
     The pending start must survive the fast backend's forget() so the slow
-    backend's transaction id can still be linked for its own StopTransaction.
+    backend's transaction id can still be linked for its own StopTransaction. No
+    other backend linked yet, so the record is recreated through the pending start.
     """
     txmap = make(tmp_path)
     txmap.primary_started("a", 100)
     txmap.secondary_started("tap", "a", 9)
-    txmap.forget(100, "tap")
+    txmap.forget(100, "tap")  # drops the transaction: no links remain
     txmap.secondary_started("stats", "a", 10)  # answers much later
     assert txmap.to_secondary(100, "stats") == 10
     assert txmap.to_primary(10, "stats") == 100
-
-
-def test_a_late_start_answer_recreates_what_it_needs(tmp_path):
-    """No backend ever linked yet when the fast one stops: the record is recreated
-    by the slow backend's late answer, through the pending start."""
-    txmap = make(tmp_path)
-    txmap.primary_started("a", 100)
-    txmap.secondary_started("tap", "a", 9)
-    txmap.forget(100, "tap")  # drops the transaction: no links remain
-    txmap.secondary_started("stats", "a", 10)
-    assert txmap.to_secondary(100, "stats") == 10
     assert txmap.to_secondary(100, "tap") is None
-
-
-def test_late_secondary_links_through_the_pending_primary_record(tmp_path):
-    txmap = make(tmp_path)
-    txmap.primary_started("a", 100)
-    txmap.secondary_started("tap", "a", 9)
-    txmap.secondary_started("stats", "a", 10)  # answers much later, after tap already linked
-    assert txmap.to_secondary(100, "tap") == 9
-    assert txmap.to_secondary(100, "stats") == 10
 
 
 def test_withheld_ids_count_down_and_survive_restart(tmp_path):

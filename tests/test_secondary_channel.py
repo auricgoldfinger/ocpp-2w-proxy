@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import replace
 
 import pytest
-from fakes import Decision, FakeCsms, RecordingFlow
+from fakes import Decision, RecordingFlow, eventually
 
 from ocpp_2w_proxy.backend_link import BackendUnavailable
 from ocpp_2w_proxy.backoff import Backoff
@@ -52,16 +52,21 @@ def make_channel(config, backend_name, store, traffic=None):
     return channel
 
 
+def _recorded_channel(tmp_path, **backend):
+    """An attached channel to an unreachable "tap" backend, with what it reports recorded."""
+    flow = RecordingFlow()
+    config = make_config({"name": "tap", "url": "ws://s", **backend})
+    return make_channel(config, "tap", StateStore(tmp_path / "CH1.json"), flow), flow
+
+
 async def test_offline_keeps_only_durable_calls_and_caches_boot_and_status(tmp_path):
-    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
-    store = StateStore(tmp_path / "CH1.json")
-    channel = make_channel(config, "tap", store)
+    channel, _ = _recorded_channel(tmp_path, max_queue=3)
     channel.submit(Call("1", "BootNotification", {"chargePointVendor": "v", "chargePointModel": "m"}))
     channel.submit(Call("2", "StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"}))
     channel.submit(Call("3", "Heartbeat", {}))
     channel.submit(Call("4", "DataTransfer", {"vendorId": "x"}))
     channel.submit(Call("5", "StartTransaction", {"connectorId": 1}), start_ref="ref")
-    store.flush()  # the coalesced queue write lands now, not in FLUSH_DELAY
+    channel._store.flush()  # the coalesced queue write lands now, not in FLUSH_DELAY
 
     state = StateStore(tmp_path / "CH1.json").state
     assert [item["call"]["action"] for item in state.outboxes["tap"]] == ["StartTransaction"]
@@ -79,33 +84,28 @@ async def test_each_backend_has_its_own_queue(tmp_path):
     tap.submit(Call("1", "StartTransaction", {"connectorId": 1}), start_ref="a")
     stats.submit(Call("2", "StartTransaction", {"connectorId": 1}), start_ref="a")
 
-    assert len(store.state.outboxes["tap"]) == 1
-    assert len(store.state.outboxes["stats"]) == 1
+    assert {name: len(queue) for name, queue in store.state.outboxes.items()} == {"tap": 1, "stats": 1}
 
     tap._complete(tap._queue[0])
-    assert len(store.state.outboxes["tap"]) == 0
-    assert len(store.state.outboxes["stats"]) == 1  # the other backend's queue is untouched
+    # the other backend's queue is untouched
+    assert {name: len(queue) for name, queue in store.state.outboxes.items()} == {"tap": 0, "stats": 1}
 
 
 async def test_queue_limit_drops_meter_values_first(tmp_path):
-    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 3})
-    store = StateStore(tmp_path / "CH1.json")
-    channel = make_channel(config, "tap", store)
+    channel, _ = _recorded_channel(tmp_path, max_queue=3)
     channel.submit(Call("1", "StartTransaction", {"connectorId": 1}))
     channel.submit(Call("2", "MeterValues", {"connectorId": 1, "meterValue": [1]}))
     channel.submit(Call("3", "MeterValues", {"connectorId": 1, "meterValue": [2]}))
     channel.submit(Call("4", "StopTransaction", {"transactionId": 1}))
 
     actions = [
-        (item["call"]["action"], item["call"]["payload"].get("meterValue")) for item in store.state.outboxes["tap"]
+        (item["call"]["action"], item["call"]["payload"].get("meterValue")) for item in channel._state.outboxes["tap"]
     ]
     assert actions == [("StartTransaction", None), ("MeterValues", [2]), ("StopTransaction", None)]
 
 
 def test_overflow_evicts_durable_items_not_transient_ones(tmp_path):
-    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 1})
-    store = StateStore(tmp_path / "CH1.json")
-    channel = make_channel(config, "tap", store)
+    channel, _ = _recorded_channel(tmp_path, max_queue=1)
     heartbeat = _QueuedCall(Call("h", "Heartbeat", {}), durable=False)
     stop1 = _QueuedCall(Call("s1", "StopTransaction", {"transactionId": 1}), durable=True)
     stop2 = _QueuedCall(Call("s2", "StopTransaction", {"transactionId": 2}), durable=True)
@@ -117,8 +117,7 @@ def test_overflow_evicts_durable_items_not_transient_ones(tmp_path):
 
 
 async def test_transient_calls_are_capped_while_the_backend_refuses_them(tmp_path, monkeypatch):
-    config = make_config({"name": "tap", "url": "ws://s"})
-    channel = make_channel(config, "tap", StateStore(tmp_path / "CH1.json"))
+    channel, _ = _recorded_channel(tmp_path)
     monkeypatch.setattr(SecondaryChannel, "connected", property(lambda self: True))
 
     for i in range(MAX_TRANSIENT_QUEUE + 5):
@@ -162,9 +161,7 @@ async def test_boot_and_status_replay_only_for_backends_that_forward_them(tmp_pa
 
 
 def test_rejected_stop_transaction_frees_the_transaction_link(tmp_path):
-    config = make_config({"name": "tap", "url": "ws://s"})
-    store = StateStore(tmp_path / "CH1.json")
-    channel = make_channel(config, "tap", store)
+    channel, _ = _recorded_channel(tmp_path)
     channel._transactions.primary_started("a", 100)
     channel._transactions.secondary_started("tap", "a", 9)
     stop = _QueuedCall(Call("m", "StopTransaction", {"transactionId": 100, "meterStop": 1}), durable=True)
@@ -178,9 +175,7 @@ def test_overflow_never_removes_the_item_being_sent(tmp_path):
     """The sender holds the queue head while awaiting the backend's reply; an
     overflow then must drop another item, or the sender's pop afterwards would
     discard an unsent message."""
-    config = make_config({"name": "tap", "url": "ws://s", "max_queue": 2})
-    store = StateStore(tmp_path / "CH1.json")
-    channel = make_channel(config, "tap", store)
+    channel, _ = _recorded_channel(tmp_path, max_queue=2)
     items = [_QueuedCall(Call(i, "MeterValues", {"connectorId": 1}), durable=True) for i in ("a", "b", "c")]
     channel._queue.extend(items)
     channel._in_flight = items[0]  # the sender is waiting for its reply right now
@@ -192,33 +187,21 @@ def test_overflow_never_removes_the_item_being_sent(tmp_path):
     assert len(channel._queue) == 2
 
 
-async def test_synthetic_heartbeats_at_the_requested_interval(tmp_path):
+async def test_synthetic_heartbeats_at_the_requested_interval(secondary, tmp_path):
     """A backend that is not forwarded the charger's heartbeats asked for an interval
     in its BootNotification.conf: the proxy keeps it alive with synthetic ones."""
-    csms = await FakeCsms(
-        lambda action, payload: {"status": "Accepted", "currentTime": "2026-01-01T00:00:00Z", "interval": 1}
-    ).start()
+    secondary.responder = lambda action, payload: {"status": "Accepted", "currentTime": "t", "interval": 1}
+    config = make_config({"name": "tap", "url": secondary.url, "forward_actions": ["BootNotification"]})
+    store = StateStore(tmp_path / "CH1.json")
+    store.state.boot = {"chargePointVendor": "v"}
+    store.save()
+    channel = make_channel(config, "tap", store)
+    channel.start_background()
     try:
-        config = make_config({"name": "tap", "url": csms.url, "forward_actions": ["BootNotification"]})
-        store = StateStore(tmp_path / "CH1.json")
-        store.state.boot = {"chargePointVendor": "v"}
-        store.save()
-        channel = SecondaryChannel(
-            config.secondaries[0], config.chargers["CH1"], store, TransactionMap(store), TrafficLog("CH1", False)
-        )
-
-        async def on_call(call):  # pragma: no cover
-            pass
-
-        channel.attach(ChargerIdentity(config.chargers["CH1"], None, None), on_call)
-        channel.start_background()
-        try:
-            await csms.wait_for_call("BootNotification")  # the cached boot is replayed
-            await asyncio.wait_for(csms.wait_for_call("Heartbeat"), 5)  # within its requested 1s interval
-        finally:
-            await channel.close()
+        await secondary.wait_for_call("BootNotification")  # the cached boot is replayed
+        await asyncio.wait_for(secondary.wait_for_call("Heartbeat"), 5)  # within its requested 1s interval
     finally:
-        await csms.stop()
+        await channel.close()
 
 
 class _SilentLink:
@@ -236,9 +219,7 @@ class _SilentLink:
 async def test_a_timed_out_message_stays_queued_and_forces_a_reconnect(tmp_path):
     """A silent backend must not lose billing data: the message stays at the head of the
     queue and the link is torn down (BackendUnavailable) so the worker reconnects."""
-    config = make_config({"name": "tap", "url": "ws://s"})
-    store = StateStore(tmp_path / "CH1.json")
-    channel = make_channel(config, "tap", store)
+    channel, _ = _recorded_channel(tmp_path)
     channel._transactions.primary_started("a", 100)
     channel._transactions.secondary_started("tap", "a", 9)
     stop = _QueuedCall(Call("m", "StopTransaction", {"transactionId": 100, "meterStop": 1}), durable=True)
@@ -260,72 +241,34 @@ def _unattached_channel(config, store, flow=None):
     )
 
 
-async def test_idle_secondary_without_session_or_queue_stays_disconnected(tmp_path):
-    csms = await FakeCsms().start()
+async def test_idle_secondary_without_session_or_queue_stays_disconnected(secondary, tmp_path):
+    channel = _unattached_channel(make_config({"name": "tap", "url": secondary.url}), StateStore(tmp_path / "CH1.json"))
+    channel.start_background()
     try:
-        config = make_config({"name": "tap", "url": csms.url})
-        channel = _unattached_channel(config, StateStore(tmp_path / "CH1.json"))
-        channel.start_background()
-        try:
-            await asyncio.sleep(0.3)
-            assert not csms.connected.is_set()
-        finally:
-            await channel.close()
+        await asyncio.sleep(0.3)
+        assert not secondary.connected.is_set()
     finally:
-        await csms.stop()
+        await channel.close()
 
 
-async def test_a_link_closed_after_draining_is_reported_idle(tmp_path):
-    csms = await FakeCsms().start()
+async def test_restored_queue_is_delivered_without_a_session_and_then_disconnects(secondary, tmp_path):
+    store = StateStore(tmp_path / "CH1.json")
+    store.state.outboxes["tap"] = [
+        {"call": {"id": "m", "action": "MeterValues", "payload": {"connectorId": 1}}, "start_ref": None}
+    ]
+    store.save()
+    flow = RecordingFlow()
+    channel = _unattached_channel(make_config({"name": "tap", "url": secondary.url}), StateStore(store.path), flow)
+    channel.start_background()
     try:
-        config = make_config({"name": "tap", "url": csms.url})
-        store = StateStore(tmp_path / "CH1.json")
-        store.state.outboxes["tap"] = [
-            {"call": {"id": "m", "action": "MeterValues", "payload": {"connectorId": 1}}, "start_ref": None}
-        ]
-        store.save()
-        flow = RecordingFlow()
-        channel = _unattached_channel(config, StateStore(tmp_path / "CH1.json"), flow)
-        channel.start_background()
-        try:
-            await asyncio.wait_for(_link_down(flow), 5)
-        finally:
-            await channel.close()
+        await secondary.wait_for_call("MeterValues")
+        await eventually(lambda: not secondary.connected.is_set())  # drained and nobody attached: closed again
     finally:
-        await csms.stop()
+        await channel.close()
 
     (_, up, up_note), (_, down, down_note) = flow.link_notes
     assert (up, up_note, down) == (True, None, False)
     assert down_note.startswith("closed by proxy: idle: no session and nothing queued · up ")
-
-
-async def _link_down(flow):
-    while ("tap", False) not in flow.links:
-        await asyncio.sleep(0.02)
-
-
-async def test_restored_queue_is_delivered_without_a_session_and_then_disconnects(tmp_path):
-    csms = await FakeCsms().start()
-    try:
-        config = make_config({"name": "tap", "url": csms.url})
-        store = StateStore(tmp_path / "CH1.json")
-        store.state.outboxes["tap"] = [
-            {"call": {"id": "m", "action": "MeterValues", "payload": {"connectorId": 1}}, "start_ref": None}
-        ]
-        store.save()
-        channel = _unattached_channel(config, StateStore(tmp_path / "CH1.json"))
-        channel.start_background()
-        try:
-            await csms.wait_for_call("MeterValues")
-            for _ in range(100):  # drained and nobody attached: the link is closed again
-                if not csms.connected.is_set():
-                    break
-                await asyncio.sleep(0.05)
-            assert not csms.connected.is_set()
-        finally:
-            await channel.close()
-    finally:
-        await csms.stop()
 
 
 class _ScriptedLink:
@@ -360,7 +303,7 @@ def _recording_sleep(channel):
 
 
 async def test_a_rejected_billing_message_is_retried_and_then_delivered_once(tmp_path):
-    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    channel = _recorded_channel(tmp_path)[0]
     delays = _recording_sleep(channel)
     meter = _QueuedCall(Call("m", "MeterValues", {"connectorId": 1}), durable=True)
     channel._queue.append(meter)
@@ -376,7 +319,7 @@ async def test_a_rejected_billing_message_is_retried_and_then_delivered_once(tmp
 
 
 async def test_a_billing_message_rejected_every_time_is_dropped_after_the_attempt_limit(tmp_path, caplog):
-    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    channel, flow = _recorded_channel(tmp_path)
     delays = _recording_sleep(channel)
     channel._transactions.primary_started("a", 100)
     channel._transactions.secondary_started("tap", "a", 9)
@@ -393,12 +336,13 @@ async def test_a_billing_message_rejected_every_time_is_dropped_after_the_attemp
     assert channel._transactions.to_secondary(100, "tap") is None  # its transaction link is freed
     assert "tap rejected StopTransaction 5 times" in caplog.text
     assert len(delays) == MAX_CALL_ERROR_ATTEMPTS - 1
+    assert flow.decisions == [Decision("tap", stop.call, Reason.MAX_ATTEMPTS)]
     await channel._send_head(link)
     assert not channel._queue
 
 
 async def test_retry_delay_grows_while_a_message_keeps_timing_out(tmp_path):
-    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    channel = _recorded_channel(tmp_path)[0]
     channel._queue.append(_QueuedCall(Call("m", "MeterValues", {"connectorId": 1}), durable=True))
     channel._retry_backoff = Backoff(1, 300)  # the real schedule, not the fast test one
     reconnect = Backoff()
@@ -415,19 +359,6 @@ async def test_retry_delay_grows_while_a_message_keeps_timing_out(tmp_path):
     assert channel._retry_backoff.current == 1  # a delivered message resets it
 
 
-async def test_a_queued_message_no_longer_forwarded_is_discarded(tmp_path, caplog):
-    config = make_config({"name": "tap", "url": "ws://s", "forward_actions": ["StopTransaction"]})
-    channel = make_channel(config, "tap", StateStore(tmp_path / "CH1.json"))
-    channel._queue.append(_QueuedCall(Call("m", "MeterValues", {"connectorId": 1}), durable=True))
-    link = _ScriptedLink(_accepted)
-
-    await channel._send_head(link)
-
-    assert not channel._queue
-    assert not link.sent
-    assert "tap no longer forwards MeterValues" in caplog.text
-
-
 async def test_a_rejected_status_replay_is_logged(tmp_path, caplog):
     store = StateStore(tmp_path / "CH1.json")
     store.state.statuses["1"] = {"connectorId": 1, "status": "Available", "errorCode": "NoError"}
@@ -439,7 +370,7 @@ async def test_a_rejected_status_replay_is_logged(tmp_path, caplog):
 
 
 async def test_card_rejection_warning_names_the_backend(tmp_path, caplog):
-    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    channel = _recorded_channel(tmp_path)[0]
     item = _QueuedCall(Call("a", "Authorize", {"idTag": "X"}), durable=False)
 
     channel._handle_result(item, CallResult("a", {"idTagInfo": {"status": "Invalid"}}))
@@ -448,7 +379,7 @@ async def test_card_rejection_warning_names_the_backend(tmp_path, caplog):
 
 
 async def test_the_chargers_own_boot_is_retried_until_accepted(tmp_path):
-    channel = make_channel(make_config({"name": "tap", "url": "ws://s"}), "tap", StateStore(tmp_path / "CH1.json"))
+    channel = _recorded_channel(tmp_path)[0]
     delays = _recording_sleep(channel)
     channel._queue.append(_QueuedCall(Call("b", "BootNotification", {"chargePointVendor": "v"}), durable=False))
 
@@ -465,12 +396,6 @@ async def test_the_chargers_own_boot_is_retried_until_accepted(tmp_path):
     assert [call.action for call in link.sent] == ["BootNotification", "BootNotification"]
     assert delays == [30]  # the interval the backend asked for
     assert not channel._queue
-
-
-def _recorded_channel(tmp_path, **backend):
-    flow = RecordingFlow()
-    config = make_config({"name": "tap", "url": "ws://s", **backend})
-    return make_channel(config, "tap", StateStore(tmp_path / "CH1.json"), flow), flow
 
 
 async def test_a_live_call_is_not_sent_to_an_offline_secondary(tmp_path):
@@ -513,7 +438,7 @@ async def test_live_calls_still_waiting_are_dropped_with_the_connection(tmp_path
         (Call("s", "StopTransaction", {"transactionId": 555}), Reason.NO_TRANSACTION_LINK, 555),
     ],
 )
-async def test_a_queued_call_that_cannot_be_sent_any_more(tmp_path, call, reason, detail):
+async def test_a_queued_call_that_cannot_be_sent_any_more(tmp_path, caplog, call, reason, detail):
     channel, flow = _recorded_channel(tmp_path, forward_actions=["StopTransaction"])
     channel._queue.append(_QueuedCall(call, durable=True))
     link = _ScriptedLink(_accepted)
@@ -522,19 +447,9 @@ async def test_a_queued_call_that_cannot_be_sent_any_more(tmp_path, call, reason
 
     assert flow.decisions == [Decision("tap", call, reason, detail)]
     assert not link.sent
-
-
-async def test_a_call_rejected_too_often_is_dropped(tmp_path):
-    channel, flow = _recorded_channel(tmp_path)
-    _recording_sleep(channel)
-    meter = Call("m", "MeterValues", {"connectorId": 1})
-    channel._queue.append(_QueuedCall(meter, durable=True))
-    link = _ScriptedLink(_rejected)
-
-    for _ in range(MAX_CALL_ERROR_ATTEMPTS):
-        await channel._send_head(link)
-
-    assert flow.decisions == [Decision("tap", meter, Reason.MAX_ATTEMPTS)]
+    assert not channel._queue
+    if reason is Reason.NO_LONGER_FORWARDED:
+        assert "tap no longer forwards MeterValues" in caplog.text
 
 
 async def test_the_cached_boot_is_resent_on_a_new_connection(tmp_path):

@@ -50,11 +50,6 @@ def test_secondary_unknown_action_is_not_supported():
     assert decision.code == "NotSupported"
 
 
-def test_change_configuration_allowlisted_key_is_forwarded():
-    call = Call("1", "ChangeConfiguration", {"key": "MeterValueSampleInterval", "value": "60"})
-    assert SECONDARY.decide(call) == call
-
-
 def test_change_configuration_keys_match_case_insensitively():
     """OCPP configuration keys are CiStrings: the charger may spell them in any case."""
     shouty = Call("1", "ChangeConfiguration", {"key": "METERVALUESAMPLEINTERVAL", "value": "60"})

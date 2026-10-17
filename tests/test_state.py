@@ -2,8 +2,9 @@ import asyncio
 import json
 import os
 
+from ocpp_2w_proxy import state as state_module
 from ocpp_2w_proxy.ocpp import Call
-from ocpp_2w_proxy.state import FLUSH_DELAY, StateStore, from_dict, restore_outbox, to_dict
+from ocpp_2w_proxy.state import StateStore, from_dict, restore_outbox, to_dict
 
 
 def test_restore_outbox_skips_unreadable_entries(tmp_path):
@@ -82,6 +83,7 @@ def test_v2_state_file_is_migrated_to_outbox_and_latest_slots(tmp_path):
 async def test_save_soon_coalesces_a_burst_into_one_write(tmp_path, monkeypatch):
     """Every message used to rewrite and fsync the whole state file, once per backend
     per message: a burst must collapse into one write."""
+    monkeypatch.setattr(state_module, "FLUSH_DELAY", 0.02)  # still far longer than the burst
     store = StateStore(tmp_path / "c.json")
     writes = 0
     real_write = store._write
@@ -96,7 +98,7 @@ async def test_save_soon_coalesces_a_burst_into_one_write(tmp_path, monkeypatch)
         store.save_soon()
         await asyncio.sleep(0)
 
-    await asyncio.sleep(FLUSH_DELAY + 0.1)
+    await asyncio.sleep(0.02 + 0.1)
     assert writes == 1
     assert store.path.exists()  # the coalesced write happened
 
