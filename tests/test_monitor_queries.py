@@ -1,6 +1,5 @@
 import itertools
 import json
-import sqlite3
 
 import pytest
 from monitor_events import (
@@ -17,12 +16,13 @@ from monitor_events import (
     store,
 )
 
-from ocpp_2w_proxy.monitor import db
+from ocpp_2w_proxy.monitor import db, queries
 from ocpp_2w_proxy.monitor.gaps import Gap
 from ocpp_2w_proxy.monitor.queries import (
     MAX_LIMIT,
     ExchangeQuery,
     InvalidCursor,
+    ReadTimeLimit,
     exchange_detail,
     links_report,
     list_exchanges,
@@ -250,9 +250,26 @@ def test_a_read_running_past_the_time_limit_is_interrupted(monitor_conn):
         store(monitor_conn, n + 1, heartbeat(float(n), n + 1))
     jumping_clock = itertools.count(step=1.0).__next__
 
-    with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+    with pytest.raises(ReadTimeLimit):
         list_exchanges(monitor_conn, ExchangeQuery(), clock=jumping_clock)
 
     # the handler is removed and the transaction closed: the next read just works
     assert len(listing(monitor_conn)["exchanges"]) == MAX_LIMIT
     assert not monitor_conn.in_transaction
+
+
+@pytest.fixture
+def check_every_step(monkeypatch):
+    """Check the deadline on every SQLite step, so any statement run after the clock passes it is interrupted."""
+    monkeypatch.setattr(queries, "_PROGRESS_STEPS", 1)
+
+
+@pytest.mark.usefixtures("check_every_step")
+def test_the_time_limit_spares_begin_and_rollback(populated):
+    expired_after_start = itertools.chain([0.0], itertools.repeat(1e9)).__next__
+
+    with pytest.raises(ReadTimeLimit):
+        list_exchanges(populated, ExchangeQuery(), clock=expired_after_start)
+
+    assert not populated.in_transaction
+    assert len(listing(populated)["exchanges"]) == 8

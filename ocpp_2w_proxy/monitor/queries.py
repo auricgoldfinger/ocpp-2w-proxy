@@ -36,6 +36,11 @@ class InvalidCursor(ValueError):
     pass
 
 
+class ReadTimeLimit(sqlite3.OperationalError):
+    """A read interrupted at READ_TIME_LIMIT. SQLite's error code is on ``__cause__``; a progress handler that
+    raises is reported by SQLite as an interrupt too."""
+
+
 @dataclass(frozen=True)
 class ExchangeQuery:
     """The filters of ``GET /api/exchanges``, already parsed."""
@@ -182,17 +187,25 @@ def rebuild_projections(
 
 @contextmanager
 def _reading(conn: sqlite3.Connection, clock: Clock) -> Iterator[None]:
-    """One short read transaction; a query still running after READ_TIME_LIMIT is interrupted."""
-    deadline = clock() + READ_TIME_LIMIT
-    conn.set_progress_handler(lambda: clock() > deadline, _PROGRESS_STEPS)
+    """One short read transaction; a query still running after READ_TIME_LIMIT raises ReadTimeLimit.
+
+    The time limit covers only the statements in between: an interrupted BEGIN would escape untranslated, and an
+    interrupted ROLLBACK would leave the connection inside the transaction for good.
+    """
+    conn.execute("BEGIN")
     try:
-        conn.execute("BEGIN")
+        deadline = clock() + READ_TIME_LIMIT
+        conn.set_progress_handler(lambda: clock() > deadline, _PROGRESS_STEPS)
         try:
             yield
+        except sqlite3.OperationalError as exc:
+            if getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_INTERRUPT:
+                raise ReadTimeLimit("interrupted") from exc
+            raise
         finally:
-            conn.rollback()
+            conn.set_progress_handler(None, 0)
     finally:
-        conn.set_progress_handler(None, 0)
+        conn.rollback()
 
 
 # --- exchange filters --------------------------------------------------------------------
