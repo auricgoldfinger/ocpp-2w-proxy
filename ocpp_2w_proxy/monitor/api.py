@@ -9,6 +9,7 @@ page the operator happens to visit cannot read the API from a script.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping
@@ -21,7 +22,7 @@ from ..minihttp import JSON_HEADERS, Content, EventStream, HttpError, Reply, Req
 from .compact_json import dumps_bytes
 from .exchange_filters import SQLITE_INTEGER_RANGE, parse_exchange_query
 from .live_hub import LiveHub, TooManySubscribers
-from .queries import InvalidCursor, exchange_detail, links_report, list_exchanges, session_summary
+from .queries import InvalidCursor, ReadTimeLimit, exchange_detail, links_report, list_exchanges, session_summary
 from .sqlite_worker import SqliteWorker
 
 type Clock = Callable[[], float]
@@ -31,6 +32,8 @@ type ConnectedChargers = Callable[[], Collection[str]]
 Route = Callable[["MonitorApi", Request, re.Match[str]], Awaitable[Reply]]
 
 LINK_HISTORY_SECONDS = 24 * 3600
+
+logger = logging.getLogger(__name__)
 
 
 class MonitorApi:
@@ -58,7 +61,11 @@ class MonitorApi:
             raise HttpError(403, "origin_forbidden", "cross-origin requests are refused")
         for pattern, handler in ROUTES:
             if match := pattern.fullmatch(request.path):
-                return await handler(self, request, match)
+                try:
+                    return await handler(self, request, match)
+                except ReadTimeLimit:
+                    logger.warning("monitor read %s %s hit the time limit", request.path, dict(request.query))
+                    raise HttpError(503, "query_too_slow", "the query took too long; narrow the filters") from None
         raise HttpError(404, "not_found", f"no such endpoint: {request.path}")
 
     async def _chargers(self, request: Request, match: re.Match[str]) -> Content:

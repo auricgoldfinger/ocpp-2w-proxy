@@ -4,7 +4,8 @@ This is the contract between the monitor backend (`ocpp_2w_proxy/monitor/api.py`
 (`ocpp_2w_proxy/monitor/static/`).
 
 All routes are `GET` and return JSON. Any other method gets 405. A request whose `Origin` header differs
-from its `Host` gets 403. Timestamps are Unix epoch seconds as floats.
+from its `Host` gets 403. A read whose SQL exceeds the store's time limit gets 503 `query_too_slow`; narrower
+filters help. Timestamps are Unix epoch seconds as floats.
 
 **Exchange ids are JSON strings**, because they can exceed the integers JavaScript represents safely.
 

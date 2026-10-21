@@ -12,10 +12,11 @@ from fakes import http_exchange, open_event_stream
 from monitor_events import CP, blocked, heartbeat, meter_values, start, store
 
 from ocpp_2w_proxy.config import parse
-from ocpp_2w_proxy.monitor import db
+from ocpp_2w_proxy.monitor import api, db
 from ocpp_2w_proxy.monitor.api import MonitorApi
 from ocpp_2w_proxy.monitor.gaps import Gap
 from ocpp_2w_proxy.monitor.live_hub import MAX_SUBSCRIBERS, LiveHub
+from ocpp_2w_proxy.monitor.queries import ReadTimeLimit
 from ocpp_2w_proxy.monitor.rows import LinkRow, WriteBatch
 from ocpp_2w_proxy.monitor.sqlite_worker import SqliteWorker
 
@@ -238,3 +239,13 @@ async def test_a_subscriber_beyond_the_limit_is_503(monitor):
         for _, writer, _ in streams:
             writer.close()
     assert (reply.status, reply.json()["error"]) == (503, "too_many_subscribers")
+
+
+async def test_a_read_past_the_time_limit_is_503(monitor, monkeypatch):
+    def too_slow(*_, **__):
+        raise ReadTimeLimit("interrupted")
+
+    monkeypatch.setattr(api, "list_exchanges", too_slow)
+
+    reply = await get(monitor, "/api/exchanges")
+    assert (reply.status, reply.json()["error"]) == (503, "query_too_slow")
