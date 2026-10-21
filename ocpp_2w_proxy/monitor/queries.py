@@ -197,8 +197,11 @@ def _reading(conn: sqlite3.Connection, clock: Clock) -> Iterator[None]:
     """One short read transaction; a query still running after READ_TIME_LIMIT raises ReadTimeLimit.
 
     The time limit covers only the statements in between: an interrupted BEGIN would escape untranslated, and an
-    interrupted ROLLBACK would leave the connection inside the transaction for good.
+    interrupted ROLLBACK would leave the connection inside the transaction for good. A transaction an earlier
+    failed ROLLBACK left open is rolled back first, so one failure cannot fail every later read.
     """
+    if conn.in_transaction:
+        conn.rollback()
     conn.execute("BEGIN")
     try:
         deadline = clock() + READ_TIME_LIMIT

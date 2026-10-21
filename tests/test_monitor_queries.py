@@ -315,3 +315,10 @@ def test_session_does_not_count_decoding_against_the_time_limit(populated, monke
     clock = clock_expiring_on_call(monkeypatch, payload_blob, "decode")
 
     assert json.loads(session_summary(populated, 10216, clock=clock))["energy_wh"] == 7421
+
+
+def test_a_reader_left_inside_a_transaction_recovers_on_the_next_read(populated):
+    populated.execute("BEGIN")  # as after a rollback that failed
+
+    assert len(listing(populated)["exchanges"]) == 8
+    assert not populated.in_transaction
