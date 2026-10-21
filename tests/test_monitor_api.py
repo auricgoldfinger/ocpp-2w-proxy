@@ -241,11 +241,13 @@ async def test_a_subscriber_beyond_the_limit_is_503(monitor):
     assert (reply.status, reply.json()["error"]) == (503, "too_many_subscribers")
 
 
-async def test_a_read_past_the_time_limit_is_503(monitor, monkeypatch):
+async def test_a_read_past_the_time_limit_is_503_and_logged_without_query_values(monitor, monkeypatch, caplog):
     def too_slow(*_, **__):
         raise ReadTimeLimit("interrupted")
 
     monkeypatch.setattr(api, "list_exchanges", too_slow)
 
-    reply = await get(monitor, "/api/exchanges")
+    reply = await get(monitor, "/api/exchanges?q=SECRET-TAG&charger=CP1")
     assert (reply.status, reply.json()["error"]) == (503, "query_too_slow")
+    assert "['charger', 'q']" in caplog.text
+    assert "SECRET-TAG" not in caplog.text

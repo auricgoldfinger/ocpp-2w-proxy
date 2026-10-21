@@ -64,7 +64,8 @@ class MonitorApi:
                 try:
                     return await handler(self, request, match)
                 except ReadTimeLimit:
-                    logger.warning("monitor read %s %s hit the time limit", request.path, dict(request.query))
+                    # Parameter names only: a search value can be an RFID id_tag.
+                    logger.warning("monitor read %s %s hit the time limit", request.path, sorted(request.query))
                     raise HttpError(503, "query_too_slow", "the query took too long; narrow the filters") from None
         raise HttpError(404, "not_found", f"no such endpoint: {request.path}")
 
