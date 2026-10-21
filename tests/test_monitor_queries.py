@@ -295,7 +295,7 @@ def clock_expiring_on_call(monkeypatch, owner, name):
 @pytest.mark.usefixtures("check_every_step")
 @pytest.mark.parametrize(("owner", "name"), [(payload_blob, "decode"), (queries, "project")])
 def test_listing_does_not_count_decoding_or_replay_against_the_time_limit(populated, monkeypatch, owner, name):
-    query = ExchangeQuery(exclude=(queries.HEARTBEAT,))  # the hidden Heartbeat count runs after the replay
+    query = ExchangeQuery(exclude=(queries.HEARTBEAT,))  # SQL after the fetch: a replay moved before it is caught
     expected = list_exchanges(populated, query)
     clock = clock_expiring_on_call(monkeypatch, owner, name)
 
