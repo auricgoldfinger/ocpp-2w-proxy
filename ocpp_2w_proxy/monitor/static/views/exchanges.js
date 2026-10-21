@@ -37,6 +37,7 @@ export function mountExchanges(container, { api, live, config, navigate }) {
   let filters = null;
   let frozen = false;
   let status = "loading";
+  let errorCode = null;
   let linksData = null;
   let renderQueued = false;
   let loadToken = 0;
@@ -90,6 +91,9 @@ export function mountExchanges(container, { api, live, config, navigate }) {
 
   function footer() {
     if (status === "loading") return html`<p class="muted" role="status">Loading exchanges…</p>`;
+    if (status === "error" && errorCode === "query_too_slow") {
+      return html`<p class="error" role="alert">The search took too long. Narrow the filters (charger, action, time).</p>`;
+    }
     if (status === "error") {
       return html`<p class="error" role="alert">Could not load exchanges. <button type="button" class="link-button" data-action="retry">Retry</button></p>`;
     }
@@ -122,8 +126,8 @@ export function mountExchanges(container, { api, live, config, navigate }) {
       feed.setGaps(chargerGaps());
       page.exchanges.forEach((summary) => actions.add(summary.action));
       status = "ready";
-    } catch {
-      if (token === loadToken) status = "error";
+    } catch (error) {
+      if (token === loadToken) failed(error);
     }
     scheduleRender();
   }
@@ -135,10 +139,15 @@ export function mountExchanges(container, { api, live, config, navigate }) {
       if (token !== loadToken) return;
       feed.appendOlder(page);
       page.exchanges.forEach((summary) => actions.add(summary.action));
-    } catch {
-      status = "error";
+    } catch (error) {
+      failed(error);
     }
     scheduleRender();
+  }
+
+  function failed(error) {
+    status = "error";
+    errorCode = error?.code ?? null;
   }
 
   function chargerGaps() {
