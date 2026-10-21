@@ -16,7 +16,7 @@ from monitor_events import (
     store,
 )
 
-from ocpp_2w_proxy.monitor import db, queries
+from ocpp_2w_proxy.monitor import db, payload_blob, queries
 from ocpp_2w_proxy.monitor.gaps import Gap
 from ocpp_2w_proxy.monitor.queries import (
     MAX_LIMIT,
@@ -273,3 +273,45 @@ def test_the_time_limit_spares_begin_and_rollback(populated):
 
     assert not populated.in_transaction
     assert len(listing(populated)["exchanges"]) == 8
+
+
+def clock_expiring_on_call(monkeypatch, owner, name):
+    """A clock that reads 0.0 until ``owner.name`` is first called, then far past any read deadline."""
+    called = False
+    original = getattr(owner, name)
+
+    def calling(*args, **kwargs):
+        nonlocal called
+        called = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, calling)
+    return lambda: 1e9 if called else 0.0
+
+
+# Decoding payloads and replaying them run outside the time limit: only SQL counts against it.
+
+
+@pytest.mark.usefixtures("check_every_step")
+@pytest.mark.parametrize(("owner", "name"), [(payload_blob, "decode"), (queries, "project")])
+def test_listing_does_not_count_decoding_or_replay_against_the_time_limit(populated, monkeypatch, owner, name):
+    query = ExchangeQuery(exclude=(queries.HEARTBEAT,))  # the hidden Heartbeat count runs after the replay
+    expected = list_exchanges(populated, query)
+    clock = clock_expiring_on_call(monkeypatch, owner, name)
+
+    assert list_exchanges(populated, query, clock=clock) == expected
+
+
+@pytest.mark.usefixtures("check_every_step")
+def test_detail_does_not_count_decoding_against_the_time_limit(populated, monkeypatch):
+    expected = exchange_detail(populated, 2)
+    clock = clock_expiring_on_call(monkeypatch, payload_blob, "decode")
+
+    assert exchange_detail(populated, 2, clock=clock) == expected
+
+
+@pytest.mark.usefixtures("check_every_step")
+def test_session_does_not_count_decoding_against_the_time_limit(populated, monkeypatch):
+    clock = clock_expiring_on_call(monkeypatch, payload_blob, "decode")
+
+    assert json.loads(session_summary(populated, 10216, clock=clock))["energy_wh"] == 7421

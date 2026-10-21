@@ -1,5 +1,6 @@
-"""Read queries behind the monitor API. Each runs synchronously in the reader's SqliteWorker thread, inside one
-short transaction under a 250 ms time limit, and returns the response body as JSON bytes built in that thread.
+"""Read queries behind the monitor API. Each runs synchronously in the reader's SqliteWorker thread and returns the
+response body as JSON bytes built in that thread. Its SQL runs inside one short transaction under a 250 ms time
+limit; decoding the rows and replaying them into summaries happen after it, outside the limit.
 
 Exchange ids appear as strings: they can exceed the integers JavaScript represents safely.
 
@@ -80,12 +81,13 @@ def list_exchanges(
             (*params, *page_params, limit + 1),
         ).fetchall()
         page = rows[:limit]
-        summaries = [project(stored, stale_after).summary(now) for stored in _load(conn, page)]
+        frame_rows, decision_rows = _fetch(conn, page)
         hidden = {}
         if HEARTBEAT in query.exclude:
             hidden[HEARTBEAT] = conn.execute(
                 f"SELECT count(*) FROM exchanges e {_where([*filters, 'e.action = ?'])}", (*params, HEARTBEAT)
             ).fetchone()[0]
+    summaries = [project(stored, stale_after).summary(now) for stored in _build(page, frame_rows, decision_rows)]
     next_cursor = _cursor(page[-1]) if len(rows) > limit else None
     return dumps_bytes({"exchanges": summaries, "next": next_cursor, "hidden": hidden})
 
@@ -105,7 +107,8 @@ def exchange_detail(
         ).fetchone()
         if row is None:
             return None
-        (stored,) = _load(conn, [row])
+        frame_rows, decision_rows = _fetch(conn, [row])
+    (stored,) = _build([row], frame_rows, decision_rows)
     detail = project(stored, stale_after).summary(now)
     detail["payload"] = origin_payload(stored.frames)
     detail["frames"] = frame_views(stored.frames)
@@ -126,7 +129,8 @@ def session_summary(conn: sqlite3.Connection, transaction_id: int, *, clock: Clo
         start = _latest(conn, transaction_id, "StartTransaction")
         stop = _latest(conn, transaction_id, "StopTransaction")
         meter = _latest(conn, transaction_id, "MeterValues")
-        start_payload, stop_payload, meter_payload = (_origin_payload_of(conn, row) for row in (start, stop, meter))
+        blobs = [_origin_blob(conn, row) for row in (start, stop, meter)]
+    start_payload, stop_payload, meter_payload = (_payload_object(blob) for blob in blobs)
     meter_start = number(start_payload.get("meterStart"))
     meter_end = number(stop_payload.get("meterStop"))
     if meter_end is None:
@@ -179,7 +183,7 @@ def rebuild_projections(
     rows = conn.execute(
         f"SELECT {_EXCHANGE_COLUMNS} FROM exchanges e WHERE e.exchange_id IN ({marks})", tuple(exchange_ids)
     ).fetchall()
-    return [project(stored, stale_after) for stored in _load(conn, rows)]
+    return [project(stored, stale_after) for stored in _build(rows, *_fetch(conn, rows))]
 
 
 # --- time limit and transaction ----------------------------------------------------------
@@ -292,25 +296,34 @@ def _parse_cursor(cursor: str) -> tuple[float, int]:
 # --- loading stored exchanges ------------------------------------------------------------
 
 
-def _load(conn: sqlite3.Connection, rows: Sequence[tuple]) -> list[StoredExchange]:
-    """The exchanges of ``rows`` with their frames and decisions, fetched in one query each."""
+def _fetch(conn: sqlite3.Connection, rows: Sequence[tuple]) -> tuple[list[tuple], list[tuple]]:
+    """The raw frame and decision rows of the exchange ``rows``, fetched in one query each and read to the end, so
+    nothing is read after the transaction closes."""
     rowids = [row[0] for row in rows]
-    frames: dict[int, list[StoredFrame]] = {rowid: [] for rowid in rowids}
-    decisions: dict[int, list[StoredDecision]] = {rowid: [] for rowid in rowids}
-    if rowids:
-        marks = ", ".join("?" * len(rowids))
-        for rowid, *frame in conn.execute(
-            "SELECT exchange_rowid, at, peer, dir, msg_type, wire_id, payload FROM frames"
-            f" WHERE exchange_rowid IN ({marks}) ORDER BY exchange_rowid, at, rowid",
-            rowids,
-        ):
-            frames[rowid].append(StoredFrame(*frame[:5], _decompress(frame[5])))
-        for rowid, *decision in conn.execute(
-            "SELECT exchange_rowid, at, peer, reason, detail FROM decisions"
-            f" WHERE exchange_rowid IN ({marks}) ORDER BY exchange_rowid, at, rowid",
-            rowids,
-        ):
-            decisions[rowid].append(StoredDecision(*decision))
+    if not rowids:
+        return [], []
+    marks = ", ".join("?" * len(rowids))
+    frame_rows = conn.execute(
+        "SELECT exchange_rowid, at, peer, dir, msg_type, wire_id, payload FROM frames"
+        f" WHERE exchange_rowid IN ({marks}) ORDER BY exchange_rowid, at, rowid",
+        rowids,
+    ).fetchall()
+    decision_rows = conn.execute(
+        "SELECT exchange_rowid, at, peer, reason, detail FROM decisions"
+        f" WHERE exchange_rowid IN ({marks}) ORDER BY exchange_rowid, at, rowid",
+        rowids,
+    ).fetchall()
+    return frame_rows, decision_rows
+
+
+def _build(rows: Sequence[tuple], frame_rows: Sequence[tuple], decision_rows: Sequence[tuple]) -> list[StoredExchange]:
+    """The exchanges of ``rows`` with their frames (payloads decoded) and decisions, from the rows ``_fetch`` read."""
+    frames: dict[int, list[StoredFrame]] = {row[0]: [] for row in rows}
+    decisions: dict[int, list[StoredDecision]] = {row[0]: [] for row in rows}
+    for rowid, *frame in frame_rows:
+        frames[rowid].append(StoredFrame(*frame[:5], _decompress(frame[5])))
+    for rowid, *decision in decision_rows:
+        decisions[rowid].append(StoredDecision(*decision))
     return [
         StoredExchange(
             exchange_id,
@@ -335,15 +348,20 @@ def _latest(conn: sqlite3.Connection, transaction_id: int, action: str) -> tuple
     ).fetchone()
 
 
-def _origin_payload_of(conn: sqlite3.Connection, row: tuple | None) -> dict[str, Any]:
+def _origin_blob(conn: sqlite3.Connection, row: tuple | None) -> bytes | None:
+    """The stored payload of the call that opened the exchange ``row``, still compressed; None if there is none."""
     if row is None:
-        return {}
-    blob = conn.execute(
+        return None
+    found = conn.execute(
         "SELECT payload FROM frames WHERE exchange_rowid = ? AND msg_type = 'call' AND payload IS NOT NULL"
         " ORDER BY at, rowid LIMIT 1",
         (row[0],),
     ).fetchone()
-    payload = None if blob is None else _decompress(blob[0])
+    return None if found is None else found[0]
+
+
+def _payload_object(blob: bytes | None) -> dict[str, Any]:
+    payload = _decompress(blob)
     return payload if isinstance(payload, dict) else {}
 
 
