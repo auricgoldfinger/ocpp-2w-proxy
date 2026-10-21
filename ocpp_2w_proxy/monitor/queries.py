@@ -2,6 +2,9 @@
 response body as JSON bytes built in that thread. Its SQL runs inside one short transaction under a 250 ms time
 limit; decoding the rows and replaying them into summaries happen after it, outside the limit.
 
+The limit counts the reader thread's CPU time, not wall-clock time: waiting for the GIL while the loop is busy,
+as it is at startup, must not cut a read short. Time blocked on disk I/O is not counted either.
+
 Exchange ids appear as strings: they can exceed the integers JavaScript represents safely.
 
 ``rebuild_projections`` is the one read the writer makes, in its own thread, for exchanges it continues after a
@@ -68,7 +71,7 @@ def list_exchanges(
     *,
     now: float | None = None,
     stale_after: float = DEFAULT_STALE_AFTER,
-    clock: Clock = time.monotonic,
+    clock: Clock = time.thread_time,
 ) -> bytes:
     """``{"exchanges": [summary, ...], "next": cursor | null, "hidden": {"Heartbeat": n}}``, newest first."""
     limit = min(max(query.limit, 1), MAX_LIMIT)
@@ -98,7 +101,7 @@ def exchange_detail(
     *,
     now: float | None = None,
     stale_after: float = DEFAULT_STALE_AFTER,
-    clock: Clock = time.monotonic,
+    clock: Clock = time.thread_time,
 ) -> bytes | None:
     """The summary plus the origin payload, every frame (payload filled in) and every decision; None if unknown."""
     with _reading(conn, clock):
@@ -116,7 +119,7 @@ def exchange_detail(
     return dumps_bytes(detail)
 
 
-def session_summary(conn: sqlite3.Connection, transaction_id: int, *, clock: Clock = time.monotonic) -> bytes | None:
+def session_summary(conn: sqlite3.Connection, transaction_id: int, *, clock: Clock = time.thread_time) -> bytes | None:
     """The aggregate of one primary transaction for the session header; None when no exchange names it."""
     with _reading(conn, clock):
         charger_id, started_at, exchanges, problems = conn.execute(
@@ -151,7 +154,7 @@ def session_summary(conn: sqlite3.Connection, transaction_id: int, *, clock: Clo
 
 
 def links_report(
-    conn: sqlite3.Connection, snapshot: Mapping[str, Any], since: float, *, clock: Clock = time.monotonic
+    conn: sqlite3.Connection, snapshot: Mapping[str, Any], since: float, *, clock: Clock = time.thread_time
 ) -> bytes:
     """The live ``snapshot`` (taken on the loop from the channels) plus link history and gaps since ``since``."""
     with _reading(conn, clock):
